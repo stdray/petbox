@@ -7,6 +7,7 @@ using PetBox.Core.Features;
 using PetBox.Deploy.Data;
 using PetBox.Deploy.Services;
 using PetBox.Web.Mcp;
+using PetBox.Tests.Support;
 
 namespace PetBox.Tests.Mcp;
 
@@ -213,15 +214,15 @@ public sealed class DeployToolsTests : IDisposable
 	public async Task Write_Tool_With_Only_ReadScope_Throws()
 	{
 		// Tools throw on the scope assert; McpErrorEnvelopeFilter renders {error} on the wire.
-		await Assert.ThrowsAsync<UnauthorizedAccessException>(() =>
-			DeployTools.NodeUpsertAsync(Http("deploy:read"), Flags(), _svc, _db.Factory().AgentKeys(), "x"));
+		await Assert.ThrowsAsync<UnauthorizedAccessException>(() => McpScopeGate.Invoke(Http("deploy:read"), "deploy_node_upsert", () =>
+			DeployTools.NodeUpsertAsync(Http("deploy:read"), Flags(), _svc, _db.Factory().AgentKeys(), "x")));
 	}
 
 	[Fact]
 	public async Task List_Without_DeployScope_Throws()
 	{
-		await Assert.ThrowsAsync<UnauthorizedAccessException>(() =>
-			DeployTools.NodeListAsync(Http("tasks:read"), Flags(), _svc));
+		await Assert.ThrowsAsync<UnauthorizedAccessException>(() => McpScopeGate.Invoke(Http("tasks:read"), "deploy_node_list", () =>
+			DeployTools.NodeListAsync(Http("tasks:read"), Flags(), _svc)));
 	}
 
 	static IHttpContextAccessor Http(string scopes) =>

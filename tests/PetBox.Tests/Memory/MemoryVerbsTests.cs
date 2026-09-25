@@ -11,6 +11,7 @@ using PetBox.Memory.Data;
 using PetBox.Memory.Services;
 using PetBox.Tests.Mcp;
 using PetBox.Web.Mcp;
+using PetBox.Tests.Support;
 
 namespace PetBox.Tests.Memory;
 
@@ -370,7 +371,7 @@ public sealed class MemoryVerbsTests : IDisposable
 	public async Task Remember_RequiresWriteScope()
 	{
 		var http = Http("memory:read");
-		await Assert.ThrowsAsync<UnauthorizedAccessException>(() => MemoryTools.RememberAsync(http, Flags(), _db.Factory().WorkspaceMemory(), _memory, "x"));
+		await Assert.ThrowsAsync<UnauthorizedAccessException>(() => McpScopeGate.Invoke(http, "memory_remember", () => MemoryTools.RememberAsync(http, Flags(), _db.Factory().WorkspaceMemory(), _memory, "x")));
 	}
 
 	// workspace-memory-authz-fix: the reserved $workspace container feeds every project's
@@ -416,8 +417,8 @@ public sealed class MemoryVerbsTests : IDisposable
 		{
 			new { key = "index", type = "Project", description = "d", body = "b", version = 0 },
 		});
-		await Assert.ThrowsAsync<UnauthorizedAccessException>(() =>
-			MemoryTools.UpsertAsync(http, Flags(), _db.Factory().WorkspaceMemory(), _memory, MemoryTools.WorkspaceContainer, "canon", entries));
+		await Assert.ThrowsAsync<UnauthorizedAccessException>(() => McpScopeGate.Invoke(http, "memory_upsert", () =>
+			MemoryTools.UpsertAsync(http, Flags(), _db.Factory().WorkspaceMemory(), _memory, MemoryTools.WorkspaceContainer, "canon", entries)));
 	}
 
 	// Multi-workspace boundary: a key whose project lives in a DIFFERENT workspace than the
@@ -616,9 +617,9 @@ public sealed class MemoryVerbsTests : IDisposable
 		await MemoryTools.StoreCreateAsync(Http("memory:read,memory:write"), Flags(), _db.Factory().WorkspaceMemory(),
 			_memory, MemoryTools.WorkspaceContainer, "curated");
 
-		await Assert.ThrowsAsync<UnauthorizedAccessException>(() =>
+		await Assert.ThrowsAsync<UnauthorizedAccessException>(() => McpScopeGate.Invoke(Http("memory:read"), "memory_store_delete", () =>
 			MemoryTools.StoreDeleteAsync(Http("memory:read"), Flags(), _db.Factory().WorkspaceMemory(), _memory,
-				MemoryTools.WorkspaceContainer, "curated"));
+				MemoryTools.WorkspaceContainer, "curated")));
 	}
 
 	// card write-verbs-retry-safety-gap: memory_remember mints its own key, so a caller retrying

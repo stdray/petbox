@@ -27,6 +27,7 @@ namespace PetBox.Web.Mcp;
 [TenantFrom(TenantSource.Argument, "projectKey")]
 public static class HealthTools
 {
+	[RequiresScope(ApiKeyScopes.HealthRead)]
 	[McpServerTool(Name = "health_search", Title = "Read service health reports", ReadOnly = true, UseStructuredContent = true, OutputSchemaType = typeof(HealthSearchResultView))]
 	[Description("Reads the latest health report per running service in a project (status, version, age, stale flag), with time in ISO-8601 UTC. Identity of a service is (svc, canonical tags). Optionally returns per-service history when `window` (seconds) and/or `limit` are supplied. Requires health:read scope; a project-scoped key sees only its own project, a cross-project ('*') key any project.")]
 	public static async Task<HealthSearchResultView> SearchAsync(
@@ -39,8 +40,6 @@ public static class HealthTools
 		[Description("Optional cap on history entries per service (most-recent first). Defaults to 50 when history is on.")] int? limit = null,
 		CancellationToken ct = default)
 	{
-		AssertScope(http, ApiKeyScopes.HealthRead);
-
 		if (staleThresholdSeconds < 0) throw new ArgumentException("staleThresholdSeconds must be >= 0");
 		if (window is < 0) throw new ArgumentException("window must be >= 0");
 		if (limit is < 0) throw new ArgumentException("limit must be >= 0");
@@ -113,13 +112,6 @@ public static class HealthTools
 	{
 		var age = (long)(nowUtc - DateTime.SpecifyKind(receivedAt, DateTimeKind.Utc)).TotalSeconds;
 		return age < 0 ? 0 : age; // clock skew guard — a future timestamp is not "negative age"
-	}
-
-	static void AssertScope(IHttpContextAccessor accessor, string required)
-	{
-		var ctx = accessor.HttpContext ?? throw new InvalidOperationException("No HttpContext");
-		if (!ApiKeyScopes.Granted(ctx.User, required))
-			throw new UnauthorizedAccessException($"ApiKey lacks required scope '{required}'");
 	}
 }
 

@@ -1,4 +1,5 @@
 using System.Text.Json;
+using System.Text.RegularExpressions;
 using LinqToDB;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
@@ -6,45 +7,41 @@ using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using ModelContextProtocol.Client;
 using ModelContextProtocol.Protocol;
+using ModelContextProtocol.Server;
 using PetBox.Core.Data;
 using PetBox.Core.Models;
 using PetBox.Tests.Support;
+using PetBox.Web.Mcp;
 
 namespace PetBox.Tests.Mcp;
 
-// work `mcp-tools-list-ignores-key-scopes`: McpToolScopeFilter trims tools/list to the modules a
-// key's scopes grant, but the trim table (McpToolScopeFilter.ModuleOf) is hand-maintained and had
-// fallen behind AssertScope reality for several families — apikey_*/project_* (an explicit "leave
-// unclassified" comment that stopped matching what those tools actually require), and
-// llm_*/comments_*/relations_*/health_* (never added when those tool families were). Calls were
-// still REJECTED correctly at invocation (ModuleMcp.AssertScope), so this was never a security
-// hole — but AGENTS.md promises "Each tool's visibility is gated by the calling key's scopes", and
-// a restricted key saw ~34 tools it could never successfully call.
+// The runtime half of spec mcp-scope-declared-once / mcp-tool-visibility-by-scope / mcp-whoami: a
+// real host, real keys with chosen scope sets, real tools/list and tools/call over /mcp.
 //
-// THIS FILE is the generic regression guard the fix table itself asks for (see ModuleOf's own
-// comment): it does not hardcode which tools are broken, it EMPIRICALLY invokes every tool
-// tools/list shows a memory:read/memory:write-only key and fails if any of them answers the exact
-// scope-axis refusal ModuleMcp.AssertScope raises. A new tool family added later that forgets a
-// ModuleOf entry (or gets one wrong) reproduces the ORIGINAL bug shape and this test catches it in
-// CI, without anyone having to remember to update a second list by hand.
-public sealed class McpToolScopeFilterFixture : IAsyncLifetime
+// History: work `mcp-tools-list-ignores-key-scopes` found that tools/list was trimmed by a
+// hand-maintained prefix table (McpToolScopeFilter.ModuleOf) that had fallen behind the real gates
+// (AssertScope calls in each tool body). Work `mcp-scope-declaration-visibility-catalog` replaced
+// both with ONE per-tool declaration ([RequiresScope] & co., read by McpToolScopes) that the call
+// gate, the list trim and whoami's catalog all read. This file proves those readers agree:
+//
+//   * DIRECT sweep  — every tool tools/list shows a key is invoked and must NOT be refused on scope.
+//   * MIRROR sweep  — every tool tools/list HIDES from that key is invoked and MUST be refused, and
+//                     refused exactly on the scope axis (not on tenant, arguments or existence).
+//   * EQUIVALENCE   — the scopes each tool enforces, discovered empirically, are exactly the ones its
+//                     body enforced before the declaration existed (McpScopeGateBaseline).
+public sealed class McpScopeProbeHost : IAsyncLifetime
 {
 	public const string Workspace = "mcpscopefilter-ws";
 	public const string ProjectKey = "mcpscopefilter";
-	const string ApiKey = "yb_key_mcpscopefilter_agent";
-
-	// The exact scope set the reporting card used: read + write on ONE module (memory), nothing
-	// else — no admin:provision (which would make McpToolScopeFilter show everything, by its own
-	// documented bypass), no tasks/llm/health/config/deploy/data/logs scope of any kind.
-	const string RestrictedScopes = "memory:read,memory:write";
 
 	readonly WebApplicationFactory<Program> _factory;
+	readonly Dictionary<string, McpClient> _clients = new(StringComparer.Ordinal);
+	readonly Dictionary<string, IReadOnlyList<string>> _listings = new(StringComparer.Ordinal);
+	readonly SemaphoreSlim _gate = new(1, 1);
 	HttpClient _http = null!;
-	McpClient _mcp = null!;
+	int _keys;
 
-	public IReadOnlyList<McpClientTool> Tools { get; private set; } = null!;
-
-	public McpToolScopeFilterFixture()
+	public McpScopeProbeHost()
 	{
 		Environment.SetEnvironmentVariable("PETBOX_MASTER_KEY", "test-key-for-secrets");
 		Environment.SetEnvironmentVariable("ASPNETCORE_ENVIRONMENT", "Testing");
@@ -56,9 +53,8 @@ public sealed class McpToolScopeFilterFixture : IAsyncLifetime
 			{
 				["ConnectionStrings:PetBox"] = TestSchema.NewTempConnectionString(),
 				["Host:BackgroundServices"] = "false",
-				// Every module ON: the sweep only covers a tool family if its type actually
-				// registered. A module left off would make that family's escape invisible here,
-				// not fixed — the same mistake the original bug hid behind for llm_*/health_*.
+				// Every module ON: a sweep only covers a tool family if its type actually registered
+				// and its feature gate does not answer first.
 				["Features:Config"] = "true",
 				["Features:Logging"] = "true",
 				["Features:Data"] = "true",
@@ -71,6 +67,9 @@ public sealed class McpToolScopeFilterFixture : IAsyncLifetime
 		});
 	}
 
+	// The server's canonical tool set (full descriptions, every tool — nothing trimmed).
+	public IReadOnlyList<McpServerTool> AllTools { get; private set; } = [];
+
 	public async ValueTask InitializeAsync()
 	{
 		var cs = _factory.Services.GetRequiredService<IConfiguration>().GetConnectionString("PetBox")!;
@@ -80,179 +79,114 @@ public sealed class McpToolScopeFilterFixture : IAsyncLifetime
 			using var db = scope.ServiceProvider.GetRequiredService<ICoreDbFactory>().Open();
 			await db.InsertAsync(new Workspace { Key = Workspace, Name = "ScopeFilter", CreatedAt = DateTime.UtcNow });
 			await db.InsertAsync(new Project { Key = ProjectKey, WorkspaceKey = Workspace, Name = "ScopeFilter" });
-			await db.InsertAsync(new ApiKey
-			{
-				Key = ApiKey,
-				ProjectKey = ProjectKey,
-				Scopes = RestrictedScopes,
-				Name = "scope-filter probe",
-				CreatedAt = DateTime.UtcNow,
-			});
 		}
 
 		_http = _factory.CreateClient(new WebApplicationFactoryClientOptions { AllowAutoRedirect = false });
-		var transport = new HttpClientTransport(new HttpClientTransportOptions
-		{
-			Endpoint = new Uri(_http.BaseAddress!, "/mcp"),
-			AdditionalHeaders = new Dictionary<string, string> { ["X-Api-Key"] = ApiKey },
-		}, _http);
-		_mcp = await McpTestClient.ConnectAsync(transport);
-		Tools = [.. await _mcp.ListToolsAsync()];
+		AllTools = [.. _factory.Services.GetServices<McpServerTool>().OrderBy(t => t.ProtocolTool.Name, StringComparer.Ordinal)];
 	}
 
 	public async ValueTask DisposeAsync()
 	{
-		await _mcp.DisposeAsync();
+		foreach (var c in _clients.Values) await c.DisposeAsync();
 		_http.Dispose();
 		await _factory.DisposeAsync();
-	}
-}
-
-public sealed class McpToolScopeFilterTests : IClassFixture<McpToolScopeFilterFixture>
-{
-	readonly McpToolScopeFilterFixture _fx;
-	public McpToolScopeFilterTests(McpToolScopeFilterFixture fx) => _fx = fx;
-
-	// Guard the guard: a filter that (by a future bug) hid EVERYTHING, or an unfiltered full list,
-	// would make every assertion below pass vacuously or for the wrong reason.
-	[Fact]
-	public void Sanity_FilterActuallyTrimmedTheList()
-	{
-		_fx.Tools.Should().NotBeEmpty("a memory:read/memory:write key must see at least its own tools");
-		_fx.Tools.Should().HaveCountLessThan(40,
-			"a key holding exactly one module's scopes must see a small slice of the ~99-tool surface — "
-			+ "a count this high means the filter stopped trimming");
-		_fx.Tools.Select(t => t.Name).Should().Contain("memory_search",
-			"the key's own module must still be visible");
+		_gate.Dispose();
 	}
 
-	// THE ORIGINAL BUG, named explicitly so a fix that only half-works cannot pass by omission.
-	// Every one of these requires a scope this key does not hold and must NOT be listed.
-	[Theory]
-	[InlineData("apikey_create")]
-	[InlineData("apikey_list")]
-	[InlineData("apikey_update")]
-	[InlineData("apikey_delete")]
-	[InlineData("project_create")]
-	[InlineData("project_list")]
-	[InlineData("llm_config_get")]
-	[InlineData("llm_config_upsert")]
-	[InlineData("llm_embed")]
-	[InlineData("llm_rerank")]
-	[InlineData("llm_chat")]
-	[InlineData("comments_upsert")]
-	[InlineData("comments_search")]
-	[InlineData("comments_delta")]
-	[InlineData("comments_get")]
-	[InlineData("comments_delete")]
-	[InlineData("relations_create")]
-	[InlineData("relations_list")]
-	[InlineData("relations_delete")]
-	[InlineData("health_search")]
-	// Sampled from families that were ALREADY correctly gated before this fix (tasks/data/deploy/
-	// config/logs) — this memory-only key holds none of their scopes either, so the theory also
-	// proves the fix did not accidentally show MORE than before while closing the escape.
-	[InlineData("tasks_search")]
-	[InlineData("data_query")]
-	[InlineData("deploy_list")]
-	[InlineData("config_binding_search")]
-	[InlineData("log_query")]
-	public void KnownFamilies_AreCorrectlyGated(string tool)
-	{
-		_fx.Tools.Select(t => t.Name).Should().NotContain(tool,
-			$"{tool} requires a scope this memory:read/memory:write-only key does not hold");
-	}
+	static string Id(IEnumerable<string> scopes) => string.Join(",", scopes.Order(StringComparer.Ordinal));
 
-	// share_revoke needs no scope AT ALL by design (see ShareTools' header) — it must stay visible to
-	// every authenticated key, this one included. Pinned so a future "fix" cannot accidentally start
-	// hiding it under a module it was never meant to belong to.
-	[Fact]
-	public void ScopeFreeTools_StayVisible()
+	// One minted key (and one MCP session) per distinct scope set, reused across tests.
+	public async Task<McpClient> ClientFor(IEnumerable<string> scopes)
 	{
-		_fx.Tools.Select(t => t.Name).Should().Contain(["whoami", "tool_describe", "share_revoke"]);
-	}
-
-	// THE GENERIC SWEEP. Every tool tools/list shows this restricted key is actually INVOKED (required
-	// arguments filled with type-shaped garbage, `projectKey`/`workspaceKey` filled with the key's own
-	// project so the TENANT axis never confounds the result) and the response is checked for the exact
-	// refusal ModuleMcp.AssertScope raises. No hardcoded tool list on the failing side — a new tool
-	// family that reaches tools/list without a matching ModuleOf entry fails HERE, generically.
-	[Fact]
-	public async Task EveryVisibleTool_InvokesPastTheScopeCheck()
-	{
-		var violations = new List<string>();
-		var inconclusive = new List<string>();
-
-		foreach (var tool in _fx.Tools)
+		var id = Id(scopes);
+		await _gate.WaitAsync();
+		try
 		{
-			var args = ArgsFor(tool.ProtocolTool.InputSchema, tool.Name);
-
-			CallToolResult result;
-			try
+			if (_clients.TryGetValue(id, out var existing)) return existing;
+			var key = $"yb_key_mcpscopefilter_{_keys++}";
+			using (var scope = _factory.Services.CreateScope())
 			{
-				result = await tool.CallAsync(args);
+				using var db = scope.ServiceProvider.GetRequiredService<ICoreDbFactory>().Open();
+				await db.InsertAsync(new ApiKey
+				{
+					Key = key,
+					ProjectKey = ProjectKey,
+					Scopes = id,
+					Name = "scope probe " + id,
+					CreatedAt = DateTime.UtcNow,
+				});
 			}
-			catch (Exception ex)
+
+			var transport = new HttpClientTransport(new HttpClientTransportOptions
 			{
-				// A protocol-level failure (the SDK's own argument binder refusing a required
-				// parameter we could not shape) never reaches the tool body, so it is not a scope
-				// decision either way — recorded, not treated as a pass or a violation.
-				inconclusive.Add($"{tool.Name}: {ex.GetType().Name}: {ex.Message}");
-				continue;
-			}
+				Endpoint = new Uri(_http.BaseAddress!, "/mcp"),
+				AdditionalHeaders = new Dictionary<string, string> { ["X-Api-Key"] = key },
+			}, _http);
+			var client = await McpTestClient.ConnectAsync(transport);
+			_clients[id] = client;
+			return client;
+		}
+		finally
+		{
+			_gate.Release();
+		}
+	}
 
-			if (result.IsError != true) continue; // succeeded outright — definitely past the scope check
+	public async Task<IReadOnlyList<string>> ListedFor(IEnumerable<string> scopes)
+	{
+		var id = Id(scopes);
+		if (_listings.TryGetValue(id, out var cached)) return cached;
+		var client = await ClientFor(scopes);
+		var names = (await client.ListToolsAsync()).Select(t => t.Name).Order(StringComparer.Ordinal).ToList();
+		_listings[id] = names;
+		return names;
+	}
 
-			var text = string.Join(" ", result.Content.OfType<TextContentBlock>().Select(c => c.Text));
-			var (type, message) = ErrorOf(text);
-			if (type == "UnauthorizedAccessException" && message.Contains("lacks required scope", StringComparison.Ordinal))
-				violations.Add($"{tool.Name}: {message}");
+	// Invoke `tool` as a key holding exactly `scopes`. Returns null on success, otherwise the error
+	// envelope's (type, message) — McpErrorEnvelopeFilter's {"error":{"type","message"}} shape — or
+	// ("(protocol)", …) when the SDK itself refused before any filter ran.
+	public async Task<(string Type, string Message)?> Call(
+		IEnumerable<string> scopes, string tool, IReadOnlyDictionary<string, object?>? extra = null)
+	{
+		var client = await ClientFor(scopes);
+		var schema = AllTools.Single(t => t.ProtocolTool.Name == tool).ProtocolTool.InputSchema;
+		var args = ArgsFor(schema);
+		foreach (var (name, value) in extra ?? new Dictionary<string, object?>()) args[name] = value;
+		CallToolResult result;
+		try
+		{
+			result = await client.CallToolAsync(tool, args);
+		}
+		catch (Exception ex)
+		{
+			return ("(protocol)", ex.GetType().Name + ": " + ex.Message);
 		}
 
-		violations.Should().BeEmpty(
-			"tools/list must never show a tool whose invocation then fails ModuleMcp.AssertScope for a "
-			+ "memory:read/memory:write-only key — each name below is visible in tools/list but was refused "
-			+ "on the scope axis when actually called:\n" + string.Join("\n", violations)
-			+ (inconclusive.Count > 0
-				? "\n\n(inconclusive, protocol-level, not counted either way:\n" + string.Join("\n", inconclusive) + ")"
-				: ""));
+		if (result.IsError != true) return null;
+		return ErrorOf(string.Join(" ", result.Content.OfType<TextContentBlock>().Select(c => c.Text)));
 	}
 
-	// The argument set for one tool call: `projectKey`/`workspaceKey` get the key's own project (so a
-	// tenant refusal can never masquerade as a scope refusal), every other REQUIRED property gets
-	// type-shaped garbage — same economy as AuthzCrossTenantProbe.ArgumentsFor, which established that
-	// a default-deny/refusal-shaped surface cannot tell a well-formed call from a malformed one.
-	static Dictionary<string, object?> ArgsFor(JsonElement schema, string toolName)
+	// `projectKey`/`workspaceKey` get the key's own tenant (so a TENANT refusal can never masquerade as
+	// a scope one), every other REQUIRED property gets type-shaped garbage — same economy as
+	// AuthzCrossTenantProbe.ArgumentsFor.
+	static Dictionary<string, object?> ArgsFor(JsonElement schema)
 	{
 		var args = new Dictionary<string, object?>(StringComparer.Ordinal);
 		if (schema.ValueKind != JsonValueKind.Object) return args;
 
 		var required = schema.TryGetProperty("required", out var req) && req.ValueKind == JsonValueKind.Array
-			? req.EnumerateArray().Select(e => e.GetString()).Where(s => s is not null).ToHashSet(StringComparer.Ordinal)!
-			: new HashSet<string?>(StringComparer.Ordinal);
+			? req.EnumerateArray().Select(e => e.GetString()).OfType<string>().ToHashSet(StringComparer.Ordinal)
+			: [];
 
 		if (schema.TryGetProperty("properties", out var properties) && properties.ValueKind == JsonValueKind.Object)
 		{
 			foreach (var property in properties.EnumerateObject())
 			{
-				if (property.Name is "projectKey" or "workspaceKey")
-				{
-					args[property.Name] = McpToolScopeFilterFixture.ProjectKey;
-					continue;
-				}
-
+				if (property.Name == "projectKey") { args[property.Name] = ProjectKey; continue; }
+				if (property.Name == "workspaceKey") { args[property.Name] = Workspace; continue; }
 				if (required.Contains(property.Name)) args[property.Name] = GarbageFor(property.Value);
 			}
 		}
-
-		// search_reindex's scope requirement is ARGUMENT-DEPENDENT, not a fixed per-tool scope: the
-		// default (omitted `tier`, meaning "all") resets every ENABLED tier and asserts write on each
-		// one it touches, so with both Tasks and Memory features on it legitimately needs
-		// tasks:write AND memory:write together — a memory-only key genuinely cannot run the default.
-		// It CAN run tier:"memory" alone, which is the fair question this sweep asks: can a
-		// memory:read/write key use this tool AT ALL, not can it use every mode of it. Pinning this one
-		// non-required argument keeps the rest of the sweep fully generic.
-		if (toolName == "search_reindex") args["tier"] = "memory";
 
 		return args;
 	}
@@ -279,7 +213,6 @@ public sealed class McpToolScopeFilterTests : IClassFixture<McpToolScopeFilterFi
 		_ => null,
 	};
 
-	// Same envelope shape McpErrorEnvelopeFilter writes: {"error":{"type":...,"message":...}}.
 	static (string Type, string Message) ErrorOf(string text)
 	{
 		try
@@ -291,9 +224,376 @@ public sealed class McpToolScopeFilterTests : IClassFixture<McpToolScopeFilterFi
 		}
 		catch (JsonException)
 		{
-			// Not the envelope — fall through and report the raw text as unparsed.
+			// Not the envelope — report the raw text as unparsed.
 		}
 
 		return ("(unparsed)", text);
 	}
+
+	public static bool IsScopeRefusal((string Type, string Message)? error) =>
+		error is { Type: "UnauthorizedAccessException" } e
+		&& e.Message.Contains("lacks required scope", StringComparison.Ordinal);
+}
+
+public sealed class McpToolScopeFilterTests : IClassFixture<McpScopeProbeHost>
+{
+	readonly McpScopeProbeHost _host;
+	public McpToolScopeFilterTests(McpScopeProbeHost host) => _host = host;
+
+	// The restricted keys every sweep runs under. `memory:read` is the single READ-ONLY scope (a
+	// read+write fixture would hide a write tool leaking to a read key); `tasks:read` is the case the
+	// module-level table got wrong (it showed tasks_upsert & co.); `memory:read,memory:write` is the
+	// scope set of the original report.
+	public static TheoryData<string> RestrictedKeys => new() { "memory:read", "tasks:read", "memory:read,memory:write" };
+
+	static string[] Scopes(string csv) => csv.Split(',');
+
+	// Guard the guard: a filter that hid EVERYTHING, or returned the full list, would make every
+	// sweep below pass vacuously or for the wrong reason.
+	[Theory]
+	[MemberData(nameof(RestrictedKeys))]
+	public async Task Sanity_FilterActuallyTrimmedTheList(string scopes)
+	{
+		var listed = await _host.ListedFor(Scopes(scopes));
+		listed.Should().NotBeEmpty();
+		listed.Should().HaveCountLessThan(_host.AllTools.Count / 2,
+			"a key holding one module's scopes must see a small slice of the surface");
+		listed.Should().Contain(["whoami", "tool_describe", "share_revoke"],
+			"tools that declare [RequiresNoScope] stay visible to every key");
+	}
+
+	// tools/list is EXACTLY the declared-and-satisfied set — no reader of its own.
+	[Theory]
+	[MemberData(nameof(RestrictedKeys))]
+	public async Task Listing_IsExactlyTheToolsWhoseDeclarationTheKeySatisfies(string scopes)
+	{
+		var granted = new HashSet<string>(Scopes(scopes), StringComparer.Ordinal);
+		var expected = _host.AllTools.Select(t => t.ProtocolTool.Name)
+			.Where(n => McpToolScopes.Declared[n].IsSatisfiedBy(granted))
+			.Order(StringComparer.Ordinal);
+		(await _host.ListedFor(Scopes(scopes))).Should().Equal(expected);
+	}
+
+	[Fact]
+	public async Task TasksRead_DoesNotSeeTheWriteVerbs()
+	{
+		var listed = await _host.ListedFor(["tasks:read"]);
+		listed.Should().Contain(["tasks_search", "tasks_node_get", "comments_search", "session_get"]);
+		listed.Should().NotContain(["tasks_upsert", "tasks_board_create", "comments_upsert", "relations_create",
+			"session_append", "tasks_board_adopt", "tasks_methodology_rules_upsert"]);
+	}
+
+	[Fact]
+	public async Task MemoryRead_DoesNotSeeTheWriteVerbs()
+	{
+		var listed = await _host.ListedFor(["memory:read"]);
+		listed.Should().Contain(["memory_search", "memory_get"]);
+		listed.Should().NotContain(["memory_upsert", "memory_remember", "memory_store_create", "search_reindex"]);
+	}
+
+	// The original bug's families, named so a fix that only half-works cannot pass by omission.
+	[Theory]
+	[InlineData("apikey_create")]
+	[InlineData("apikey_list")]
+	[InlineData("project_create")]
+	[InlineData("llm_config_get")]
+	[InlineData("llm_embed")]
+	[InlineData("comments_upsert")]
+	[InlineData("comments_search")]
+	[InlineData("relations_list")]
+	[InlineData("health_search")]
+	[InlineData("tasks_search")]
+	[InlineData("data_query")]
+	[InlineData("deploy_list")]
+	[InlineData("config_binding_search")]
+	[InlineData("log_query")]
+	public async Task KnownFamilies_AreGatedForAMemoryKey(string tool) =>
+		(await _host.ListedFor(["memory:read", "memory:write"])).Should().NotContain(tool);
+
+	[Fact]
+	public async Task AdminProvision_StillSeesEverything() =>
+		(await _host.ListedFor(["admin:provision"])).Should().HaveCount(_host.AllTools.Count,
+			"an admin:provision key can mint itself any scope, so hiding tools from it saves nothing — the "
+			+ "fail-open branch stays (reserve's advice on the idea)");
+
+	// DIRECT: a listed tool is never refused on the scope axis.
+	[Theory]
+	[MemberData(nameof(RestrictedKeys))]
+	public async Task EveryVisibleTool_InvokesPastTheScopeCheck(string scopes)
+	{
+		var violations = new List<string>();
+		foreach (var tool in await _host.ListedFor(Scopes(scopes)))
+		{
+			var error = await _host.Call(Scopes(scopes), tool, DirectSweepArgs(tool, Scopes(scopes)));
+			if (McpScopeProbeHost.IsScopeRefusal(error)) violations.Add($"{tool}: {error!.Value.Message}");
+		}
+
+		violations.Should().BeEmpty(
+			$"tools/list must never show a [{scopes}] key a tool whose invocation it then refuses on scope:\n"
+			+ string.Join("\n", violations));
+	}
+
+	// search_reindex is listed on its any-of FLOOR (memory:write OR tasks:write); its default `tier`
+	// (all) then asks the body for EVERY enabled tier's write scope, which a single-module key does not
+	// hold. The fair direct question is "can this key use the tool at all", so the sweep picks the
+	// tier the key's scope covers — the one argument-dependent tool on the surface.
+	static IReadOnlyDictionary<string, object?>? DirectSweepArgs(string tool, string[] scopes) =>
+		tool == "search_reindex"
+			? new Dictionary<string, object?> { ["tier"] = scopes.Contains("memory:write") ? "memory" : "tasks" }
+			: null;
+
+	// MIRROR: an unlisted tool is refused — and refused ON SCOPE, naming a scope the declaration
+	// requires and the key lacks. Hiding is not the boundary; this proves the gate still is.
+	[Theory]
+	[MemberData(nameof(RestrictedKeys))]
+	public async Task EveryHiddenTool_IsRefusedExactlyOnTheScopeCheck(string scopes)
+	{
+		var granted = new HashSet<string>(Scopes(scopes), StringComparer.Ordinal);
+		var listed = (await _host.ListedFor(Scopes(scopes))).ToHashSet(StringComparer.Ordinal);
+		var hidden = _host.AllTools.Select(t => t.ProtocolTool.Name).Where(n => !listed.Contains(n)).ToList();
+		hidden.Should().NotBeEmpty();
+
+		var violations = new List<string>();
+		foreach (var tool in hidden)
+		{
+			var error = await _host.Call(Scopes(scopes), tool);
+			if (!McpScopeProbeHost.IsScopeRefusal(error))
+			{
+				violations.Add($"{tool}: {(error is { } e ? e.Type + ": " + e.Message : "SUCCEEDED")}");
+				continue;
+			}
+
+			var named = Regex.Match(error!.Value.Message, "lacks required scope '([^']+)'").Groups[1].Value;
+			var requirement = McpToolScopes.Declared[tool];
+			if (granted.Contains(named) || !requirement.Scopes.Contains(named))
+				violations.Add($"{tool}: refused naming '{named}', declared {string.Join("+", requirement.Scopes)}");
+		}
+
+		violations.Should().BeEmpty(
+			$"every tool hidden from a [{scopes}] key must be refused by the scope gate, naming a declared scope "
+			+ "the key lacks:\n" + string.Join("\n", violations));
+	}
+
+	// tool_describe reads the canonical ToolCollection, not the trimmed listing — so it still
+	// describes a tool this key cannot see (the whoami catalog names it; this explains it).
+	[Fact]
+	public async Task ToolDescribe_DescribesAHiddenTool()
+	{
+		(await _host.ListedFor(["memory:read"])).Should().NotContain("tasks_upsert");
+		var client = await _host.ClientFor(["memory:read"]);
+		var result = await client.CallToolAsync("tool_describe", new Dictionary<string, object?> { ["name"] = "tasks_upsert" });
+		result.IsError.Should().NotBe(true);
+		result.StructuredContent!.Value.GetProperty("name").GetString().Should().Be("tasks_upsert");
+	}
+
+	[Fact]
+	public async Task WhoAmI_CatalogsTheWholeSurface_WithGrantedFlags()
+	{
+		var client = await _host.ClientFor(["memory:read"]);
+		var result = await client.CallToolAsync("whoami", new Dictionary<string, object?>());
+		result.IsError.Should().NotBe(true);
+		var root = result.StructuredContent!.Value;
+
+		// existing fields unchanged
+		root.GetProperty("project").GetString().Should().Be(McpScopeProbeHost.ProjectKey);
+		root.GetProperty("scopes").EnumerateArray().Select(e => e.GetString()).Should().Equal("memory:read");
+
+		var modules = root.GetProperty("modules").EnumerateArray().ToDictionary(
+			m => m.GetProperty("module").GetString()!,
+			m => (Scopes: m.GetProperty("scopes").EnumerateArray()
+					.ToDictionary(s => s.GetProperty("scope").GetString()!, s => s.GetProperty("granted").GetBoolean()),
+				Tools: m.GetProperty("tools").EnumerateArray().Select(t => t.GetString()!).ToList()),
+			StringComparer.Ordinal);
+
+		// Every registered tool is named somewhere — the hidden ones above all.
+		modules.Values.SelectMany(m => m.Tools).Distinct().Should()
+			.BeEquivalentTo(_host.AllTools.Select(t => t.ProtocolTool.Name));
+
+		modules["Memory"].Scopes.Should().Contain(new KeyValuePair<string, bool>("memory:read", true))
+			.And.Contain(new KeyValuePair<string, bool>("memory:write", false));
+		modules["Memory"].Tools.Should().Contain(["memory_search", "memory_upsert", "search_reindex"]);
+		modules["Logs"].Scopes.Should().Contain(new KeyValuePair<string, bool>("logs:query", false));
+		modules["Logs"].Tools.Should().Contain(["log_query", "log_list"]);
+		modules["Tasks"].Scopes.Keys.Should().Contain(["tasks:read", "tasks:write", "tasks:approve", "methodology:write"]);
+		modules["Tasks"].Tools.Should().Contain(["tasks_upsert", "tasks_board_adopt", "search_reindex"]);
+		modules["Core"].Scopes.Should().BeEmpty();
+		modules["Core"].Tools.Should().BeEquivalentTo(
+			["whoami", "tool_describe", "share_revoke", "petbox_report_issue", "petbox_report_issue_status"]);
+	}
+}
+
+// NO TOOL LOST A SCOPE CHECK (work mcp-scope-declaration-visibility-catalog).
+//
+// The declaration replaced ~100 unconditional ModuleMcp.AssertScope calls in tool bodies. Before any
+// of them was deleted, the scopes every tool ENFORCED were DISCOVERED EMPIRICALLY on the pre-change
+// code (origin/main 7a803914) and frozen below: start from a key with no scopes, call the tool, and
+// while the answer is "ApiKey lacks required scope 'X'", mint a key that also holds X and call
+// again. The sequence of X's is what that tool enforced for that call. This test reruns the same
+// discovery on the current code and requires the SAME sequence for every tool — so a scope removed
+// from a declaration (or a declaration looser than the retired AssertScope) fails here by name.
+//
+// Changing an entry is legitimate only when a tool's scope requirement is being changed ON PURPOSE;
+// do it in the same commit, and say why in its message. A NEW tool needs no entry — it is checked
+// against its own declaration instead.
+public sealed class McpScopeGateEquivalenceTests : IClassFixture<McpScopeProbeHost>
+{
+	readonly McpScopeProbeHost _host;
+	public McpScopeGateEquivalenceTests(McpScopeProbeHost host) => _host = host;
+
+	// Discovered at 7a803914 with every feature on and garbage arguments (the probe below). The
+	// governance verbs' second scope and search_reindex's two tier scopes are ordinary body asserts
+	// that the discovery walked through one refusal at a time.
+	static readonly Dictionary<string, string[]> Baseline = new(StringComparer.Ordinal)
+	{
+		["apikey_create"] = ["admin:provision"],
+		["apikey_delete"] = ["admin:provision"],
+		["apikey_list"] = ["admin:provision"],
+		["apikey_update"] = ["admin:provision"],
+		["comments_delete"] = ["tasks:write"],
+		["comments_delta"] = ["tasks:read"],
+		["comments_get"] = ["tasks:read"],
+		["comments_search"] = ["tasks:read"],
+		["comments_upsert"] = ["tasks:write"],
+		["config_binding_delete"] = ["config:write"],
+		["config_binding_get"] = ["config:read"],
+		["config_binding_search"] = ["config:read"],
+		["config_binding_upsert"] = ["config:write"],
+		["data_exec"] = ["data:write"],
+		["data_query"] = ["data:read"],
+		["data_schema_apply"] = ["data:schema"],
+		["db_create"] = ["data:schema"],
+		["db_delete"] = ["data:schema"],
+		["db_describe"] = ["data:read"],
+		["db_list"] = ["data:read"],
+		["deploy_delete"] = ["deploy:write"],
+		["deploy_list"] = ["deploy:read"],
+		["deploy_move"] = ["deploy:write"],
+		["deploy_node_delete"] = ["deploy:write"],
+		["deploy_node_list"] = ["deploy:read"],
+		["deploy_node_upsert"] = ["deploy:write"],
+		["deploy_start"] = ["deploy:write"],
+		["deploy_stop"] = ["deploy:write"],
+		["deploy_upsert"] = ["deploy:write"],
+		["health_search"] = ["health:read"],
+		["llm_chat"] = ["llm:invoke"],
+		["llm_config_get"] = ["llm:admin"],
+		["llm_config_upsert"] = ["llm:admin"],
+		["llm_embed"] = ["llm:invoke"],
+		["llm_rerank"] = ["llm:invoke"],
+		["log_create"] = ["logs:admin"],
+		["log_delete"] = ["logs:admin"],
+		["log_list"] = ["logs:query"],
+		["log_query"] = ["logs:query"],
+		["log_update"] = ["logs:admin"],
+		["memory_delta"] = ["memory:read"],
+		["memory_get"] = ["memory:read"],
+		["memory_remember"] = ["memory:write"],
+		["memory_search"] = ["memory:read"],
+		["memory_store_create"] = ["memory:write"],
+		["memory_store_delete"] = ["memory:write"],
+		["memory_store_list"] = ["memory:read"],
+		["memory_upsert"] = ["memory:write"],
+		["petbox_report_issue"] = [],
+		["petbox_report_issue_status"] = [],
+		["project_create"] = ["admin:provision"],
+		["project_list"] = ["admin:provision"],
+		["relations_create"] = ["tasks:write"],
+		["relations_delete"] = ["tasks:write"],
+		["relations_list"] = ["tasks:read"],
+		["search_reindex"] = ["memory:write", "tasks:write"],
+		["session_append"] = ["tasks:write"],
+		["session_delete"] = ["tasks:write"],
+		["session_get"] = ["tasks:read"],
+		["session_search"] = ["tasks:read"],
+		["session_upsert"] = ["tasks:write"],
+		["share_revoke"] = [],
+		["tasks_board_adopt"] = ["tasks:write", "methodology:write"],
+		["tasks_board_close"] = ["tasks:write", "methodology:write"],
+		["tasks_board_create"] = ["tasks:write"],
+		["tasks_board_delete"] = ["tasks:write", "methodology:write"],
+		["tasks_board_list"] = ["tasks:read"],
+		["tasks_board_reopen"] = ["tasks:write", "methodology:write"],
+		["tasks_board_set_wire"] = ["tasks:write", "methodology:write"],
+		["tasks_delta"] = ["tasks:read"],
+		["tasks_methodology_active_get"] = ["tasks:read"],
+		["tasks_methodology_close"] = ["tasks:write", "methodology:write"],
+		["tasks_methodology_create"] = ["tasks:write", "methodology:write"],
+		["tasks_methodology_get"] = ["tasks:read"],
+		["tasks_methodology_guide"] = ["tasks:read"],
+		["tasks_methodology_list"] = ["tasks:read"],
+		["tasks_methodology_rules_get"] = ["tasks:read"],
+		["tasks_methodology_rules_upsert"] = ["tasks:write", "methodology:write"],
+		["tasks_methodology_set_active"] = ["tasks:write", "methodology:write"],
+		["tasks_methodology_set_description"] = ["tasks:write"],
+		["tasks_methodology_template_delete"] = ["tasks:write"],
+		["tasks_methodology_template_get"] = ["tasks:read"],
+		["tasks_methodology_template_list"] = ["tasks:read"],
+		["tasks_methodology_template_snapshot"] = ["tasks:write"],
+		["tasks_methodology_template_upsert"] = ["tasks:write"],
+		["tasks_methodology_utility_get"] = ["tasks:read"],
+		["tasks_methodology_utility_upsert"] = ["tasks:write", "methodology:write"],
+		["tasks_node_get"] = ["tasks:read"],
+		["tasks_observation_promote"] = ["tasks:write"],
+		["tasks_owner_digest"] = ["tasks:read"],
+		["tasks_recurring_delete"] = ["tasks:write"],
+		["tasks_recurring_list"] = ["tasks:read"],
+		["tasks_recurring_upsert"] = ["tasks:write"],
+		["tasks_schedule_run"] = ["tasks:write"],
+		["tasks_search"] = ["tasks:read"],
+		["tasks_upsert"] = ["tasks:write"],
+		["tasks_workflow"] = ["tasks:read"],
+		["tool_describe"] = [],
+		["whoami"] = [],
+	};
+
+	static readonly Regex Lacks = new("lacks required scope '([^']+)'", RegexOptions.Compiled);
+
+	async Task<List<string>> Discover(string tool)
+	{
+		var held = new List<string>();
+		for (var step = 0; step < 8; step++)
+		{
+			var error = await _host.Call(held, tool);
+			if (!McpScopeProbeHost.IsScopeRefusal(error)) return held;
+			held.Add(Lacks.Match(error!.Value.Message).Groups[1].Value);
+		}
+
+		throw new InvalidOperationException($"{tool}: scope discovery did not converge ({string.Join(",", held)})");
+	}
+
+	[Fact]
+	public async Task EveryTool_EnforcesExactlyTheScopesItEnforcedBeforeTheDeclaration()
+	{
+		var mismatches = new List<string>();
+		foreach (var tool in _host.AllTools.Select(t => t.ProtocolTool.Name))
+		{
+			var discovered = await Discover(tool);
+			if (Baseline.TryGetValue(tool, out var before))
+			{
+				if (!discovered.SequenceEqual(before))
+					mismatches.Add($"{tool}: enforced [{string.Join(", ", before)}] before, now [{string.Join(", ", discovered)}]");
+			}
+			else
+			{
+				// A tool newer than the baseline: its gate must enforce at least what it declares.
+				var requirement = McpToolScopes.Declared[tool];
+				var ok = requirement.Kind switch
+				{
+					McpScopeRequirementKind.All => requirement.Scopes.All(discovered.Contains),
+					McpScopeRequirementKind.Any => requirement.Scopes.Any(discovered.Contains),
+					_ => true,
+				};
+				if (!ok) mismatches.Add($"{tool}: declares {string.Join("+", requirement.Scopes)}, enforced [{string.Join(", ", discovered)}]");
+			}
+		}
+
+		mismatches.Should().BeEmpty(
+			"the scope each tool enforces must not change as a side effect of moving the check into the "
+			+ "declaration — see the header of this class before editing the baseline:\n" + string.Join("\n", mismatches));
+	}
+
+	[Fact]
+	public void TheBaseline_NamesOnlyToolsThatExist() =>
+		Baseline.Keys.Except(_host.AllTools.Select(t => t.ProtocolTool.Name)).Should().BeEmpty(
+			"a removed or renamed tool's baseline line is stale — delete it (or rename it with the tool)");
 }

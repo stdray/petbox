@@ -6,9 +6,7 @@ using PetBox.Core.Features;
 
 namespace PetBox.Web.Mcp;
 
-// Shared guards + JSON helpers for the tasks_*/memory_*/session_* MCP tools.
-// Mirrors the private AssertProject/AssertScope helpers in DataTools/LogTools,
-// factored out so the three new tool classes don't each copy them. The claims
+// Shared guards + JSON helpers for the MCP tools. The claims
 // (ApiKeyAuthenticationHandler.ProjectClaim / .ScopesClaim) are set by that handler;
 // the scope reading itself is ApiKeyScopes' — see spec `access-permission-uniform`.
 static class ModuleMcp
@@ -72,6 +70,11 @@ static class ModuleMcp
 	// for it. One reading, three callers (injection, existence check, both PEPs).
 	public static string? DefaultProjectOf(ClaimsPrincipal? user) => CallerTenant.DefaultProjectOf(user);
 
+	// NOT the per-tool scope gate any more: what EVERY call of a tool needs is declared on the tool
+	// ([RequiresScope] & co., McpToolScopes) and enforced by McpToolScopeFilter's call gate before the
+	// body runs. This stays for the ARGUMENT-DEPENDENT extras a body asks for on some calls only
+	// (search_reindex's per-tier write scope, session_search's memory:read on the `q` branch) — same
+	// refusal text as the gate, so a caller sees one shape either way.
 	public static void AssertScope(IHttpContextAccessor http, string required)
 	{
 		if (!HasScope(http, required))

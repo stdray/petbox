@@ -58,6 +58,7 @@ public static class LlmRouterTools
 		IReadOnlyList<LlmRoute>? Routes = null,
 		Dictionary<string, string>? ApiKeys = null);
 
+	[RequiresScope(ApiKeyScopes.LlmAdmin)]
 	[McpServerTool(Name = "llm_config_get", Title = "Get LLM router registry", ReadOnly = true, UseStructuredContent = true, OutputSchemaType = typeof(LlmConfigGetResult))]
 	[Description("""
 		Return the LLM router registry DECLARED at the level THIS PROJECT READS AND WRITES (endpoints
@@ -80,13 +81,13 @@ public static class LlmRouterTools
 		string projectKey, CancellationToken ct = default)
 	{
 		ModuleMcp.AssertFeature(features, Feature.LlmRouter);
-		ModuleMcp.AssertScope(http, ApiKeyScopes.LlmAdmin);
 		var declared = await registry.GetDeclaredAsync(projectKey, ct);
 		return new LlmConfigGetResult(
 			declared.Registry.Endpoints, declared.Registry.Routes, declared.Version,
 			declared.Level, declared.ServedBy);
 	}
 
+	[RequiresScope(ApiKeyScopes.LlmAdmin)]
 	[McpServerTool(Name = "llm_config_upsert", Title = "Upsert LLM router registry", UseStructuredContent = true, OutputSchemaType = typeof(LlmConfigSetResult))]
 	[Description("""
 		PATCH the LLM router registry AT THE LEVEL THIS PROJECT WRITES TO, with optimistic
@@ -139,7 +140,6 @@ public static class LlmRouterTools
 		CancellationToken ct = default)
 	{
 		ModuleMcp.AssertFeature(features, Feature.LlmRouter);
-		ModuleMcp.AssertScope(http, ApiKeyScopes.LlmAdmin);
 
 		var input = Deserialize<ConfigSetInput>(config)
 			?? throw new ArgumentException("config must be a JSON object with endpoints and/or routes");
@@ -155,6 +155,7 @@ public static class LlmRouterTools
 			written.Level);
 	}
 
+	[RequiresScope(ApiKeyScopes.LlmInvoke)]
 	[McpServerTool(Name = "llm_embed", Title = "Embed text via the router", UseStructuredContent = true, OutputSchemaType = typeof(EmbedResult))]
 	[Description("""
 		Embed inputs through the router's embed chain (primary -> fallback). `inputs` is a JSON
@@ -170,12 +171,12 @@ public static class LlmRouterTools
 		string? tier = null, CancellationToken ct = default)
 	{
 		ModuleMcp.AssertFeature(features, Feature.LlmRouter);
-		ModuleMcp.AssertScope(http, ApiKeyScopes.LlmInvoke);
 
 		var texts = Deserialize<List<string>>(inputs) ?? throw new ArgumentException("inputs must be a JSON array of strings");
 		return await client.EmbedAsync(projectKey, new EmbedRequest(texts, tier), ct);
 	}
 
+	[RequiresScope(ApiKeyScopes.LlmInvoke)]
 	[McpServerTool(Name = "llm_rerank", Title = "Rerank documents via the router", UseStructuredContent = true, OutputSchemaType = typeof(RerankResult))]
 	[Description("""
 		Rerank `documents` (JSON array of strings) against `query` through the rerank chain.
@@ -199,12 +200,12 @@ public static class LlmRouterTools
 		int? topN = null, string? tier = null, CancellationToken ct = default)
 	{
 		ModuleMcp.AssertFeature(features, Feature.LlmRouter);
-		ModuleMcp.AssertScope(http, ApiKeyScopes.LlmInvoke);
 
 		var docs = Deserialize<List<string>>(documents) ?? throw new ArgumentException("documents must be a JSON array of strings");
 		return await client.RerankAsync(projectKey, new RerankRequest(query, docs, topN, tier), ct);
 	}
 
+	[RequiresScope(ApiKeyScopes.LlmInvoke)]
 	[McpServerTool(Name = "llm_chat", Title = "Chat / summarize via the router", UseStructuredContent = true, OutputSchemaType = typeof(ChatResult))]
 	[Description("""
 		Run a chat/summary completion through the chat chain. `messages` is a JSON array of
@@ -222,7 +223,6 @@ public static class LlmRouterTools
 		CancellationToken ct = default)
 	{
 		ModuleMcp.AssertFeature(features, Feature.LlmRouter);
-		ModuleMcp.AssertScope(http, ApiKeyScopes.LlmInvoke);
 
 		var msgs = Deserialize<List<ChatMessage>>(messages);
 		if (msgs is null || msgs.Count == 0) throw new ArgumentException("messages must be a non-empty JSON array of { role, content }");

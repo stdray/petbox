@@ -28,6 +28,7 @@ namespace PetBox.Web.Mcp;
 [TenantFrom(TenantSource.Argument, "projectKey")]
 public static class DataTools
 {
+	[RequiresScope(ApiKeyScopes.DataSchema)]
 	[McpServerTool(Name = "data_schema_apply", Title = "Apply schema migration", Idempotent = true, UseStructuredContent = true, OutputSchemaType = typeof(DataSchemaApplyResult))]
 	[Description("Applies a named SQL migration via DbUp + hash-based idempotency. Re-applying with same name+sql is a no-op (kind: 'AlreadyApplied'). Same name with different sql, or a SQL/DbUp failure, is a REFUSAL through the standard error envelope (not a field of a successful response) — the Conflict error names both the existing and the provided hash. Requires data:schema scope.")]
 	public static async Task<DataSchemaApplyResult> SchemaApplyAsync(
@@ -39,8 +40,6 @@ public static class DataTools
 		[Description("SQL to apply. Multi-statement OK; PRAGMA statements may not parse with the SQLite dialect parser.")] string sql,
 		CancellationToken ct = default)
 	{
-		AssertScope(http, ApiKeyScopes.DataSchema);
-
 		var result = await dataSql.ApplySchemaAsync(projectKey, dbName, migrationName, sql, ct);
 		// data_schema_apply used to be the one tool on the surface with its own error channel
 		// around McpErrorEnvelopeFilter: Failed/Conflict rode home as FIELDS of a successful
@@ -65,6 +64,7 @@ public static class DataTools
 		};
 	}
 
+	[RequiresScope(ApiKeyScopes.DataRead)]
 	[McpServerTool(Name = "data_query", Title = "Run SQL query", ReadOnly = true, UseStructuredContent = true, OutputSchemaType = typeof(DataQueryResult))]
 	[Description("Executes a parameterized SELECT and returns rows as a JSON array. Requires data:read scope.")]
 	public static async Task<DataQueryResult> QueryAsync(
@@ -77,11 +77,11 @@ public static class DataTools
 		[Description("Optional parameter list as a JSON array of { name, value }. Pet builds via linq2db's ToSqlQuery().Parameters.")] JsonElement? @params = null,
 		CancellationToken ct = default)
 	{
-		AssertScope(http, ApiKeyScopes.DataRead);
 		var rows = await dataSql.QueryAsync(projectKey, dbName, sql, ParseArgs(@params), TimeoutSeconds, ct);
 		return new DataQueryResult(rows);
 	}
 
+	[RequiresScope(ApiKeyScopes.DataWrite)]
 	[McpServerTool(Name = "data_exec", Title = "Run SQL exec (INSERT/UPDATE/DELETE/DDL)", UseStructuredContent = true, OutputSchemaType = typeof(DataExecResult))]
 	[Description("Executes a non-query statement. Returns affected row count. PRAGMA writable_schema / temp_store_directory / data_store_directory / trusted_schema are denied, and so is max_page_count — it IS the disk quota, so raising it would lift your own cap. Writing past the quota surfaces SQLITE_FULL as a quota error. Requires data:write scope.")]
 	public static async Task<DataExecResult> ExecAsync(
@@ -94,7 +94,6 @@ public static class DataTools
 		JsonElement? @params = null,
 		CancellationToken ct = default)
 	{
-		AssertScope(http, ApiKeyScopes.DataWrite);
 		var affected = await dataSql.ExecAsync(projectKey, dbName, sql, ParseArgs(@params), TimeoutSeconds, ct);
 		return new DataExecResult(affected);
 	}
@@ -117,12 +116,5 @@ public static class DataTools
 			list.Add(SqlArg.FromJson(name, value));
 		}
 		return list;
-	}
-
-	static void AssertScope(IHttpContextAccessor accessor, string required)
-	{
-		var ctx = accessor.HttpContext ?? throw new InvalidOperationException("No HttpContext");
-		if (!ApiKeyScopes.Granted(ctx.User, required))
-			throw new UnauthorizedAccessException($"ApiKey lacks required scope '{required}'");
 	}
 }

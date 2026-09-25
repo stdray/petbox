@@ -31,6 +31,7 @@ namespace PetBox.Web.Mcp;
 [TenantFrom(TenantSource.Argument, "projectKey")]
 public static class CommentTools
 {
+	[RequiresScope(ApiKeyScopes.TasksWrite)]
 	[McpServerTool(Name = "comments_upsert", Title = "Upsert node comments", UseStructuredContent = true, OutputSchemaType = typeof(CommentsUpsertResult))]
 	[Description("""
 		Batch declarative upsert of node comments (uniform-entity-verbs). Each item: {id?, node?,
@@ -106,7 +107,6 @@ public static class CommentTools
 		CancellationToken ct = default)
 	{
 		ModuleMcp.AssertFeature(features, Feature.Tasks);
-		ModuleMcp.AssertScope(http, ApiKeyScopes.TasksWrite);
 		// An empty batch is almost always a client bug (a filter emptied the list, the call still
 		// went out) — reject it instead of silently no-opping. `items` maps 1:1 into parsed comment
 		// items below (nothing is filtered out), so the raw array length IS the effective batch size.
@@ -166,6 +166,7 @@ public static class CommentTools
 			warning);
 	}
 
+	[RequiresScope(ApiKeyScopes.TasksRead)]
 	[McpServerTool(Name = "comments_search", Title = "Read node comments (list + search)", ReadOnly = true, UseStructuredContent = true, OutputSchemaType = typeof(CommentsSearchResult))]
 	[Description("THE comment read verb — one tool for LISTING (no `q`) and SEARCH (`q`). Without `q`: a deterministic chronological list of active comments, optionally scoped to one `board` and/or one `node` (a node reference — a slug key or a 32-hex NodeId, both accepted). With `q`: a lexical FTS relevance SELECTION over comment bodies in the same scope, NOT an enumeration (semantic isn't wired for comments yet, so a query runs on the lexical floor — `retrievers` reports semantic:false). Bodies follow the uniform bodyLen knob (omitted = a ~240-char snippet in BOTH modes, listing and `q` alike; fetch one full comment with comments_get). Hard ~30k-char output budget: overflow rows are prefix-cut + flagged (truncated/omitted/hint). `includeUrl` adds an absolute `url` per row — the owner node's page plus this comment's `#comment-{id}` anchor — the same affordance tasks_search has; `slug` (when the comment has one) is its human-readable address within that node. Tracking changes since a known version cursor (added/updated/removed, including tombstones this search cannot show)? Use comments_delta instead — it's the way to enumerate a board's comments incrementally. Requires tasks:read.\n\nCost — your context pays it. Same query, same rows: bodyLen:0 = 1x, the default snippet ~1.5-2x, bodyLen:-1 ~3x+ and unbounded per row — a single long comment can add thousands of chars on its own.\nCheap path: search with bodyLen:0, read the row identities, then comments_get the 1-3 comments you actually need. Use -1 only when you already know the ids and there are few.\nPulling full bodies across a wide limit \"just in case\" is the most expensive habit available here: it routinely spends a third of the response budget on text you will not read.")]
 	public static async Task<CommentsSearchResult> SearchAsync(
@@ -180,7 +181,6 @@ public static class CommentTools
 		CancellationToken ct = default)
 	{
 		ModuleMcp.AssertFeature(features, Feature.Tasks);
-		ModuleMcp.AssertScope(http, ApiKeyScopes.TasksRead);
 
 		var hasQuery = !string.IsNullOrWhiteSpace(q);
 		string? resolvedNode = null;
@@ -204,6 +204,7 @@ public static class CommentTools
 			: new CommentsSearchResult(kept, retrievers, Truncated: true, Omitted: omitted, Hint: SearchBudgetHint);
 	}
 
+	[RequiresScope(ApiKeyScopes.TasksRead)]
 	[McpServerTool(Name = "comments_delta", Title = "Comments delta since cursor", ReadOnly = true, UseStructuredContent = true, OutputSchemaType = typeof(CommentsUpsertResult))]
 	[Description("Return comments added/updated/removed on a board since `sinceVersion` (no writes) — THE cursor/catch-up surface and the way to enumerate a board's comments incrementally (comments_search's `q` is a relevance slice, never an enumeration; a comments_upsert ack echoes only its own call — pass its `currentVersion` here for the full board comment delta). Bodies follow the uniform bodyLen knob (compact by default). Requires tasks:read.")]
 	public static async Task<CommentsUpsertResult> DeltaAsync(
@@ -213,7 +214,6 @@ public static class CommentTools
 		CancellationToken ct = default)
 	{
 		ModuleMcp.AssertFeature(features, Feature.Tasks);
-		ModuleMcp.AssertScope(http, ApiKeyScopes.TasksRead);
 		var d = await comments.DeltaAsync(projectKey, board, sinceVersion, ct);
 		return new CommentsUpsertResult(
 			Applied: true, d.CurrentVersion,
@@ -223,6 +223,7 @@ public static class CommentTools
 			[]);
 	}
 
+	[RequiresScope(ApiKeyScopes.TasksRead)]
 	[McpServerTool(Name = "comments_get", Title = "Get one comment in full", ReadOnly = true, UseStructuredContent = true, OutputSchemaType = typeof(CommentView))]
 	[Description("Return ONE comment in FULL by its id (the addressed single read; mirrors memory_get/tasks_node_get). A missing/deleted id is a not-found ERROR (never a bare null — a declared outputSchema demands structured content, so the error rides the isError channel). The body is COMPLETE by default; the uniform bodyLen knob still applies. `includeUrl` adds an absolute `url` — the owner node's page plus this comment's `#comment-{id}` anchor. Requires tasks:read.")]
 	public static async Task<CommentView> GetAsync(
@@ -233,12 +234,12 @@ public static class CommentTools
 		CancellationToken ct = default)
 	{
 		ModuleMcp.AssertFeature(features, Feature.Tasks);
-		ModuleMcp.AssertScope(http, ApiKeyScopes.TasksRead);
 		var c = await comments.GetAsync(projectKey, id, ct)
 			?? throw new InvalidOperationException($"comment '{id}' not found or already deleted in project '{projectKey}'");
 		return Shape(c, bodyLen, ModuleMcp.FullBody, await UrlPrefixAsync(http, tasks, projectKey, includeUrl, ct));
 	}
 
+	[RequiresScope(ApiKeyScopes.TasksWrite)]
 	[McpServerTool(Name = "comments_delete", Title = "Delete a node comment", Destructive = true, UseStructuredContent = true, OutputSchemaType = typeof(CommentDeleteResult))]
 	[Description("Soft-delete a comment. REJECTED if it still has active replies — delete the children first. Returns {deleted}. Requires tasks:write.")]
 	public static async Task<CommentDeleteResult> DeleteAsync(
@@ -247,7 +248,6 @@ public static class CommentTools
 		CancellationToken ct = default)
 	{
 		ModuleMcp.AssertFeature(features, Feature.Tasks);
-		ModuleMcp.AssertScope(http, ApiKeyScopes.TasksWrite);
 		return new CommentDeleteResult(await comments.DeleteAsync(projectKey, board, id, ct));
 	}
 
