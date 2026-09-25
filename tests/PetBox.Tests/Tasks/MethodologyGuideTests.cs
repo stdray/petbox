@@ -131,8 +131,12 @@ public sealed class MethodologyGuideTests : IClassFixture<MethodologyGuideFixtur
 		// The approve gates — 'agent never self-sets Done/accepted', born from RequiresApproval.
 		md.Should().Contain("The agent NEVER performs Review -> Done");
 		md.Should().Contain("The agent NEVER performs review -> accepted");
-		// The idea-review gate, born from PreconditionArtifact.
+		// The idea-review gate, born from PreconditionArtifact — and, spec-plan-definition-
+		// invisible-to-agents, the transition's Description rides the same line so the gate says
+		// what belongs in the artifact, not just its slug.
 		md.Should().Contain("Add an `artifact:spec_plan` comment on the node before exploring -> review");
+		md.Should().Contain("spec_plan — план правок дерева спеки");
+		md.Should().Contain("Не план работ.");
 		// The work creation constraint, born from LinkConstraints.
 		md.Should().Contain("A new `feature` must carry a `task_spec` link (provide `links.task_spec`");
 		// Quartet tag axes.
@@ -165,7 +169,8 @@ public sealed class MethodologyGuideTests : IClassFixture<MethodologyGuideFixtur
 		var inv = Invariants(guide);
 		inv.Should().Contain(("work", "approval_gate", "Review -> Done"));
 		inv.Should().Contain(("ideas", "approval_gate", "review -> accepted"));
-		inv.Should().Contain(("ideas", "precondition_artifact", "exploring -> review requires artifact:spec_plan"));
+		inv.Should().Contain(("ideas", "precondition_artifact",
+			"exploring -> review requires artifact:spec_plan — spec_plan — план правок дерева спеки: какие листья появятся, изменятся или станут deprecated при принятии идеи (ключ листа, нормативная строка, partOf). Не план работ. Подробно: doc/methodology.md, раздел про spec_plan."));
 		// engine-v2: constraints carry their declared target, effects render as invariants.
 		inv.Should().Contain(("work", "link_constraint", "feature requires task_spec (links.task_spec) -> spec"));
 		inv.Should().Contain(("spec", "link_constraint", "spec requires idea_spec (links.idea_spec) -> ideas[accepted]"));
@@ -209,7 +214,8 @@ public sealed class MethodologyGuideTests : IClassFixture<MethodologyGuideFixtur
 		md.Should().Contain("Open (Actively triaged.)", "a status's Description renders alongside its slug");
 		md.Should().Contain("The agent NEVER performs Open -> Resolved");
 		md.Should().Contain("Open -> Junk requires a reason");
-		md.Should().Contain("Add an `artifact:triage-note` comment on the node before New -> Open");
+		md.Should().Contain("Add an `artifact:triage-note` comment on the node before New -> Open — Triage assigns severity.",
+			"spec-plan-definition-invisible-to-agents: the GATES line itself carries the transition's Description, not just the transitions list's `note:`");
 		md.Should().Contain("note: Triage assigns severity.", "a transition's Description renders as a note alongside its other gates");
 		md.Should().Contain("A new `incident` must carry a `blocks` link (provide `links.blocks`");
 		md.Should().Contain("Every incident names a related outage.", "a link constraint's Description renders alongside its cadence sentence");
@@ -233,7 +239,7 @@ public sealed class MethodologyGuideTests : IClassFixture<MethodologyGuideFixtur
 		var inv = Invariants(guide);
 		inv.Should().Contain(("support", "approval_gate", "Open -> Resolved"));
 		inv.Should().Contain(("support", "reason_required", "Open -> Junk"));
-		inv.Should().Contain(("support", "precondition_artifact", "New -> Open requires artifact:triage-note"));
+		inv.Should().Contain(("support", "precondition_artifact", "New -> Open requires artifact:triage-note — Triage assigns severity."));
 		inv.Should().Contain(("support", "link_constraint", "incident requires blocks (links.blocks)"));
 		inv.Should().Contain(("support", "tag_axes", "severity|channel"));
 		inv.Should().OnlyContain(i => i.Kind == "support",

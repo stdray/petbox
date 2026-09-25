@@ -241,7 +241,8 @@ public sealed class MethodologyGuideGateStrictnessTests
 		runtime.For("work", "feature").Should().BeEquivalentTo(MethodologyPresets.For(BoardKind.Work, "feature"));
 
 		var guide = MethodologyGuide.Render(MethodologyPresets.Name, MethodologyRuntime.PresetsOnly, "presets", null);
-		guide.Invariants.Should().Contain(new MethodologyInvariant("ideas", "precondition_artifact", "exploring -> review requires artifact:spec_plan"));
+		guide.Invariants.Should().Contain(new MethodologyInvariant("ideas", "precondition_artifact",
+			"exploring -> review requires artifact:spec_plan — spec_plan — план правок дерева спеки: какие листья появятся, изменятся или станут deprecated при принятии идеи (ключ листа, нормативная строка, partOf). Не план работ. Подробно: doc/methodology.md, раздел про spec_plan."));
 		guide.Invariants.Should().Contain(new MethodologyInvariant("intake", "reason_required", "triage -> wontfix"));
 		guide.Invariants.Should().Contain(new MethodologyInvariant("work", "approval_gate", "Review -> Done"));
 		guide.Invariants.Should().NotContain(i => i.Rule.EndsWith("_convention"));

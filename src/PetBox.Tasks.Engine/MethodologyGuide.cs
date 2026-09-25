@@ -232,8 +232,13 @@ public static class MethodologyGuide
 				}
 				else
 				{
-					md.AppendLine($"  - Add an `artifact:{a.Slug}` comment on the node before {t.From} -> {t.To}{(enforceArtifacts ? " — the transition is rejected without it." : forceNote + ".")}");
-					invariants.Add(new(kind, enforceArtifacts ? "precondition_artifact" : "precondition_artifact_convention", $"{t.From} -> {t.To} requires artifact:{a.Slug}"));
+					// spec-plan-definition-invisible-to-agents: the artifact's SLUG alone tells an
+					// agent nothing about what to write into it — append the transition's own
+					// Description (data, MethodologyTransitionDef.Description) when the definition
+					// carries one, so the required CONTENT rides the same line as the requirement.
+					var descNote = t.Description is { Length: > 0 } td ? $" — {td}" : "";
+					md.AppendLine($"  - Add an `artifact:{a.Slug}` comment on the node before {t.From} -> {t.To}{descNote}{(enforceArtifacts ? " — the transition is rejected without it." : forceNote + ".")}");
+					invariants.Add(new(kind, enforceArtifacts ? "precondition_artifact" : "precondition_artifact_convention", $"{t.From} -> {t.To} requires artifact:{a.Slug}{descNote}"));
 				}
 			}
 			if (t.Checklist is { Count: > 0 } checklist)

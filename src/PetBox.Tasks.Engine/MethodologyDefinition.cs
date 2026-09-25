@@ -267,6 +267,7 @@ public sealed record MethodologyWorkflowDef(
 					EnforceApproval = t.EffectiveEnforceApproval(strictMode),
 					EnforceArtifacts = t.EffectiveEnforceArtifacts(),
 					Checklist = t.Checklist,
+					Description = t.Description,
 				};
 			}).ToList());
 }

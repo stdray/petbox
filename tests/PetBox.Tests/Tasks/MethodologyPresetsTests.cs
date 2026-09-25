@@ -422,13 +422,21 @@ public sealed class MethodologyPresetsTests
 	{
 		var wf = Runtime.For("ideas", "idea")!;
 		wf.Transition("exploring", "review")!.PreconditionArtifact.Should().Be("spec_plan");
+		// spec-plan-definition-invisible-to-agents: the preset carries a Description too, so a
+		// FRESH quartet instance (not just $system's own rules_upsert'd copy) gets the artifact's
+		// content spelled out from birth — and GuardEngine/the guide read it off WorkflowTransition,
+		// not off the raw MethodologyTransitionDef, so it must survive ToWorkflow.
+		wf.Transition("exploring", "review")!.Description.Should().Contain("Не план работ.");
 
 		// ...and it is the ONLY precondition artifact in the whole preset surface.
 		foreach (var kind in new[] { "simple", "classic", "spec", "ideas", "intake", "work" })
 			foreach (var w in Runtime.Types(kind))
 				w.Transitions.Where(t => t.PreconditionArtifact is not null)
 					.Should().BeEquivalentTo(kind == "ideas"
-						? [new WorkflowTransition("exploring", "review", PreconditionArtifact: "spec_plan")]
+						? [new WorkflowTransition("exploring", "review", PreconditionArtifact: "spec_plan")
+							{
+								Description = "spec_plan — план правок дерева спеки: какие листья появятся, изменятся или станут deprecated при принятии идеи (ключ листа, нормативная строка, partOf). Не план работ. Подробно: doc/methodology.md, раздел про spec_plan.",
+							}]
 						: Array.Empty<WorkflowTransition>());
 	}
 

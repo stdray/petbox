@@ -10,6 +10,11 @@ namespace PetBox.Tasks.Engine.Tests;
 // well-formed, the process refuses it.
 public sealed class GuardEnginePreconditionArtifactTests
 {
+	// The live quartet preset's exploring->review Description (MethodologyPresets.cs, IdeasKind) —
+	// spec-plan-definition-invisible-to-agents: GuardEngine's refusal must carry it, not just the
+	// artifact slug, so an agent that never read the guide still learns what to write.
+	const string SpecPlanDescription = "spec_plan — план правок дерева спеки: какие листья появятся, изменятся или станут deprecated при принятии идеи (ключ листа, нормативная строка, partOf). Не план работ. Подробно: doc/methodology.md, раздел про spec_plan.";
+
 	static readonly Dictionary<string, NodeState> Exploring = Prior(State("i1", "exploring", "idea", nodeId: Id("i1")));
 
 	static MethodologyEngineContext IdeasCtx(params (string NodeId, string[] Tags)[] tags) =>
@@ -35,7 +40,7 @@ public sealed class GuardEnginePreconditionArtifactTests
 	{
 		var v = GuardEngine.RequirePreconditionArtifacts(IdeasCtx(), [State("i1", "review", "idea")], Exploring);
 		v.Should().Be(new MethodologyVerdict("i1",
-			"transition 'exploring' -> 'review' on node 'i1' requires an artifact:spec_plan comment (the transition's precondition artifact) — add the comment, then retry",
+			$"transition 'exploring' -> 'review' on node 'i1' requires an artifact:spec_plan comment (the transition's precondition artifact) — {SpecPlanDescription} — add the comment, then retry",
 			VerdictKind.InvalidOperation));
 	}
 
@@ -83,7 +88,7 @@ public sealed class GuardEnginePreconditionArtifactTests
 		// the gate would be skipped entirely if birth weren't checked separately.
 		var v = GuardEngine.RequirePreconditionArtifacts(IdeasCtx(), [State("i1", "review", "idea")], NoPrior);
 		v.Should().Be(new MethodologyVerdict("i1",
-			"node 'i1' can't be created directly in 'review' — transition 'exploring' -> 'review' requires an artifact:spec_plan comment; create the node, add the comment, then transition",
+			$"node 'i1' can't be created directly in 'review' — transition 'exploring' -> 'review' requires an artifact:spec_plan comment — {SpecPlanDescription}; create the node, add the comment, then transition",
 			VerdictKind.InvalidOperation));
 	}
 
@@ -99,7 +104,7 @@ public sealed class GuardEnginePreconditionArtifactTests
 		// not indicted for being "created directly".
 		var prior = Prior(State("i1", "Pending", "idea", nodeId: Id("i1")));
 		GuardEngine.RequirePreconditionArtifacts(IdeasCtx(), [State("i1", "review", "idea")], prior)!.Message
-			.Should().Be("transition 'exploring' -> 'review' on node 'i1' requires an artifact:spec_plan comment (the transition's precondition artifact) — add the comment, then retry");
+			.Should().Be($"transition 'exploring' -> 'review' on node 'i1' requires an artifact:spec_plan comment (the transition's precondition artifact) — {SpecPlanDescription} — add the comment, then retry");
 
 		var withTag = IdeasCtx((Id("i1"), ["artifact:spec_plan"]));
 		GuardEngine.RequirePreconditionArtifacts(withTag, [State("i1", "review", "idea")], prior).Should().BeNull();
