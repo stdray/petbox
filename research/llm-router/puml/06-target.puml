@@ -1,0 +1,85 @@
+@startuml
+title Целевая архитектура — K2 (тонкий CapabilityRouter поверх внешнего шлюза), K3 как фаза 1
+
+left to right direction
+skinparam wrapWidth 200
+
+actor "codex CLI\n(субагенты, роли -> модель)" as Codex
+actor "opencode-go /\nClaude Code / прочие агенты" as OtherAgents
+actor "внешние проекты\n(16, через MCP llm:invoke)" as ExternalProjects
+
+node "Машина владельца (локально)" {
+  component "Локальный шлюз\n(agentgateway, фаза 1;\nBifrost, если нужен X4 fallback)" as LocalGw
+  file "config.yaml/json\n(без core.db, без мульти-тенанта)" as LocalCfg
+}
+
+package "PetBox-сервер (мульти-тенант)" {
+  component "CapabilityRouter\n(тонкий: EmbedSpaceId invariant,\nRerankQueryAsync whole-query affinity,\nProject->Workspace->System routing)" as CapRouter
+  component "MCP surface\n(llm_chat/embed/rerank,\nllm_config_* как тонкая обёртка)" as McpSurface
+  database "core.db\n(routing: project/workspace -> route,\nБЕЗ ключей провайдеров)" as CoreDb
+  component "Серверный шлюз\n(Bifrost: fallback/breaker/cert-pinning/\nusage-accounting, доказано B3)" as ServerGw
+}
+
+cloud "Провайдеры (по API-ключам,\nв окружении шлюза, не в core.db)" {
+  component "home llama-server\n(cert-pinned; Bifrost: 2 provider-\nзаписи ollama+vllm на один base_url,\nUNVERIFIED)" as Home
+  component "DeepSeek" as DeepSeek
+  component "OpenRouter\n(:free legs + Responses-нативный\nупстрим для codex)" as OpenRouter
+
+}
+
+Codex --> LocalGw : Responses API,\nроль -> виртуальная модель\n(config_file per agents.<name>)
+OtherAgents --> LocalGw
+ExternalProjects --> McpSurface : llm_chat/embed/rerank\n(llm:invoke scope)
+
+McpSurface --> CapRouter
+CapRouter --> CoreDb : routing (project/workspace\n-> virtual model), НЕ секреты
+CapRouter --> ServerGw : один HTTP-вызов\n(виртуальное имя модели)
+
+ServerGw --> Home
+ServerGw --> DeepSeek
+ServerGw --> OpenRouter
+
+LocalGw --> Home
+LocalGw --> DeepSeek
+LocalGw --> OpenRouter
+
+note right of CapRouter
+  Удалено относительно сегодняшнего кода:
+  RunChainAsync/EndpointBreaker/
+  cert-pinning/response_format-retry
+  (это теперь делает ServerGw).
+  Остаётся централизованно (НЕ дробится
+  по Memory/Tasks/Sessions, в отличие от
+  варианта K1): EmbedSpaceId-инвариант,
+  rerank whole-query affinity — ни один
+  внешний шлюз (61/62/64) их не выражает.
+end note
+
+note right of ServerGw
+  Bifrost: единственный из двух финалистов,
+  чей home->openrouter fallback (B3,
+  ~24-31% реального Embed/Rerank-трафика)
+  подтверждён в стенде 64-bench.md.
+  Требует "pricing_url: file://..." в
+  конфиге, иначе холодный старт без сети
+  до getbifrost.ai фейлит (уточнено 70).
+end note
+
+note right of LocalGw
+  Фаза 1: разворачивается ПЕРВЫМ,
+  не трогая сервер (K3). agentgateway —
+  легче (17.5 MiB), без внешних сетевых
+  зависимостей при старте; если понадобится
+  X4 (free-квота autofailover) локально —
+  сначала перепроверить B3 на неальфа-
+  релизе, иначе тоже Bifrost.
+end note
+
+note bottom of Home
+  Секреты — в окружении шлюза
+  (docker-compose .env / env_key),
+  НЕ в зашифрованной колонке core.db,
+  как сегодня.
+end note
+
+@enduml
