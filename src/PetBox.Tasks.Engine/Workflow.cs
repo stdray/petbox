@@ -68,6 +68,15 @@ public sealed record WorkflowTransition(string From, string To, bool RequiresApp
 	// surprise: it is caught by inspection of the stored document, same as the pre-existing
 	// single-PreconditionArtifact ceiling.
 	public bool EnforceArtifacts { get; init; } = true;
+
+	// Free-form prose about this transition (spec methodology-primitive-descriptions), carried
+	// over from MethodologyTransitionDef.Description by ToWorkflow. Null = none. GuardEngine
+	// appends it to a precondition-artifact refusal so the runtime error — not just the guide —
+	// tells the agent what the required artifact must contain, not merely its slug (work
+	// spec-plan-definition-invisible-to-agents: the guide's GATES line already rendered
+	// MethodologyTransitionDef.Description as a `note:` in the transitions list, but neither the
+	// GATES line, the invariant detail, nor the refusal message carried it).
+	public string? Description { get; init; }
 }
 
 // A state machine for one task type on a board kind. Convention: Statuses[0] is

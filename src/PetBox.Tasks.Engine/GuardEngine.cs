@@ -384,6 +384,7 @@ public static class GuardEngine
 			string? artifact;
 			bool enforceArtifacts;
 			string transition;
+			string? description;
 			if (from is null)
 			{
 				// No transition fired (creation/recovery) — but if any transition INTO this status
@@ -394,6 +395,7 @@ public static class GuardEngine
 				artifact = gated.PreconditionArtifact;
 				enforceArtifacts = gated.EnforceArtifacts;
 				transition = $"'{gated.From}' -> '{gated.To}'";
+				description = gated.Description;
 			}
 			else
 			{
@@ -402,15 +404,21 @@ public static class GuardEngine
 				artifact = tr.PreconditionArtifact;
 				enforceArtifacts = tr.EnforceArtifacts;
 				transition = $"'{from}' -> '{d.Status}'";
+				description = tr.Description;
 			}
 			if (!enforceArtifacts) continue; // convention only — declared, not server-blocked
 
 			var tag = $"artifact:{artifact}";
+			// spec-plan-definition-invisible-to-agents: the refusal is the moment an agent is MOST
+			// likely to act on this text (it just failed the transition) — carry the transition's
+			// Description here too, not only in the guide, so a caller that skipped the guide still
+			// learns what the required artifact must contain, not just its slug.
+			var descNote = description is { Length: > 0 } ? $" — {description}" : "";
 			if (p is null || p.NodeId.Length == 0)
-				return new(d.Key, $"node '{d.Key}' can't be created directly in '{d.Status}' — transition {transition} requires an {tag} comment; create the node, add the comment, then transition", VerdictKind.InvalidOperation);
+				return new(d.Key, $"node '{d.Key}' can't be created directly in '{d.Status}' — transition {transition} requires an {tag} comment{descNote}; create the node, add the comment, then transition", VerdictKind.InvalidOperation);
 			var tags = ctx.CommentTagsByNodeId.GetValueOrDefault(p.NodeId, []);
 			if (!tags.Any(t => string.Equals(t, tag, StringComparison.OrdinalIgnoreCase)))
-				return new(d.Key, $"transition {transition} on node '{d.Key}' requires an {tag} comment (the transition's precondition artifact) — add the comment, then retry", VerdictKind.InvalidOperation);
+				return new(d.Key, $"transition {transition} on node '{d.Key}' requires an {tag} comment (the transition's precondition artifact){descNote} — add the comment, then retry", VerdictKind.InvalidOperation);
 		}
 		return null;
 	}

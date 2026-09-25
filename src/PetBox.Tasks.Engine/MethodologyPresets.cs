@@ -276,7 +276,16 @@ public static class MethodologyPresets
 			],
 			[
 				new("raw", "exploring"),
-				new("exploring", "review", PreconditionArtifact: "spec_plan"),
+				new("exploring", "review", PreconditionArtifact: "spec_plan")
+				{
+					// spec-plan-definition-invisible-to-agents: the gate named an artifact but never
+					// said what belonged in it, so an agent facing the refusal (or the guide's GATES
+					// line) had to guess — and reliably guessed "a work plan", the exact confusion
+					// research/spec-plan-convention.md measured across the corpus. This Description
+					// rides the guide's GATES line, the invariant detail, and the GuardEngine
+					// refusal (Workflow.cs's WorkflowTransition.Description, populated by ToWorkflow).
+					Description = "spec_plan — план правок дерева спеки: какие листья появятся, изменятся или станут deprecated при принятии идеи (ключ листа, нормативная строка, partOf). Не план работ. Подробно: doc/methodology.md, раздел про spec_plan.",
+				},
 				new("review", "accepted", RequiresApproval: true), // approve gate (maintainer)
 				new("review", "exploring"),                        // reject back for more thinking
 				new("review", "rejected", RequiresReason: true),
