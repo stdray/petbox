@@ -76,6 +76,15 @@ public sealed record OwnerDigestCohort(string Area, int Total, IReadOnlyList<Own
 	public const string NoArea = "(no area)";
 }
 
+// Section (1b): open nodes sitting in a status whose OUTGOING transition requires the owner's
+// approval (work Review, ideas review, intake confirmed, …) — derived from the board's own FSM
+// (WorkflowTransition.RequiresApproval), never a hard-coded status name, so a board whose
+// methodology renames or relocates that gate is still covered. Grouped on the same `area` axis
+// and the same OwnerDigestCohort.NoArea bucket as section (3) — one grouping vocabulary, not two.
+// `Crowded` flags a cluster past OwnerDigestService.ApprovalGatedCrowdedThreshold, so a pile-up
+// is visible without the owner having to count rows.
+public sealed record OwnerDigestApprovalCohort(string Area, int Total, bool Crowded, IReadOnlyList<OwnerDigestItem> Items);
+
 // One row of section (4). `Kind` is "node" (a node revision landed in the window) or "comment".
 public sealed record OwnerDigestEvent(
 	string Kind, DateTime At, string NodeKey, string NodeId, string Title, string? Author, string? Excerpt);
@@ -97,6 +106,13 @@ public sealed record OwnerDigestView(
 	// (1) waiting on your decision — STATE, not clipped to the window (see the interface header).
 	IReadOnlyList<OwnerDigestItem> AwaitingDecision,
 	int AwaitingDecisionTotal,
+	// (1b) waiting on your APPROVAL to proceed — STATE too, like (1): open nodes sitting in a
+	// status whose FSM-declared outgoing transition RequiresApproval, e.g. work Review, ideas
+	// review, intake confirmed. A node already counted in AwaitingDecision (the decisionPending
+	// flag) is never duplicated here — flow-control-owner-queue-foundations, decision 2026-08-28:
+	// "waiting on you" = decisionPending ∪ a gate-derived status, read from the methodology data.
+	IReadOnlyList<OwnerDigestApprovalCohort> ApprovalGated,
+	int ApprovalGatedTotal,
 	// (2) what closed — nodes in the window whose CURRENT status is terminal.
 	IReadOnlyList<OwnerDigestItem> Closed,
 	int ClosedTotal,
