@@ -93,6 +93,17 @@ public sealed record TaskNodeInput
 	public string? BlockedBy { get; init; }
 	public string? Supersedes { get; init; }
 
+	// observation-dedup-false-merge-and-missed-repeat: on a CREATE targeting the system
+	// `observations` board only, names the existing observation this new write CORRECTS or
+	// REFUTES (a node reference — its slug key or its 32-hex NodeId). The dedup-with-recurrence
+	// guard (ObservationDedupService) excludes that one node from BOTH its passes (textual and
+	// semantic) for this write, so a correction can never fold onto the very finding it
+	// contradicts; a real `relates_to` edge to it is still set on the created node. No builtin
+	// "corrects" relation kind exists (spec's neutral trio is relates_to/depends_on/mirrors) —
+	// this is service-layer sugar over `relates_to`, not a new link kind. Ignored everywhere
+	// else (any other board, or a node that is not itself a pure create).
+	public string? Corrects { get; init; }
+
 	public string? Status { get; init; }
 	public string? Type { get; init; }
 	public string? Title { get; init; }

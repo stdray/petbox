@@ -353,6 +353,114 @@ public sealed class ObservationKindAndDedupTests : IDisposable
 		signal!.RecurredAfterFixAt.Should().NotBeNull();
 	}
 
+	// work observation-dedup-false-merge-and-missed-repeat, (1) false merge: reproduces the
+	// live incident on `observation-semantic-dedup-folds-a-correcting-finding-onto-the-node-it-contradicts`
+	// (obs, seen, 2026-09-22) — a topic-clustered, semantically-similar finding that CONTRADICTS
+	// an existing observation was silently folded onto it (recurrenceCount bumped, the refutation's
+	// own body discarded). `DedupService_SemanticLeg_ParaphraseOfTheSameFinding_Bumps` above already
+	// proves this exact (Original, Paraphrase) pair clears the semantic threshold and merges when
+	// no `corrects` is given — this test is its `corrects` counterpart: the same pair, but the new
+	// write now names what it corrects, and must go through as its OWN node instead.
+	[Fact]
+	public async Task DedupService_Corrects_ExemptsOnlyTheNamedTarget_SemanticPass()
+	{
+		await _tasks.CreateBoardAsync(Proj, SystemBoards.Observations, SystemBoards.ObservationKind, "obs", null,
+			methodologyInstance: TaskBoardMeta.UtilityWorld);
+
+		var created = await _tasks.UpsertAsync(Proj, SystemBoards.Observations,
+			[new NodePatch { Key = "obs-1", Version = 0, Title = OriginalTitle, Body = OriginalBody }]);
+		var nodeId = created.Result.Added.Should().ContainSingle().Subject.NodeId;
+		await _tasks.RecordObservationFirstSeenAsync(Proj, nodeId);
+
+		var dedup = SemanticDedup(_tasks);
+		var outcome = await dedup.PreProcessCreatesAsync(Proj, SystemBoards.Observations,
+			[new TaskNodeInput { Key = "obs-2", Version = 0, Title = ParaphraseTitle, Body = ParaphraseBody, Corrects = "obs-1" }]);
+
+		outcome.Hits.Should().BeEmpty("a write that names what it corrects must never be recorded as a recurrence of the very claim it refutes");
+		var remaining = outcome.RemainingNodes.Should().ContainSingle().Subject;
+		remaining.Key.Should().Be("obs-2");
+		// The connection is not dropped — it becomes a real edge, addressed by the target's
+		// stable NodeId (so it survives a later rename of "obs-1").
+		remaining.Links.Should().NotBeNull();
+		remaining.Links!["relates_to"].Values.Should().ContainSingle().Which.Should().Be(nodeId);
+
+		// The recurrence signal on obs-1 must NOT have moved — the exemption is real, not just a
+		// relabeled hit.
+		var signal = await _signals.GetAsync(Proj, nodeId);
+		signal!.RecurrenceCount.Should().Be(1);
+	}
+
+	// Same incident class, cheap normalized-text pass (llm:null): a `corrects` write whose text is
+	// even VERBATIM-identical to its target (the strongest possible dedup signal) must still be
+	// exempted — `corrects` overrides the guard's cheapest pass too, not only the semantic one.
+	[Fact]
+	public async Task DedupService_Corrects_ExemptsOnlyTheNamedTarget_TextPass()
+	{
+		await _tasks.CreateBoardAsync(Proj, SystemBoards.Observations, SystemBoards.ObservationKind, "obs", null,
+			methodologyInstance: TaskBoardMeta.UtilityWorld);
+
+		var created = await _tasks.UpsertAsync(Proj, SystemBoards.Observations,
+			[new NodePatch { Key = "obs-1", Version = 0, Title = "Flaky retry in payment webhook", Body = "Saw a 3rd retry loop on the payment webhook under load." }]);
+		var nodeId = created.Result.Added.Should().ContainSingle().Subject.NodeId;
+		await _tasks.RecordObservationFirstSeenAsync(Proj, nodeId);
+
+		var dedup = new ObservationDedupService(_tasks, llm: null);
+		var outcome = await dedup.PreProcessCreatesAsync(Proj, SystemBoards.Observations,
+		[
+			new TaskNodeInput { Key = "obs-2", Version = 0, Title = "Flaky retry in payment webhook", Body = "Saw a 3rd retry loop on the payment webhook under load.", Corrects = "obs-1" },
+		]);
+
+		outcome.Hits.Should().BeEmpty("`corrects` exempts its target from the cheap text pass too — even a verbatim match");
+		outcome.RemainingNodes.Should().ContainSingle().Which.Key.Should().Be("obs-2");
+	}
+
+	// The exemption is scoped to exactly the named node, not a global "skip dedup for this batch"
+	// switch: a SECOND, unrelated write in the same call that genuinely duplicates obs-1 (and does
+	// NOT name `corrects`) must still merge normally.
+	[Fact]
+	public async Task DedupService_Corrects_DoesNotSuppressDedupForOtherNodesInTheSameBatch()
+	{
+		await _tasks.CreateBoardAsync(Proj, SystemBoards.Observations, SystemBoards.ObservationKind, "obs", null,
+			methodologyInstance: TaskBoardMeta.UtilityWorld);
+
+		var created = await _tasks.UpsertAsync(Proj, SystemBoards.Observations,
+			[new NodePatch { Key = "obs-1", Version = 0, Title = OriginalTitle, Body = OriginalBody }]);
+		var nodeId = created.Result.Added.Should().ContainSingle().Subject.NodeId;
+		await _tasks.RecordObservationFirstSeenAsync(Proj, nodeId);
+
+		var dedup = SemanticDedup(_tasks);
+		var outcome = await dedup.PreProcessCreatesAsync(Proj, SystemBoards.Observations,
+		[
+			new TaskNodeInput { Key = "obs-2", Version = 0, Title = ParaphraseTitle, Body = ParaphraseBody, Corrects = "obs-1" },
+			new TaskNodeInput { Key = "obs-3", Version = 0, Title = OriginalTitle, Body = OriginalBody },
+		]);
+
+		outcome.RemainingNodes.Should().ContainSingle().Which.Key.Should().Be("obs-2");
+		var hit = outcome.Hits.Should().ContainSingle().Subject;
+		hit.RequestedKey.Should().Be("obs-3");
+		hit.ExistingKey.Should().Be("obs-1");
+	}
+
+	// An unresolvable `corrects` (typo, wrong board, deleted node) must not refuse the write or
+	// silently forward a dangling ref — the guard simply runs as if `corrects` were absent.
+	[Fact]
+	public async Task DedupService_Corrects_UnresolvedReference_FallsBackToNormalDedup()
+	{
+		await _tasks.CreateBoardAsync(Proj, SystemBoards.Observations, SystemBoards.ObservationKind, "obs", null,
+			methodologyInstance: TaskBoardMeta.UtilityWorld);
+
+		var created = await _tasks.UpsertAsync(Proj, SystemBoards.Observations,
+			[new NodePatch { Key = "obs-1", Version = 0, Title = OriginalTitle, Body = OriginalBody }]);
+		await _tasks.RecordObservationFirstSeenAsync(Proj, created.Result.Added.Should().ContainSingle().Subject.NodeId);
+
+		var dedup = SemanticDedup(_tasks);
+		var outcome = await dedup.PreProcessCreatesAsync(Proj, SystemBoards.Observations,
+			[new TaskNodeInput { Key = "obs-2", Version = 0, Title = ParaphraseTitle, Body = ParaphraseBody, Corrects = "no-such-node" }]);
+
+		outcome.Hits.Should().ContainSingle().Which.ExistingKey.Should().Be("obs-1", "an unresolvable `corrects` must not silently disable dedup");
+		outcome.RemainingNodes.Should().BeEmpty();
+	}
+
 	// Deterministic bag-of-words embedder (same shape as SessionFactsJobTests.EmbeddingChat):
 	// real cosine over hashed token overlap, so the merge/no-merge boundary in the tests above
 	// is a property of the TEXT, not of a scripted verdict.

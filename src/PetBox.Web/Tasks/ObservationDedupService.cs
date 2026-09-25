@@ -20,6 +20,23 @@ namespace PetBox.Web.Tasks;
 // measured negative ceiling — that margin is the false-positive guard, not a heuristic.
 // Bound from configuration section "ObservationDedup" (mirrors AutocaptureDedupOptions'
 // own "AutocaptureDedup" section).
+//
+// Cross-language remeasurement (work observation-dedup-false-merge-and-missed-repeat, (2)):
+// the ONE real RU/EN pair on record as a missed repeat (18-D8 §2a — `obs-dbd57e835dcf`, RU,
+// created 2026-09-08, vs `codex-hook-trust-gate-recheck-0155-0157`, EN, created 2026-09-22,
+// same "codex headless silently skips hooks" finding) was re-embedded live 2026-09-25 with
+// the SAME model/shape (qwen3-embed-4b, title+body) as the calibration above: cosine 0.7758 —
+// ABOVE this 0.75 threshold, not below it. So THIS pair's historical miss was not a threshold
+// problem and lowering/raising 0.75 for it is unsupported by the only number available (a
+// single pair; per-language-pair calibration the way `unlinked-intake-twin` calibrates its own
+// separate threshold would need 3-5+ pairs to generalize, not attempted here — out of this
+// card's budget). The live embed call and the two node bodies it was computed from are
+// reproducible via `llm_embed` + `tasks_node_get` against $system; not captured here as an
+// automated test because it needs a live network call to the router, which a unit test must
+// not depend on. Whatever DID cause that specific write to skip the semantic leg (embedder
+// transient unavailability at write time is one candidate — PreProcessCreatesAsync silently
+// falls back to text-only when EmbedAsync returns null, see AutocaptureDedup.FindDuplicateKeyAsync)
+// is a SEPARATE, unconfirmed question from the threshold value and is left for its own card.
 public sealed class ObservationDedupOptions
 {
 	public double SemanticThreshold { get; set; } = 0.75;
@@ -76,16 +93,28 @@ public sealed class ObservationDedupService(ITasksService tasks, ILlmClient? llm
 		if (candidates.Count == 0)
 			return new ObservationDedupOutcome(nodes, []);
 
-		var pool = candidates.Select(c => (c.Key, c.Text)).ToList();
 		var remaining = new List<TaskNodeInput>(nodes.Length);
 		var hits = new List<ObservationDedupHit>();
 		foreach (var n in nodes)
 		{
+			// observation-dedup-false-merge-and-missed-repeat: `corrects` names the ONE existing
+			// observation this write is explicitly refuting/correcting — that node is excluded from
+			// BOTH dedup passes (the pool it never reaches at all) so a correction can never fold
+			// onto the very finding it contradicts, no matter how textually/semantically close the
+			// two are. Everything ELSE in the pool still applies normally — `corrects` narrows the
+			// exclusion to exactly one node, it is not an opt-out of dedup altogether.
+			var correctsTarget = ResolveCorrects(n.Corrects, candidates);
+			var pool = candidates
+				.Where(c => correctsTarget is null || (c.Key != correctsTarget.Key && c.NodeId != correctsTarget.NodeId))
+				.Select(c => (c.Key, c.Text))
+				.ToList();
+
 			var text = DedupText(n);
-			var dupKey = await AutocaptureDedup.FindDuplicateKeyAsync(projectKey, text, pool, llm, ct, _semanticThreshold);
+			var dupKey = pool.Count == 0 ? null : await AutocaptureDedup.FindDuplicateKeyAsync(projectKey, text, pool, llm, ct, _semanticThreshold);
+			var outNode = WithCorrectsLink(n, correctsTarget);
 			if (dupKey is null)
 			{
-				remaining.Add(n);
+				remaining.Add(outNode);
 				continue;
 			}
 			var existing = candidates.First(c => c.Key == dupKey);
@@ -94,6 +123,37 @@ public sealed class ObservationDedupService(ITasksService tasks, ILlmClient? llm
 			hits.Add(new ObservationDedupHit(n.Key ?? "", existing.Key, existing.NodeId, count));
 		}
 		return new ObservationDedupOutcome(remaining.ToArray(), hits);
+	}
+
+	// `corrects` accepts either form a node reference takes elsewhere in the API — a slug key or
+	// a 32-hex NodeId — resolved against the SAME candidate pool the dedup guard already fetched
+	// (no extra read). An unresolvable reference (typo, or a target outside this board) is simply
+	// not found — the guard runs unmodified in that case, same as if `corrects` were absent,
+	// rather than refusing the whole write over a hint that failed to resolve.
+	static ObservationDedupCandidate? ResolveCorrects(string? corrects, IReadOnlyList<ObservationDedupCandidate> candidates)
+	{
+		if (string.IsNullOrWhiteSpace(corrects)) return null;
+		var r = corrects.Trim();
+		return candidates.FirstOrDefault(c => string.Equals(c.Key, r, StringComparison.OrdinalIgnoreCase))
+			?? candidates.FirstOrDefault(c => string.Equals(c.NodeId, r, StringComparison.OrdinalIgnoreCase));
+	}
+
+	// Installs the real edge: `corrects` is sugar over the builtin neutral `relates_to` kind (spec
+	// observation-recurrence-is-ranked names no dedicated "corrects" link kind, and one is not
+	// declared here — see TaskNodeInput.Corrects), addressed by the resolved candidate's stable
+	// NodeId so the edge survives a rename. Any relates_to refs the caller already sent are kept;
+	// `corrects` only ADDS to that list, never replaces it. A `corrects` that failed to resolve
+	// contributes nothing (see ResolveCorrects) — never a raw, unvalidated ref forwarded downstream.
+	static TaskNodeInput WithCorrectsLink(TaskNodeInput n, ObservationDedupCandidate? correctsTarget)
+	{
+		if (correctsTarget is null) return n;
+		var links = n.Links is null
+			? new Dictionary<string, LinkRefs>(StringComparer.OrdinalIgnoreCase)
+			: new Dictionary<string, LinkRefs>(n.Links, StringComparer.OrdinalIgnoreCase);
+		var existingRefs = links.TryGetValue("relates_to", out var cur) ? cur.Values : [];
+		if (!existingRefs.Contains(correctsTarget.NodeId, StringComparer.OrdinalIgnoreCase))
+			links["relates_to"] = new LinkRefs([.. existingRefs, correctsTarget.NodeId]);
+		return n with { Links = links };
 	}
 
 	static string DedupText(TaskNodeInput n)
