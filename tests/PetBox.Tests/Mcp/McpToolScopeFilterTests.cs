@@ -132,7 +132,7 @@ public sealed class McpScopeProbeHost : IAsyncLifetime
 		}
 	}
 
-	public async Task<IReadOnlyList<string>> ListedFor(IEnumerable<string> scopes)
+	public async Task<IReadOnlyList<string>> ListedFor(IReadOnlyCollection<string> scopes)
 	{
 		var id = Id(scopes);
 		if (_listings.TryGetValue(id, out var cached)) return cached;
