@@ -40,3 +40,5 @@
 24 LIVE M024_ObservationSignalFixedAt
 25 LIVE M025_CommentSlug
 26 LIVE M026_CommentTagsFingerprint
+27 LIVE M027_NodeSnooze
+28 LIVE M028_RecurringRules

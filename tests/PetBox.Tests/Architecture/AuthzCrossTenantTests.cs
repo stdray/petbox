@@ -437,9 +437,12 @@ public sealed class AuthzCrossTenantTests : IClassFixture<AuthzCrossTenantHost>
 
 		(refused + deviations + notAddressable).Should().Be(_host.Surfaces.Count,
 			"every surface lands in exactly one bucket");
-		_host.Surfaces.Should().HaveCount(217,
-			"the inventory this test is driven by is the ratchet's (AuthzSurfaces): 56 REST + 66 Razor + 95 MCP "
-			+ "(was 60 REST / 67 Razor / 99 MCP / 226 before agent-defs-server-teardown removed the "
+		_host.Surfaces.Should().HaveCount(221,
+			"the inventory this test is driven by is the ratchet's (AuthzSurfaces): 56 REST + 66 Razor + 99 MCP "
+			+ "(was 95 MCP / 217 before node-snooze-and-wake-job + recurring-card-rules added the daily alarm's "
+			+ "four verbs — mcp:tasks_schedule_run and mcp:tasks_recurring_upsert/_list/_delete, all riding "
+			+ "TasksScheduleTools' type-level TenantFrom(projectKey); "
+			+ "was 60 REST / 67 Razor / 99 MCP / 226 before agent-defs-server-teardown removed the "
 			+ "agent-definition store WHOLE: four REST routes (GET list, GET/PUT/DELETE by key), "
 			+ "page:/Admin/ProjectAgentDefs, and the four mcp:agent_def_* verbs. The only teardown this line "
 			+ "has recorded, and the direction that needs the MORE care: a surface count that FALLS is exactly "
@@ -476,7 +479,7 @@ public sealed class AuthzCrossTenantTests : IClassFixture<AuthzCrossTenantHost>
 			"a surface is either aimable at another tenant or it is not; being on both lists means one of "
 			+ "them is describing something that is not there");
 
-		refused.Should().Be(143,
+		refused.Should().Be(147,
 			"the count of surfaces that already refuse a foreign tenant. It is asserted rather than merely "
 			+ "reported so that this test cannot go green while quietly protecting less than it did — the "
 			+ "number may rise (fix a deviation) but never fall without someone deleting this line on purpose. "
@@ -515,6 +518,10 @@ public sealed class AuthzCrossTenantTests : IClassFixture<AuthzCrossTenantHost>
 			+ "TenantEnforcementMiddleware refuses a foreign tenant (and contains a sandboxOnly key) before "
 			+ "the handler is entered and before a single byte of the uploaded body is read. Once more a "
 			+ "rise that ADDS protection rather than repairing a deviation. "
+			+ "143 -> 147 with the daily alarm (node-snooze-and-wake-job + recurring-card-rules): four NEW "
+			+ "surfaces — mcp:tasks_schedule_run, mcp:tasks_recurring_upsert/_list/_delete — that deny from their "
+			+ "first commit through TasksScheduleTools' type-level [TenantFrom(Argument, \"projectKey\")]. A rise "
+			+ "that ADDS protection, not one that repairs a deviation. "
 			+ "THE RAZOR WAVE MOVED IT BY ZERO, and that is the result rather than an absence of one: all 65 "
 			+ "pages left the allowlist, 41 of them addressed, and every one of those 41 answered Denied "
 			+ "BEFORE and after. The families that came out had complete manual coverage already, so the PEP "
@@ -545,9 +552,11 @@ public sealed class AuthzCrossTenantTests : IClassFixture<AuthzCrossTenantHost>
 	{
 		// The scope axis is already centralised and already works. If the probe key were short a scope,
 		// the surfaces guarded by it would deny for the WRONG reason and read as passes.
-		_host.ToolsVisibleToAttacker.Should().HaveCount(95,
+		_host.ToolsVisibleToAttacker.Should().HaveCount(99,
 			"McpToolScopeFilter trims tools/list to what the key's scopes allow. A key missing a scope sees "
-			+ "fewer than the full 95 verbs (was 99 before agent-defs-server-teardown removed the four "
+			+ "fewer than the full 99 verbs (95 before the daily alarm added tasks_schedule_run and "
+			+ "tasks_recurring_upsert/_list/_delete, tasks:* verbs the filter classifies with the rest of their "
+			+ "family; was 99 before agent-defs-server-teardown removed the four "
 			+ "mcp:agent_def_* verbs along with the agents:read/agents:write scopes and the "
 			+ "agent_def_ -> \"agents\" line in the filter's own ModuleOf; 98 before "
 			+ "observation-edges-promote-and-nail added "
@@ -559,7 +568,7 @@ public sealed class AuthzCrossTenantTests : IClassFixture<AuthzCrossTenantHost>
 			+ "shown to every key and gated on the tenant axis alone; 95 before "
 			+ "report-issue-has-no-reply-channel added petbox_report_issue_status; 97 before batch3 removed "
 			+ "session_delta and config_binding_delta), and every tool it cannot see would deny on the scope "
-			+ "axis — a field of false greens. Seeing all 95 is the proof that every MCP denial above is "
+			+ "axis — a field of false greens. Seeing all 99 is the proof that every MCP denial above is "
 			+ "about the TENANT");
 
 		// The two scopes the deviation list BLAMES for the surfaces a foreign tenant still reaches. If

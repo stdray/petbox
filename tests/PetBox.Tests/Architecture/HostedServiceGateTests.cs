@@ -20,10 +20,12 @@ namespace PetBox.Tests.Architecture;
 // strictly stronger — it catches an escaped registration wherever in the composition it hides.
 public sealed class HostedServiceGateTests
 {
-	// The 14 background services Program.cs registers with every feature flag on. The count is
+	// The 15 background services Program.cs registers with every feature flag on. The count is
 	// asserted, not just the gating: a new hosted service must be a deliberate edit here.
 	// (14th: KeyStatFlusher — spec apikey-last-used, batches ApiKeys.LastUsedAt every ~5 min.)
-	const int ExpectedHostedServiceCount = 14;
+	// (15th: ScheduledWakeJob — idea recurring-run-scheduler, the daily snooze-wake + recurring-rule
+	// pass, registered under Features:Tasks.)
+	const int ExpectedHostedServiceCount = 15;
 
 	static ServiceProvider BuildHostServices()
 	{

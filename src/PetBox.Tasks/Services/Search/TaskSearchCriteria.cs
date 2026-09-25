@@ -27,4 +27,8 @@ public sealed record TaskSearchCriteria(
 	// attribute the опорный слой does not index, so — like UnderRoots/CommitNodeIds — it is
 	// applied here at the re-filter step. null = no filter (the default: a read that did not ask
 	// about the flag is never narrowed by it).
-	bool? DecisionPending = null);
+	bool? DecisionPending = null,
+	// node-snooze-until / snooze-wakes-without-a-human: same posture as DecisionPending — node
+	// attributes the опорный слой does not index, applied at the re-filter step.
+	bool? Snoozed = null,
+	bool? Woke = null);

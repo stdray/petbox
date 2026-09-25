@@ -97,7 +97,7 @@ public sealed partial class ActionCatalogCompletenessTests : IClassFixture<Authz
 	// and the catalog keeps them apart — but the check is the same for both: the type that executes
 	// the action has to exist.
 	//
-	// WHY AN EXPLICIT ASSEMBLY LIST. The five type names live in FOUR different assemblies, and
+	// WHY AN EXPLICIT ASSEMBLY LIST. The type names live in FIVE different assemblies, and
 	// Type.GetType("PetBox.Web.Auth.AgentKeyAdminService") returns null for every one of them that is
 	// not in this test assembly or in corelib — a plain name with no assembly qualifier is only ever
 	// resolved against those two. Silently null is the worst possible answer here: this test would
@@ -118,6 +118,9 @@ public sealed partial class ActionCatalogCompletenessTests : IClassFixture<Authz
 		typeof(Program).Assembly,         // PetBox.Web
 		typeof(HealthPoller).Assembly,    // PetBox.Dashboard
 		typeof(DeployService).Assembly,   // PetBox.Deploy
+		// PetBox.Tasks — first catalogued by nodes.schedule-run's bg ScheduledWakeJob. Anchored on
+		// NodeSnooze, which is not itself a catalog target.
+		typeof(PetBox.Tasks.Contract.NodeSnooze).Assembly,
 	];
 
 	[Fact]

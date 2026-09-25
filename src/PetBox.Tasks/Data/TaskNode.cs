@@ -34,6 +34,19 @@ public sealed record TaskNode : TemporalRow
 	// temporal layer.
 	[Column, NotNull] public bool DecisionPending { get; init; }
 
+	// node-snooze-until / snooze-wakes-without-a-human (M027): the node's ALARM. Snoozed ⇔
+	// SnoozeUntil is set. SnoozeReason is the free-text condition for whoever wakes it (the machine
+	// never evaluates it — only the date wakes); SnoozeWakeTo is the addressee, NodeSnooze.Agent or
+	// NodeSnooze.Owner ("" when the node was never snoozed). The wake (ScheduledWakeService) clears
+	// SnoozeUntil and stamps WokeAt, but KEEPS reason and addressee: they are exactly what the node's
+	// next reader needs, and the digest counts owner-addressed wakes off SnoozeWakeTo. All four are
+	// PAYLOAD (see SamePayload): setting, clearing or waking a snooze is a real revision, so it shows
+	// on tasks_delta — which is what the owner digest reads.
+	[Column, Nullable] public DateTime? SnoozeUntil { get; init; }
+	[Column, NotNull] public string SnoozeReason { get; init; } = string.Empty;
+	[Column, NotNull] public string SnoozeWakeTo { get; init; } = string.Empty;
+	[Column, Nullable] public DateTime? WokeAt { get; init; }
+
 	// node-origin-provenance, WRITE-ONCE half: the session this node was CREATED in. Set only
 	// on the create (TasksService.Merge), inherited verbatim by every later revision, and NEVER
 	// filled in afterwards — a node was not born in whichever session happened to edit it next,
@@ -56,7 +69,9 @@ public sealed record TaskNode : TemporalRow
 
 	public override bool SamePayload(TemporalRow other) =>
 		other is TaskNode p && p.Status == Status && p.Type == Type && p.Name == Name && p.Body == Body && p.Priority == Priority
-		&& p.DecisionPending == DecisionPending;
+		&& p.DecisionPending == DecisionPending
+		&& p.SnoozeUntil == SnoozeUntil && p.SnoozeReason == SnoozeReason && p.SnoozeWakeTo == SnoozeWakeTo
+		&& p.WokeAt == WokeAt;
 
 	// Wire-facing names (title, not Name) — these land in a Stale conflict's
 	// ChangedFields. Mirrors SamePayload field-for-field.
@@ -70,6 +85,9 @@ public sealed record TaskNode : TemporalRow
 		if (p.Body != Body) fields.Add("body");
 		if (p.Priority != Priority) fields.Add("priority");
 		if (p.DecisionPending != DecisionPending) fields.Add("decisionPending");
+		if (p.SnoozeUntil != SnoozeUntil || p.SnoozeReason != SnoozeReason || p.SnoozeWakeTo != SnoozeWakeTo)
+			fields.Add("snooze");
+		if (p.WokeAt != WokeAt) fields.Add("wokeAt");
 		return fields;
 	}
 

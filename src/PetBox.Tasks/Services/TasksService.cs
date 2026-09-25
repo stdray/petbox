@@ -944,6 +944,12 @@ public sealed partial class TasksService : ITasksService
 				// "not waiting on the owner, no origin session" no matter what is stored.
 				DecisionPending = n.DecisionPending,
 				OriginSessionId = n.OriginSessionId,
+				// node-snooze-until: same rule — an explicit projection that forgot these would
+				// show every node as never snoozed.
+				SnoozeUntil = n.SnoozeUntil,
+				SnoozeReason = n.SnoozeReason,
+				SnoozeWakeTo = n.SnoozeWakeTo,
+				WokeAt = n.WokeAt,
 			}).ToListAsync(ct);
 		var lineage = BuildLineage(all);
 		var active = all.Where(n => n.ActiveTo == null).OrderBy(n => n.Priority).ThenBy(n => n.Key).ToList();
@@ -1057,7 +1063,8 @@ public sealed partial class TasksService : ITasksService
 				// [] (not null) here: this projection DID look, and found none. null is reserved
 				// for the lean query projection, which does not look at all.
 				OriginSessions: originsByNode.TryGetValue(n.NodeId, out var os) ? os : [],
-				Observation: signalsByNode is not null && signalsByNode.TryGetValue(n.NodeId, out var sig) ? ObservationSignalView.From(sig) : null));
+				Observation: signalsByNode is not null && signalsByNode.TryGetValue(n.NodeId, out var sig) ? ObservationSignalView.From(sig) : null,
+				Snooze: NodeSnooze.View(n)));
 		}
 		return new PlanBoardView(current, runtime.KindName(meta.Kind), meta.WiredBoard, nodes);
 	}
@@ -1234,7 +1241,8 @@ public sealed partial class TasksService : ITasksService
 			// work (node-page-cost-bounded-by-degree), and it shares the ONE connection the commits
 			// read already opened rather than paying a second.
 			OriginSessions: nodeOriginSessions,
-			Observation: ObservationSignalView.From(nodeSignal));
+			Observation: ObservationSignalView.From(nodeSignal),
+			Snooze: NodeSnooze.View(row));
 
 		// Root→parent order for the breadcrumb (ancestorIds was collected bottom-up). A miss in
 		// `index` (a dangling/deleted ancestor) still gets a crumb — falls back to the raw id,
@@ -1898,6 +1906,20 @@ public sealed partial class TasksService : ITasksService
 				rejected.AddRange(TemporalStore.Cascade(batchKeys, k => baselineOf.GetValueOrDefault(k), rejectedGuardKeys, dependsOn));
 			live = live.Where(p => !rejectedGuardKeys.Contains(p.Key)).ToList();
 		}
+		// ── node-snooze-until ───────────────────────────────────────────────────────────────
+		// A malformed snooze is a REFUSAL through conflicts[] (same channel and same reasoning as a
+		// fragment refusal): a snooze without a date would never surface, and one on a node that is
+		// closed by this very write would be dropped in silence the moment it landed.
+		var snoozeConflicts = new List<TemporalConflict>();
+		live = ResolveSnoozes(live, prior, status => runtime.IsTerminalStatus(kindSlug, status), snoozeConflicts);
+		if (snoozeConflicts.Count > 0)
+		{
+			rejected.AddRange(snoozeConflicts);
+			foreach (var c in snoozeConflicts) rejectedGuardKeys.Add(c.Key);
+			if (!atomic)
+				rejected.AddRange(TemporalStore.Cascade(batchKeys, k => baselineOf.GetValueOrDefault(k), rejectedGuardKeys, dependsOn));
+			live = live.Where(p => !rejectedGuardKeys.Contains(p.Key)).ToList();
+		}
 		TaskNode[] desired;
 		IReadOnlyList<ResolvedLink> resolvedLinks;
 
@@ -2340,7 +2362,9 @@ public sealed partial class TasksService : ITasksService
 			StatusSlugs: statusFilter,
 			KeyNodeIds: keyIds,
 			CommitNodeIds: commitNodeIds,
-			DecisionPending: f.DecisionPending);
+			DecisionPending: f.DecisionPending,
+			Snoozed: f.Snoozed,
+			Woke: f.Woke);
 
 		List<TaskSearchHit> hits;
 		SearchRetrievers? retrievers = null;
@@ -2924,7 +2948,7 @@ public sealed partial class TasksService : ITasksService
 	static TaskNode Merge(NodePatch p, IReadOnlyDictionary<string, TaskNode> prior, string? sessionId = null)
 	{
 		var cur = prior.GetValueOrDefault(p.Key) ?? (p.PrevKey is not null ? prior.GetValueOrDefault(p.PrevKey) : null);
-		return new TaskNode
+		var merged = new TaskNode
 		{
 			Key = p.Key,
 			Version = p.Version,
@@ -2945,6 +2969,73 @@ public sealed partial class TasksService : ITasksService
 			OriginSessionId = cur?.OriginSessionId ?? (sessionId ?? "").Trim(),
 			PrevKey = p.PrevKey,
 		};
+		return MergeSnooze(merged, p.Snooze, cur);
+	}
+
+	// node-snooze-until. Already VALIDATED by ResolveSnoozes (a patch reaching here carries either
+	// no edit, a well-formed SET, or a CLEAR). Omitted = inherit all four fields; SET = asleep until
+	// the date, any earlier wake mark gone; CLEAR = neither asleep nor marked woken.
+	static TaskNode MergeSnooze(TaskNode merged, NodeSnoozeEdit? edit, TaskNode? cur) => edit switch
+	{
+		null => merged with
+		{
+			SnoozeUntil = cur?.SnoozeUntil,
+			SnoozeReason = cur?.SnoozeReason ?? string.Empty,
+			SnoozeWakeTo = cur?.SnoozeWakeTo ?? string.Empty,
+			WokeAt = cur?.WokeAt,
+		},
+		{ Clear: true } => merged with { SnoozeUntil = null, SnoozeReason = string.Empty, SnoozeWakeTo = string.Empty, WokeAt = null },
+		_ => merged with
+		{
+			SnoozeUntil = NodeSnooze.Normalize(edit.Until!.Value),
+			SnoozeReason = (edit.Reason ?? string.Empty).Trim(),
+			SnoozeWakeTo = NodeSnooze.NormalizeWakeTo(edit.WakeTo),
+			WokeAt = null,
+		},
+	};
+
+	// Validate every patch's snooze edit before the write (see NodeSnoozeEdit for the shapes).
+	// `isTerminal` classifies the node's RESULTING status through the board's own FSM — never a
+	// status spelling. A patch without a snooze edit passes through untouched.
+	static List<NodePatch> ResolveSnoozes(
+		List<NodePatch> patches, IReadOnlyDictionary<string, TaskNode> prior, Func<string, bool> isTerminal,
+		List<TemporalConflict> conflicts)
+	{
+		var resolved = new List<NodePatch>(patches.Count);
+		foreach (var p in patches)
+		{
+			if (p.Snooze is not { } edit)
+			{
+				resolved.Add(p);
+				continue;
+			}
+			var cur = prior.GetValueOrDefault(p.Key) ?? (p.PrevKey is not null ? prior.GetValueOrDefault(p.PrevKey) : null);
+			var error = SnoozeError(edit, p.Status ?? cur?.Status, isTerminal);
+			if (error is not null)
+			{
+				conflicts.Add(new(p.Key, TemporalConflictKind.Rejected, p.Version, cur?.Version, error));
+				continue;
+			}
+			resolved.Add(p);
+		}
+		return resolved;
+	}
+
+	static string? SnoozeError(NodeSnoozeEdit edit, string? resultingStatus, Func<string, bool> isTerminal)
+	{
+		if (edit.Clear)
+			return edit.Until is null && edit.Reason is null && edit.WakeTo is null
+				? null
+				: "'snooze': clear:true removes the snooze — do not combine it with until/reason/wakeTo";
+		if (edit.Until is null)
+			return "'snooze' needs 'until' (a date): the condition text is never checked by the machine, "
+				+ "so a snooze without a date would never surface. To remove a snooze send {clear:true}";
+		var wakeTo = NodeSnooze.NormalizeWakeTo(edit.WakeTo);
+		if (!NodeSnooze.IsValidWakeTo(wakeTo))
+			return $"'snooze.wakeTo' must be '{NodeSnooze.Agent}' (default) or '{NodeSnooze.Owner}' (got '{edit.WakeTo}')";
+		if (resultingStatus is { Length: > 0 } status && isTerminal(status))
+			return $"'snooze': the node is in terminal status '{status}' — only an open node can be snoozed";
+		return null;
 	}
 
 	// Turn each patch's resolved `bodyRef` into an ordinary Body set, or record the refusal.
@@ -3126,6 +3217,10 @@ public sealed partial class TasksService : ITasksService
 		// taken here from the runtime this write path already holds instead of a second board read.
 		// A NON-terminal transition is untouched: Review -> InProgress keeps the flag.
 		if (n.DecisionPending && wf?.IsTerminal(n.Status) is true) n = n with { DecisionPending = false };
+		// snooze-wakes-without-a-human: "a node that became terminal before its date loses the snooze
+		// WITHOUT a wake". Done here, in the revision the closure already mints, on the same terminal
+		// authority as the flag above; the daily job's own terminal sweep covers any other door.
+		if (n.SnoozeUntil is not null && wf?.IsTerminal(n.Status) is true) n = n with { SnoozeUntil = null };
 		return n;
 	}
 

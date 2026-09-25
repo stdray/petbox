@@ -20,6 +20,9 @@ public sealed class TasksDb : DataConnection
 	// migration path. Never load-bearing; losing rows loses statistics, not state.
 	public ITable<NodeUsage> NodeUsage => this.GetTable<NodeUsage>();
 	public ITable<NodeDeliveryEvent> NodeDeliveries => this.GetTable<NodeDeliveryEvent>();
+	// Rules of repetition (M028, spec recurring-card-rule) — card templates with a period, fired by
+	// the daily ScheduledWakeJob. Same file as the nodes they create.
+	public ITable<RecurringRule> RecurringRules => this.GetTable<RecurringRule>();
 	// Lexical (search_fts) + vector (search_vec) live behind PetBox.Core.Search indexes, which
 	// own their own row mappings — no table props here. See the TasksService search seam.
 

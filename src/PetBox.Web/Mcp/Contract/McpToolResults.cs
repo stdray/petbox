@@ -806,7 +806,9 @@ public sealed record TaskSearchNodeView(
 	// posture as Delivery above. NOT lean-cut, on the SAME rule the `commits`/`decisionPending`
 	// exemption states: recurrence-after-a-fix is exactly the signal that must survive a
 	// query-mode row, the entire point of the card that added it.
-	ObservationSignalView? Observation = null);
+	ObservationSignalView? Observation = null,
+	// node-snooze-until: null when never snoozed. NOT lean-cut — `snoozed`/`woke` filter on it.
+	NodeSnoozeView? Snooze = null);
 
 // The tasks_search result — ONE shape for every mode (a single OutputSchemaType):
 //   listing/query  → `Nodes` (final order), plus board context (Board/Kind/WiredBoard/

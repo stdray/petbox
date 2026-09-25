@@ -113,6 +113,15 @@ public sealed record OwnerDigestView(
 	// "waiting on you" = decisionPending ∪ a gate-derived status, read from the methodology data.
 	IReadOnlyList<OwnerDigestApprovalCohort> ApprovalGated,
 	int ApprovalGatedTotal,
+	// (1c) woken — spec owner-digest-shows-woken: how many snoozed nodes the daily job woke in the
+	// period, how many of those were addressed to YOU, and the owner-addressed ones by name. The
+	// agent-addressed wakes are deliberately only a NUMBER here: they went back to the agents' work
+	// stream, not to your queue (idea recurring-run-scheduler, the owner's fork of 2026-09-25).
+	// CHANGE, not state — windowed like (2)/(3). Placed next to (1)/(1b) because an owner-addressed
+	// wake is, by construction, also in (1): it set decisionPending.
+	IReadOnlyList<OwnerDigestItem> WokenForOwner,
+	int WokenTotal,
+	int WokenForOwnerTotal,
 	// (2) what closed — nodes in the window whose CURRENT status is terminal.
 	IReadOnlyList<OwnerDigestItem> Closed,
 	int ClosedTotal,

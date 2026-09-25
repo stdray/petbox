@@ -142,6 +142,34 @@
 	}
 </section>
 
+@* ── (1c) woken in the period ───────────────────────────────────────────────────────────────── *@
+<section class="mb-6" data-testid="digest-woken">
+	<h2 class="text-lg font-semibold mb-2">
+		1c · Woken
+		<span class="badge badge-ghost" data-testid="digest-woken-total">@d.WokenTotal</span>
+		<span class="badge badge-ghost" data-testid="digest-woken-owner-total">@d.WokenForOwnerTotal for you</span>
+	</h2>
+	<p class="text-xs opacity-70 mb-2">Snoozed nodes whose date came in this period. Only the ones addressed to you are listed; the rest went back to the agents.</p>
+	@if (d.WokenForOwner.Count == 0)
+	{
+		<div class="alert" data-testid="digest-woken-empty">Nothing addressed to you woke up in this period.</div>
+	}
+	else
+	{
+		<ul class="menu bg-base-200 rounded-box">
+			@foreach (var item in d.WokenForOwner)
+			{
+				<li data-testid="digest-woken-row" data-node-key="@item.Key">
+					<a href="@Model.NodeHref(item)">
+						<span class="font-medium">@item.Title</span>
+						<span class="badge badge-sm">@item.Status</span>
+					</a>
+				</li>
+			}
+		</ul>
+	}
+</section>
+
 @* ── (2) what closed ────────────────────────────────────────────────────────────────────────── *@
 <section class="mb-6" data-testid="digest-closed">
 	<h2 class="text-lg font-semibold mb-2">

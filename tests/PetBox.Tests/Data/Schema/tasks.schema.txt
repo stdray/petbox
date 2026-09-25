@@ -172,16 +172,38 @@ TABLE plan_nodes
   COL OriginSessionId TEXT NOT NULL DEFAULT ''
   COL PrevKey TEXT NULL
   COL Priority INTEGER NOT NULL DEFAULT 0
+  COL SnoozeReason TEXT NOT NULL DEFAULT ''
+  COL SnoozeUntil TEXT NULL
+  COL SnoozeWakeTo TEXT NOT NULL DEFAULT ''
   COL Status TEXT NOT NULL DEFAULT ''
   COL Type TEXT NOT NULL DEFAULT ''
   COL Updated TEXT NOT NULL
   COL Version INTEGER NOT NULL PK3
+  COL WokeAt TEXT NULL
   INDEX ix_plan_nodes_active origin=c (Board, ActiveTo, Priority, Key)
   INDEX sqlite_autoindex_plan_nodes_1 UNIQUE origin=pk (Board, Key, Version)
   INDEX ux_plan_nodes_active_board_key UNIQUE origin=c (Board, Key) WHERE ActiveTo IS NULL
   TRIGGER trg_plan_nodes_register_id CREATE TRIGGER trg_plan_nodes_register_id AFTER INSERT ON plan_nodes WHEN NEW.NodeId <> '' BEGIN INSERT OR IGNORE INTO plan_node_ids (NodeId) VALUES (NEW.NodeId); END
   TRIGGER trg_plan_nodes_register_id_upd CREATE TRIGGER trg_plan_nodes_register_id_upd AFTER UPDATE OF NodeId ON plan_nodes WHEN NEW.NodeId <> '' BEGIN INSERT OR IGNORE INTO plan_node_ids (NodeId) VALUES (NEW.NodeId); END
   TRIGGER trg_plan_nodes_unregister_id CREATE TRIGGER trg_plan_nodes_unregister_id AFTER DELETE ON plan_nodes WHEN OLD.NodeId <> '' AND NOT EXISTS (SELECT 1 FROM plan_nodes WHERE NodeId = OLD.NodeId) BEGIN DELETE FROM plan_node_ids WHERE NodeId = OLD.NodeId; END
+
+TABLE recurring_rules
+  COL Board TEXT NOT NULL
+  COL Body TEXT NOT NULL DEFAULT ''
+  COL CreatedAt TEXT NOT NULL
+  COL Id TEXT NOT NULL PK1
+  COL LastError TEXT NULL
+  COL LastFiredAt TEXT NULL
+  COL MissedCount INTEGER NOT NULL DEFAULT 0
+  COL NextDueAt TEXT NOT NULL
+  COL OpenNodeId TEXT NULL
+  COL Period TEXT NOT NULL
+  COL Tags TEXT NOT NULL DEFAULT ''
+  COL Title TEXT NOT NULL
+  COL Type TEXT NOT NULL DEFAULT ''
+  COL UpdatedAt TEXT NOT NULL
+  COL WakeTo TEXT NOT NULL
+  INDEX sqlite_autoindex_recurring_rules_1 UNIQUE origin=pk (Id)
 
 TABLE relations
   COL ClosedAt TEXT NULL
