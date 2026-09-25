@@ -1,0 +1,66 @@
+# yaml-language-server: $schema=https://agentgateway.dev/schema/config
+# Bench config for the "убить llm-router" stand: two virtual models routed to
+# fake local upstreams u1 (127.0.0.1:9101, healthy) and u2 (127.0.0.1:9102, 429/500),
+# reached from inside the container as host.docker.internal.
+config:
+  readinessAddr: 0.0.0.0:19001
+  statsAddr: 0.0.0.0:19002
+
+llm:
+  port: 4000
+  models:
+  - name: u1-chat
+    provider:
+      custom:
+        formats:
+        - type: completions
+        - type: embeddings
+        - type: rerank
+    params:
+      baseUrl: http://host.docker.internal:9101/v1
+      model: m1
+      apiKey: dummy-u1-key
+    requestHeaders:
+      add:
+        x-gateway-injected: agentgateway-was-here
+      remove:
+      - x-client-should-be-stripped
+  - name: u2-chat
+    provider:
+      custom:
+        formats:
+        - type: completions
+        - type: embeddings
+        - type: rerank
+    params:
+      baseUrl: http://host.docker.internal:9102/v1
+      model: m1
+      apiKey: dummy-u2-key
+    # default unhealthyExpression only trips on 5xx/connection failure, NOT 429 (rate limit) --
+    # explicit expression + 1-failure eviction to prove the B3 fallback/cooldown scenario.
+    health:
+      unhealthyExpression: 'response.status == 429 || response.status >= 500'
+      eviction:
+        duration: 5s
+        consecutiveFailures: 1
+  virtualModels:
+  # B2: route by virtual model name -> u1 or u2
+  - name: route-a
+    routing:
+      conditional:
+        targets:
+        - model: u1-chat
+  - name: route-b
+    routing:
+      conditional:
+        targets:
+        - model: u2-chat
+  # B3: failover -- priority 0 = u2 (429/500), priority 1 = u1 (healthy)
+  - name: route-fallback
+    routing:
+      failover:
+        targets:
+        - model: u2-chat
+          priority: 0
+        - model: u1-chat
+          priority: 1
