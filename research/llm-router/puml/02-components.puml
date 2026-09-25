@@ -1,0 +1,74 @@
+@startuml
+title Сборки и зависимости (текущее + предлагаемое ядро)
+
+package "PetBox.LlmRouter.Contract" as Contract {
+  interface ILlmClient
+  class LlmRegistry
+  class LlmRoute
+  class LlmEndpoint
+  class ModelIdentity
+}
+note right of Contract
+  Уже существует, zero external
+  dependencies (F1). Consumers ONLY
+  on Contract (LlmRouterBoundaryTests).
+end note
+
+package "PetBox.LlmRouter.Gateway.Core\n(НОВАЯ)" as GwCore {
+  class AttemptStateMachine
+  interface ILlmRegistryResolver
+  class PassThroughProxy
+  class HeaderRewriteEngine
+}
+note right of GwCore
+  AOT-совместимое, БЕЗ FluentValidation/
+  linq2db. ILlmRegistryResolver абстрактен:
+  реализация подставляется хостом.
+end note
+
+package "PetBox.LlmRouter (Impl, существующий)" as Impl {
+  class CapabilityRouter
+  class EndpointBreaker
+  class LlmRegistryLevelResolver
+  class LlmRegistryEditor
+  class OpenAiCompatibleClient
+}
+
+package "PetBox.Web.LlmRouter (существующий)" as WebLlm {
+  class LlmRouterApi
+  class LlmRouterTools_MCP
+  class Pages_Llm_Index
+}
+
+package "PetBox.LlmRouter.Gateway.PetBoxHost\n(НОВАЯ)" as GwPetBoxHost {
+  class GatewayEndpoints
+  class GatewayApiKeyAuth
+}
+
+package "PetBox.LlmRouter.Gateway.Standalone\n(НОВАЯ)" as GwStandalone {
+  class FileConfigResolver
+  class WindowsServiceHost
+  class SystemdHost
+}
+
+Contract <.. GwCore : implements ILlmClient\nprimitives reused
+Contract <.. Impl
+Impl --> Contract
+Impl --> GwCore : CapabilityRouter МОЖЕТ\nпотреблять FSM/routing\n(не наоборот)
+
+WebLlm --> Impl
+WebLlm --> Contract
+
+GwPetBoxHost --> GwCore
+GwPetBoxHost --> Impl : core.db резолвер\n(LlmRegistryLevelResolver)
+Impl --> "PetBox.Core" : ICoreDbFactory,\nProject/Workspace
+
+GwStandalone --> GwCore
+GwStandalone --> FileConfigResolver : ILlmRegistryResolver\nимплементация из файла
+note bottom of GwStandalone
+  НЕ зависит от PetBox.Core.
+  dotnet tool / single-file AOT /
+  Windows Service / systemd.
+end note
+
+@enduml

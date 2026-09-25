@@ -1,0 +1,63 @@
+@startuml
+title LLM gateway — контекст (машины/агенты → шлюз(ы) → провайдеры)
+
+left to right direction
+skinparam wrapWidth 200
+
+actor "codex CLI\n(субагенты)" as Codex
+actor "opencode-go\n(Anthropic Messages)" as OpencodeGo
+actor "прочие агенты\n(Claude Code, qwen, droid)" as OtherAgents
+actor "внешние проекты\n(animemov, kpvotes, yobapub, ...)" as ExternalProjects
+
+package "PetBox-хост (мульти-тенант)" {
+  component "Gateway (PetBox host)\nscope: gateway:proxy" as PbGw
+  component "CapabilityRouter\n(Embed/Rerank/Chat, internal)" as CapRouter
+  database "core.db\n(llm_endpoints, llm_routes,\nProject->Workspace->System)" as CoreDb
+  component "MCP surface\n(llm_chat/embed/rerank/config_*)" as McpSurface
+}
+
+node "Домашняя машина владельца" {
+  component "Автономный шлюз\n(dotnet tool / служба)" as StandaloneGw
+  file "config.toml\n(env_key -> секреты)" as LocalCfg
+}
+
+cloud "Провайдеры (по API-ключам)" {
+  component "home llama-server\n(cert-pinned, self-signed)" as Home
+  component "DeepSeek" as DeepSeek
+  component "OpenRouter\n(:free legs)" as OpenRouter
+  component "прочие OpenAI-\nсовместимые" as OtherProviders
+}
+
+Codex --> StandaloneGw : Responses API\n(один base_url, виртуальные модели)
+OtherAgents --> StandaloneGw
+OpencodeGo --> PbGw : Anthropic Messages\n(pass-through, поэтапно)
+ExternalProjects --> McpSurface : llm_chat/embed/rerank
+
+PbGw --> CoreDb
+CapRouter --> CoreDb
+McpSurface --> CapRouter
+PbGw ..> CapRouter : общие FSM/routing\nпримитивы (Gateway.Core)
+
+StandaloneGw --> LocalCfg
+
+PbGw --> Home
+PbGw --> DeepSeek
+PbGw --> OpenRouter
+StandaloneGw --> Home
+StandaloneGw --> DeepSeek
+StandaloneGw --> OpenRouter
+StandaloneGw --> OtherProviders
+
+note right of StandaloneGw
+  Полностью автономен: без PetBox,
+  без core.db, без мульти-тенанта.
+  Секреты — только в локальном файле.
+end note
+
+note right of PbGw
+  Мульти-тенант: ключи шлюза выдаются
+  машинам владельца отдельно от
+  llm:invoke (MCP) — новый scope.
+end note
+
+@enduml

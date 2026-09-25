@@ -1,0 +1,48 @@
+@startuml
+title codex → шлюз → разные провайдеры по имени модели (§3), с fallback free -> paid
+
+actor "codex\n(orchestrator)" as Codex
+participant "subagent: reviewer\n(model=route:chat-strong)" as Reviewer
+participant "subagent: scaffolder\n(model=route:chat-free)" as Scaffolder
+participant "Gateway\n(один base_url,\nwire_api=responses)" as Gw
+participant "AttemptStateMachine" as FSM
+participant "OpenRouter\n(:free leg, pri 20)" as Free
+participant "DeepSeek\n(chat-strong leg, pri 10)" as Paid
+
+Codex -> Reviewer : spawn_agent(role="reviewer")\n(config_file -> model_provider=petbox-gw,\nmodel="route:chat-strong")
+Codex -> Scaffolder : spawn_agent(role="scaffolder")\n(config_file -> model_provider=petbox-gw,\nmodel="route:chat-free")
+
+== reviewer: прямой путь ==
+Reviewer -> Gw : POST /v1/responses\nmodel="route:chat-strong"
+Gw -> FSM : Sent (leg=DeepSeek, pri 10)
+FSM -> Paid : forward (pass-through,\nзаголовки переписаны §5)
+Paid --> FSM : 200 completed_ok
+FSM --> Gw : Completed
+Gw --> Reviewer : 200 (Responses API shape)
+
+== scaffolder: бесплатный leg исчерпан -> fallback ==
+Scaffolder -> Gw : POST /v1/responses\nmodel="route:chat-free"
+Gw -> FSM : Sent (leg=OpenRouter :free, pri 20)
+FSM -> Free : forward
+Free --> FSM : 402 / маркер\nquota_exhausted
+FSM -> FSM : endpoint -> LongCooldown\n(§1A, §4 — не default 30s)
+note right of FSM
+  quota_exhausted НЕ = обычный 429:
+  правило детекции декларативно,
+  per-provider (§4).
+end note
+FSM -> Gw : leg провален,\nследующий по priority
+Gw -> FSM : Sent (leg=DeepSeek, pri следующий\nв route:chat-free's chain)
+FSM -> Paid : forward
+Paid --> FSM : 200 completed_ok
+FSM --> Gw : Completed (degraded=true,\nServedBy=DeepSeek)
+Gw --> Scaffolder : 200 (Responses API shape,\nдоставлен через paid fallback)
+
+note over Codex, Paid
+  spawn_agent сам НЕ выбирает провайдера динамически
+  (codex-баг, F5-history, recurrence 2, апстрим не пришёл) —
+  выбор фиксируется СТАТИЧЕСКИ per-role через config_file,
+  а провайдер за виртуальным "model" резолвит шлюз.
+end note
+
+@enduml

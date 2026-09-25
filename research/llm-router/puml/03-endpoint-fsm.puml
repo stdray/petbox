@@ -1,0 +1,40 @@
+@startuml
+title Endpoint / провайдер-ключ — состояние (EndpointBreaker сегодня + предложение §1A)
+
+[*] --> Closed
+
+state Closed
+Closed : обслуживает попытки нормально
+Closed : ConsecutiveFailures = 0
+
+state ShortCooldown
+ShortCooldown : OpenUntil = now + cooldownTime\n(default 30s, F3)
+ShortCooldown : причина — transient\n(connect_failed / timeout_ttft / 5xx / 429)
+
+state LongCooldown
+LongCooldown : (нов., §1A/§4)
+LongCooldown : cooldown = per-provider declared\n(часы/дни, не default 30s)
+LongCooldown : причина — quota_exhausted /\nfree_tier_ended (детект по правилу\nиз конфига провайдера)
+
+state HalfOpen
+HalfOpen : cooldown истёк, следующая\nпопытка пропускается сквозь\n(probe), состояние ещё не сброшено
+
+Closed --> ShortCooldown : ConsecutiveFailures >= FailureThreshold\n(transient: connect_failed | timeout_ttft |\nhttp_5xx | http_429)
+Closed --> ShortCooldown : http_401_auth / http_404\n(нов., §9 развилка — сейчас код\nЭТОГО НЕ делает, non-transient\nне триппит breaker вовсе)
+Closed --> LongCooldown : quota_exhausted (нов.)
+
+ShortCooldown --> HalfOpen : now >= OpenUntil
+LongCooldown --> HalfOpen : now >= OpenUntil\nИЛИ явный reset (admin/scheduled probe)
+
+HalfOpen --> Closed : пробная попытка = completed_ok\n(RecordSuccess)
+HalfOpen --> ShortCooldown : пробная попытка снова transient
+HalfOpen --> LongCooldown : пробная попытка снова quota_exhausted
+
+note right of Closed
+  http_4xx_client (кроме 401/404/429) —
+  НЕ меняет это состояние вообще
+  (решение 2026-08-28: цепь идёт дальше,
+  breaker не трогается — текущий код).
+end note
+
+@enduml

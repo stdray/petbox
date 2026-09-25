@@ -1,0 +1,43 @@
+@startuml
+title Попытка запроса (per-attempt) — со стримингом (§1C, предложение; СЕГОДНЯ стриминга нет вовсе)
+
+[*] --> Idle
+Idle --> Sent : leg выбран\n(breaker.IsOpen == false)
+
+state "Pre-completion\n(reselect ещё безопасен)" as Pre {
+  Sent --> ConnectFailed : DNS/TCP refuse/TLS
+  Sent --> TimedOutTTFT : нет байта до дедлайна\n(последнее безопасное окно)
+  Sent --> Http429 : 429 [Retry-After?]
+  Sent --> Http5xx : 5xx
+  Sent --> Http4xxClient : 4xx (не 401/404/429)
+  Sent --> Http401Auth : 401 / 404
+  Sent --> QuotaExhausted : провайдер-специфичный\nмаркер квоты
+  Sent --> FirstByteReceived : первый байт тела
+}
+
+ConnectFailed --> [*] : breaker.RecordFailure\n-> следующий leg
+TimedOutTTFT --> [*] : breaker.RecordFailure\n-> следующий leg
+Http429 --> [*] : breaker.RecordFailure\n(cooldown = Retry-After ?? default)\n-> следующий leg
+Http5xx --> [*] : breaker.RecordFailure\n-> следующий leg
+Http4xxClient --> [*] : НЕ breaker (2026-08-28)\n-> следующий leg
+Http401Auth --> [*] : breaker.RecordFailure (нов., §9)\n-> следующий leg
+QuotaExhausted --> [*] : breaker -> LongCooldown (нов.)\n-> следующий leg
+
+state "Post-completion\n(HTTP 200 уже ушёл клиенту —\nreselect ЗАПРЕЩЁН)" as Post {
+  FirstByteReceived --> Streaming
+  Streaming --> Completed : поток закрыт корректно
+  Streaming --> StreamBroken : обрыв после первого байта\n(ac-72d581037785 — "шва нет",\nкусало дважды)
+}
+
+Completed --> [*] : breaker.RecordSuccess\nпопытка = финальный успех
+StreamBroken --> [*] : PartialFailure — ВИДНО\nвызывающему и логу,\nНЕ тихий переход на next leg
+
+note bottom of Post
+  Граница Pre/Post = граница коммита HTTP 200.
+  Сегодня код не различает их вовсе: REST
+  stream:true -> 400 (LlmRouterApi.cs:131),
+  вся таксономия выродилась в один случай
+  "успех целиком / отказ целиком".
+end note
+
+@enduml
