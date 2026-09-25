@@ -131,6 +131,15 @@ public static class MethodologyGuide
 
 		if (kind.Delivery is { } delivery)
 			AppendDelivery(md, kind.Kind, delivery, invariants);
+
+		// idea discipline-rules-warn-in-tool-response, spec terminal-ok-without-commits-warns:
+		// one line naming which types the write-response warning judges — data, never a
+		// hardcoded "feature/bug" quartet special case.
+		if (kind.CommitBearingTypes is { Count: > 0 } commitBearing)
+		{
+			md.AppendLine($"- Carries commits: {string.Join(", ", commitBearing)} — reaching a terminal-ok status with an empty commits[] warns (rule terminal-ok-without-commits).");
+			invariants.Add(new(kind.Kind, "commit_bearing_types", string.Join("|", commitBearing)));
+		}
 	}
 
 	static void AppendWorkflow(StringBuilder md, string kind, MethodologyWorkflowDef block, bool strictMode, List<MethodologyInvariant> invariants)

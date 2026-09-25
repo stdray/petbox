@@ -1678,6 +1678,11 @@ public static class TasksTools
 		// present (a hand-built accessor in a test that doesn't care about this feature) — the
 		// guard simply does not run then, same as any other board.
 		var obsDedup = http.HttpContext?.RequestServices.GetService<IObservationDedupService>();
+		// unlinked-intake-twin's semantic branch (idea discipline-rules-warn-in-tool-response):
+		// same resolve-from-DI-scope posture as obsDedup above, for the same reason (a required
+		// parameter here would touch every existing direct-call test site for a check that only
+		// ever fires on a board that is the declared TARGET of a process link).
+		var intakeTwin = http.HttpContext?.RequestServices.GetService<IUnlinkedIntakeTwinWarnService>();
 		var isObservationsCreateBatch = obsDedup is not null
 			&& string.Equals(board, SystemBoards.Observations, StringComparison.OrdinalIgnoreCase)
 			&& nodes.All(n => n.Version == 0 && !n.Deleted);
@@ -1735,6 +1740,18 @@ public static class TasksTools
 		// has its own signal (conflicts[]).
 		var warning = outcome.Result.Applied ? ModuleMcp.SizeWarningOrNull(http) : null;
 		var view = Serialize(outcome, urlPrefix, bodyLen, warning);
+		// Merge the embedder-based unlinked-intake-twin branch (idea discipline-rules-warn-in-
+		// tool-response) onto whatever TasksService already judged (convention-approval-gate,
+		// terminal-ok-without-commits, and this same rule's non-embedder close-time branch) —
+		// ONE list on the wire regardless of which layer computed which entry. Only genuinely
+		// NEW nodes are checked (outcome.Result.Added), and only once the write has fully landed
+		// (edges included), so a node this same call also linked is already excluded upstream.
+		if (intakeTwin is not null && outcome.Result.Applied && outcome.Result.Added.Count > 0)
+		{
+			var extra = await intakeTwin.WarnOnCreateAsync(projectKey, board, outcome.Result.Added, ct);
+			if (extra.Count > 0)
+				view = view with { Warnings = view.Warnings is null ? extra : [.. view.Warnings, .. extra] };
+		}
 		return dedupedView is null ? view : view with { Deduped = dedupedView };
 	}
 
@@ -1995,7 +2012,8 @@ public static class TasksTools
 			Updated: r.Updated.Select(n => NodeDto(n, urlPrefix, bodyLen)).ToList(),
 			Removed: r.Removed.ToList(),
 			AutoResolved: r.AutoResolved.ToList(),
-			Warning: warning);
+			Warning: warning,
+			Warnings: o.Warnings is { Count: > 0 } ? o.Warnings : null);
 	}
 
 	// Delta projection of a node (no links/delivery/tags — that's tasks_search). camelCased by the

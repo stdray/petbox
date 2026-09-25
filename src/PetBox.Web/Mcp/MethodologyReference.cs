@@ -80,6 +80,7 @@ static class MethodologyReference
 				["blocksGate"] = "The blocking-gate statuses: a node in `status` must name a blocker (a STATE invariant checked on every write, not a transition gate); a released node moves to `releaseTo`. Omitted = this kind has no blocking gate (falls back to the builtin preset of the same slug, else none) — only work is gated today, but a definition can opt any kind in.",
 				["description"] = "Optional free-form prose about this kind (data, not code). Surfaced by the compiled process guide (tasks_methodology_guide); never resolved or enforced. Edit it alone with tasks_methodology_set_description instead of a whole-document rules_upsert.",
 				["boardName"] = "The preferred board name for this kind, tried FIRST when a board of this kind is provisioned (still subject to the usual name-collision/reserved-name rules). Omitted = no opinion — the board is named from the kind slug as before.",
+				["commitBearingTypes"] = "Which of this kind's OWN type slugs are declared to carry commits (idea discipline-rules-warn-in-tool-response): reaching a terminal-ok status with an empty commits[] warns in the tasks_upsert response for these types only. Omitted/empty = no type of this kind is judged.",
 			}),
 		Describe<MethodologyBlocksGateInput>(
 			"The blocking-gate statuses of a kind (spec methodology-blocks-gate-data).",

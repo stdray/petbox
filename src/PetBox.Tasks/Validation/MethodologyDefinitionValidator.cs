@@ -233,6 +233,18 @@ internal sealed partial class MethodologyDefinitionValidator : AbstractValidator
 		ValidateDefaultView(kind, ctx);
 		ValidateOutlineReveal(kind, ctx);
 		ValidateBoardName(kind, ctx);
+		ValidateCommitBearingTypes(kind, seenTypes, ctx);
+	}
+
+	// commitBearingTypes (idea discipline-rules-warn-in-tool-response, spec terminal-ok-
+	// without-commits-warns) names types this SAME kind declares — same "must be one of this
+	// kind's own type slugs" rule ValidateKind already applies to link constraints above.
+	static void ValidateCommitBearingTypes(
+		MethodologyKindDef kind, HashSet<string> seenTypes, ValidationContext<MethodologyDefinition> ctx)
+	{
+		foreach (var type in kind.CommitBearingTypes ?? [])
+			if (!seenTypes.Contains(type))
+				ctx.AddFailure($"kind '{kind.Kind}': commitBearingTypes: type '{type}' is not declared by this kind's workflow blocks (types: {string.Join("|", seenTypes)})");
 	}
 
 	// BoardName is a board-name candidate PickBoardName tries first (spec primitives-enum-

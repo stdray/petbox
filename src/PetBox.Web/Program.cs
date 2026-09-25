@@ -920,6 +920,13 @@ public partial class Program
 		builder.Services.Configure<PetBox.Web.Tasks.ObservationDedupOptions>(
 			builder.Configuration.GetSection("ObservationDedup"));
 		builder.Services.AddScoped<PetBox.Web.Tasks.IObservationDedupService, PetBox.Web.Tasks.ObservationDedupService>();
+		// unlinked-intake-twin's semantic branch (idea discipline-rules-warn-in-tool-response,
+		// spec unlinked-intake-twin-warns): same DI shape as ObservationDedupService just above,
+		// its own threshold (UnlinkedIntakeTwinWarnOptions — a short title-copy is closer in
+		// wording than a paraphrased incident, so it gets its own tunable, not 0.75 or 0.92).
+		builder.Services.Configure<PetBox.Web.Tasks.UnlinkedIntakeTwinWarnOptions>(
+			builder.Configuration.GetSection("UnlinkedIntakeTwinWarn"));
+		builder.Services.AddScoped<PetBox.Web.Tasks.IUnlinkedIntakeTwinWarnService, PetBox.Web.Tasks.UnlinkedIntakeTwinWarnService>();
 		// The membership + account services live in PetBox.Core, not here: AdminBootstrapper and
 		// WorkspaceProvisioning are Core writers of WorkspaceMembers and must be able to reach them.
 		builder.Services.AddScoped<PetBox.Core.Auth.IWorkspaceMembershipService, PetBox.Core.Auth.WorkspaceMembershipService>();

@@ -227,6 +227,10 @@ public sealed record MethodologyKindInput
 	// Mirrors MethodologyKindDef.BoardName: the preferred board name for this kind, tried
 	// first by PickBoardName. Null = no opinion (falls back to the kind-slug-derived names).
 	public string? BoardName { get; init; }
+	// Mirrors MethodologyKindDef.CommitBearingTypes (idea discipline-rules-warn-in-tool-
+	// response): which of this kind's own type slugs trip the terminal-ok-without-commits
+	// write-response warning. Null/omitted = empty (no type declared commit-bearing).
+	public string[]? CommitBearingTypes { get; init; }
 }
 
 // Mirrors MethodologyBlocksGateDef 1:1 (see the parity note on MethodologyKindInput above).
