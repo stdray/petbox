@@ -28,8 +28,11 @@ Bridge from P1: `spec leaf with no linked tasks → create tasks → backlog`.
 
 1. **Session** — raw transcript of one episode; source material.
 2. **Idea / Deliberation** — a thread of thinking, distilled from sessions, with an
-   outcome `{open, exploring, rejected, deferred, accepted}` + reasoning. A topic →
-   0..N tasks. **Separate from the plan.**
+   outcome `{open, exploring, rejected, deferred, accepted}` + reasoning. An idea
+   proposes a change to the spec, nothing else — work is derived from the spec
+   (P2, below), never spawned directly from an idea. An investigation whose result
+   is an answer (a doc or a memory entry) rather than a spec change is not an idea
+   at all — see "Intake — the inbox" below. **Separate from the plan.**
 3. **Spec / Feature** — a temporal tree. **Invariant: only DEFINED requirements live
    in the tree.** Undefined/in-flux = an Idea, not a tree node; changing a requirement
    = a new Idea (same lifecycle) → a new spec version. Requirements are functional
@@ -111,10 +114,12 @@ for observations you don't want to route right now (noticed mid-task — park it
 derail). When the reporter CAN route — the maintainer, or an agent with a clear diagnosis —
 and the destination is obvious, create the node at the destination directly and skip
 intake: engineering hygiene → a work `chore` (spec-less by design, no `links.task_spec`); a bug
-violating an EXISTING spec node → a work `bug` with `links.task_spec`; a product thought with no
-spec reflection → an idea. The chain's integrity is protected by the destination rules
-themselves (feature/bug still requires `links.task_spec`, a spec write still requires an accepted
-idea) — an intake hop adds nothing when the routing is already known.
+violating an EXISTING spec node → a work `bug` with `links.task_spec`; an investigation or
+research spike whose result is an answer (a doc or a memory entry), not a spec change → a work
+`chore` tagged `concern:research`; a product thought with no spec reflection → an idea. The
+chain's integrity is protected by the destination rules themselves (feature/bug still requires
+`links.task_spec`, a spec write still requires an accepted idea) — an intake hop adds nothing
+when the routing is already known.
 
 **Triage** moves an item to exactly one of:
 
@@ -123,6 +128,10 @@ idea) — an intake hop adds nothing when the routing is already known.
   links that spec node via `links.task_spec` and the intake issue via `links.issue_task`; the
   issue auto-closes when the task reaches `Done`. Spec-less engineering hygiene promotes to
   a `chore` (no spec node needed).
+- **research spike** — *when the item is an investigation whose result is an answer, not a
+  change to the spec.* Promotes to a work `chore` tagged `concern:research` (no spec node
+  needed); the result — a doc or a memory entry — is linked from the closing verdict comment.
+  Never an idea: `ideas` holds only proposed changes to the spec.
 - **escalate to an idea** — *when the item has NO reflection in the spec.* You can't make a
   work task for it: a work feature/bug REQUIRES `links.task_spec`, and there is no spec node to
   point at. That absence IS the signal — the requirement was never specified. The item
@@ -277,5 +286,4 @@ scopes, storage) is NOT a requirement; it lives in the **work task** (and the co
 
 This is the target model. It is adopted incrementally; until a feature is built,
 the corresponding convention applies on the current Tasks primitives (e.g. separate
-`spec`/`backlog` boards, the approve gate by convention). See the roadmap in the
-`$system/roadmap` board (`mcp-typing` and methodology phases).
+`spec`/`backlog` boards, the approve gate by convention).

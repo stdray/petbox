@@ -104,12 +104,15 @@ project's own intake/triage path, or to its maintainer — rather than working a
 
 Intake holds raw, unrouted findings — bugs, questions, wishes — not yet placed on the pipeline.
 Skip it and create the node at the destination directly only when the report already names the
-target, or the fact pattern maps onto exactly ONE of the three destinations below without
-weighing alternatives. If you find yourself weighing which of the three fits, that itself means
-it is not obvious — file it into intake instead and let triage happen later, rather than guessing:
+target, or the fact pattern maps onto exactly ONE of the four destinations below without
+weighing alternatives. If you find yourself weighing which one fits, that itself means it is
+not obvious — file it into intake instead and let triage happen later, rather than guessing:
 - Spec-less hygiene → a work `chore` (no spec link needed).
 - A bug against an EXISTING spec requirement → a work `bug`, with whatever spec link this
   project's `link_constraint` invariants require.
+- An investigation whose outcome is an answer (a doc or memory), not a change to a
+  requirement → a spec-less work item, tagged per this project's tag axes; never an idea —
+  the ideas board holds proposed requirement changes only.
 - Nothing in the spec reflects the ask at all → an idea, so it goes through the idea→accept→spec
   gate before any work node is opened for it.
 An intake item with no matching spec never gets a shortcut straight into work — a `feature`/`bug`
