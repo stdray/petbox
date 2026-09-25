@@ -269,4 +269,104 @@ public sealed class DisciplineRuleWarningsTests : IDisposable
 
 		up.Warnings.Should().BeNull("the closing node already carries an outgoing edge of the declared link kind");
 	}
+
+	// ── regression: live false positive 2026-09-25 ──────────────────────────────────────────
+	// A work `chore` closing Review->Done tripped "unlinked-intake-twin" against `task_spec` —
+	// `iwork` (this fixture's work-shaped kind) is the FromKind of BOTH its own creation-required
+	// link (`wspec`, like task_spec: iwork -> ispec, required for `feature` only) AND is the
+	// TARGET, not source, of the promotion link (`promote`, like issue_task: iintake -> iwork).
+	// The naive "any process link whose FromKind is this kind" match picked `wspec` instead of
+	// finding no eligible link at all. Reproduces the quartet shape (task_spec + issue_task) with
+	// test-local kinds/links so the fix is proven data-driven, not quartet-specific.
+	static MethodologyDefinition IntakeTwinScopeDef() => new("wt-scope",
+	[
+		new MethodologyKindDef("iwork", QuickAddAllowed: true,
+		[
+			new MethodologyWorkflowDef(["feature", "chore"],
+			[
+				new("Pending", "Pending", StatusKind.Open),
+				new("Review", "Review", StatusKind.Open),
+				new("Done", "Done", StatusKind.TerminalOk),
+			],
+			[
+				new MethodologyTransitionDef("Pending", "Review"),
+				new MethodologyTransitionDef("Review", "Done"),
+			]),
+		])
+		{
+			// Mirrors the quartet's work kind: only `feature` needs the outbound link at creation;
+			// `chore` is exempt — same as task_spec's real LinkConstraints.
+			LinkConstraints = [new MethodologyLinkConstraintDef("feature", "wspec") { TargetKind = "ispec" }],
+		},
+		new MethodologyKindDef("ispec", QuickAddAllowed: true,
+		[
+			new MethodologyWorkflowDef(["spec"], [new("defined", "defined", StatusKind.Open)], []),
+		]),
+		new MethodologyKindDef("iintake", QuickAddAllowed: true,
+		[
+			new MethodologyWorkflowDef(["issue"],
+			[
+				new("triage", "triage", StatusKind.Open),
+				new("done", "done", StatusKind.TerminalOk),
+			],
+			[
+				new MethodologyTransitionDef("triage", "done"),
+			]),
+		]),
+	])
+	{
+		LinkKinds =
+		[
+			new MethodologyLinkKindDef("wspec", Category: LinkCategory.Process,
+				Direction: new MethodologyLinkDirectionDef("iwork", "ispec")),
+			new MethodologyLinkKindDef("promote", Category: LinkCategory.Process,
+				Direction: new MethodologyLinkDirectionDef("iintake", "iwork")),
+		],
+	};
+
+	[Fact]
+	public async Task UnlinkedIntakeTwin_ClosingAWorkChore_NoWarning_EvenThoughWorkIsFromKindOfAnotherProcessLink()
+	{
+		await InstallLive(IntakeTwinScopeDef());
+		var born = await _tasks.UpsertAsync(Proj, "iwork",
+			[new NodePatch { Key = "c1", Version = 0, Title = "c1", Type = "chore", Status = "Review" }]);
+		var v = born.Result.Added.Single().Version;
+
+		var up = await _tasks.UpsertAsync(Proj, "iwork", [new NodePatch { Key = "c1", Version = v, Status = "Done" }]);
+
+		up.Result.Applied.Should().BeTrue();
+		up.Warnings.Should().BeNull("a work chore needs no wspec/task_spec-like link at all, and iwork is not the SOURCE of the promotion link");
+	}
+
+	[Fact]
+	public async Task UnlinkedIntakeTwin_ClosingAWorkFeatureWithItsRequiredLink_NoWarning()
+	{
+		await InstallLive(IntakeTwinScopeDef());
+		var spec = await _tasks.UpsertAsync(Proj, "ispec", [new NodePatch { Key = "s1", Version = 0, Title = "s1", Type = "spec", Status = "defined" }]);
+		var born = await _tasks.UpsertAsync(Proj, "iwork",
+			[new NodePatch { Key = "f1", Version = 0, Title = "f1", Type = "feature", Status = "Review",
+				Links = new Dictionary<string, IReadOnlyList<string>> { ["wspec"] = ["s1"] } }]);
+		var v = born.Result.Added.Single().Version;
+
+		var up = await _tasks.UpsertAsync(Proj, "iwork", [new NodePatch { Key = "f1", Version = v, Status = "Done" }]);
+
+		up.Result.Applied.Should().BeTrue();
+		up.Warnings.Should().BeNull("a feature closing with its own required wspec link is not an unlinked-intake-twin case at all — that link is a DIFFERENT obligation");
+	}
+
+	[Fact]
+	public async Task UnlinkedIntakeTwin_ClosingAnIntakeNodeWithoutThePromotionLink_StillWarns()
+	{
+		await InstallLive(IntakeTwinScopeDef());
+		var born = await _tasks.UpsertAsync(Proj, "iintake",
+			[new NodePatch { Key = "i1", Version = 0, Title = "i1", Type = "issue", Status = "triage" }]);
+		var v = born.Result.Added.Single().Version;
+
+		var up = await _tasks.UpsertAsync(Proj, "iintake", [new NodePatch { Key = "i1", Version = v, Status = "done" }]);
+
+		up.Result.Applied.Should().BeTrue();
+		var w = up.Warnings.Should().ContainSingle().Subject;
+		w.Rule.Should().Be("unlinked-intake-twin");
+		w.Key.Should().Be("i1");
+	}
 }
