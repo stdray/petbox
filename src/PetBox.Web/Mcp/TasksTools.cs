@@ -1841,9 +1841,13 @@ public static class TasksTools
 	[McpServerTool(Name = "tasks_owner_digest", Title = "Owner-away digest for a board", ReadOnly = true, UseStructuredContent = true, OutputSchemaType = typeof(OwnerDigestView))]
 	[Description("""
 		"What happened while I was away" for ONE board, ordered by WHAT IT ASKS OF YOU — not chronologically.
-		Sections, in this fixed order: (1) `awaitingDecision` — nodes waiting on YOUR decision; (2) `closed`
-		— nodes in the period whose status is now terminal; (3) `newCohorts` — nodes born in the period,
-		grouped on the `area` tag; (4) `timeline` — chronology, only when `includeTimeline` is true.
+		Sections, in this fixed order: (1) `awaitingDecision` — nodes waiting on YOUR decision; (1b)
+		`approvalGated` — open nodes sitting in a status whose OUTGOING transition requires your approval
+		(e.g. work Review, ideas review, intake confirmed), derived from the board's own FSM data
+		(`requiresApproval`), grouped on `area` like (3), `crowded` when a cluster exceeds 5; nodes already
+		counted in (1) are not repeated here; (2) `closed` — nodes in the period whose status is now
+		terminal; (3) `newCohorts` — nodes born in the period, grouped on the `area` tag; (4) `timeline` —
+		chronology, only when `includeTimeline` is true.
 		PERIOD: `sinceVersion` (a `currentVersion` from an earlier digest or tasks_delta), else the last
 		`days` days (default 7). Section (1) is deliberately NOT clipped to the period — it is your whole
 		open decision queue, because a decision that waited longer than your absence is more urgent, not

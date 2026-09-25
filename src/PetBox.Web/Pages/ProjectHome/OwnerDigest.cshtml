@@ -103,6 +103,45 @@
 	}
 </section>
 
+@* ── (1b) waiting on your approval to proceed ───────────────────────────────────────────────── *@
+<section class="mb-6" data-testid="digest-approval-gated">
+	<h2 class="text-lg font-semibold mb-2">
+		1b · Waiting on your approval
+		<span class="badge badge-ghost" data-testid="digest-approval-gated-total">@d.ApprovalGatedTotal</span>
+	</h2>
+	<p class="text-xs opacity-70 mb-2">Open nodes sitting in a status whose outgoing transition requires your approval (e.g. Review) — derived from this board's own workflow, not a hard-coded status name. Nodes already listed above (flagged) are not repeated here.</p>
+	@if (d.ApprovalGated.Count == 0)
+	{
+		<div class="alert" data-testid="digest-approval-gated-empty">Nothing is waiting on your approval.</div>
+	}
+	else
+	{
+		@foreach (var cohort in d.ApprovalGated)
+		{
+			<div class="mb-3" data-testid="digest-approval-gated-cohort" data-area="@cohort.Area" data-crowded="@cohort.Crowded.ToString().ToLowerInvariant()">
+				<h3 class="font-medium">
+					@cohort.Area <span class="badge badge-sm badge-ghost">@cohort.Total</span>
+					@if (cohort.Crowded)
+					{
+						<span class="badge badge-sm badge-warning" data-testid="digest-approval-gated-crowded">crowded</span>
+					}
+				</h3>
+				<ul class="menu bg-base-200 rounded-box">
+					@foreach (var item in cohort.Items)
+					{
+						<li data-testid="digest-approval-gated-row" data-node-key="@item.Key">
+							<a href="@Model.NodeHref(item)">
+								<span class="font-medium">@item.Title</span>
+								<span class="badge badge-sm">@item.Status</span>
+							</a>
+						</li>
+					}
+				</ul>
+			</div>
+		}
+	}
+</section>
+
 @* ── (2) what closed ────────────────────────────────────────────────────────────────────────── *@
 <section class="mb-6" data-testid="digest-closed">
 	<h2 class="text-lg font-semibold mb-2">

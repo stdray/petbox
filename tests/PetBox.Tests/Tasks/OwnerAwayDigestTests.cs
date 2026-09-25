@@ -81,12 +81,13 @@ public sealed class OwnerAwayDigestTests : IClassFixture<OwnerAwayDigestFixture>
 	OwnerDigestService Digest(TimeProvider? time = null) => new(_tasks, _comments, time);
 
 	static NodePatch Node(string key, string? status = null, bool? decisionPending = null,
-		IReadOnlyList<string>? tags = null, long version = 0) => new()
+		IReadOnlyList<string>? tags = null, long version = 0, string? type = null) => new()
 		{
 			Key = key,
 			Title = key.ToUpperInvariant(),
 			Body = "body of " + key,
 			Status = status,
+			Type = type,
 			DecisionPending = decisionPending,
 			Tags = tags,
 			Version = version,
@@ -95,6 +96,14 @@ public sealed class OwnerAwayDigestTests : IClassFixture<OwnerAwayDigestFixture>
 	async Task Board_(params NodePatch[] nodes)
 	{
 		await _tasks.CreateBoardAsync(Proj, Board, "simple", null, null);
+		if (nodes.Length > 0) await _tasks.UpsertAsync(Proj, Board, nodes);
+	}
+
+	// The `work` preset kind (Review -> Done, RequiresApproval) — the ONLY vocabulary section
+	// (1b) needs. `chore` carries no task_spec LinkConstraint, so it births without a spec board.
+	async Task BoardWork_(params NodePatch[] nodes)
+	{
+		await _tasks.CreateBoardAsync(Proj, Board, "work", null, null);
 		if (nodes.Length > 0) await _tasks.UpsertAsync(Proj, Board, nodes);
 	}
 
@@ -125,12 +134,14 @@ public sealed class OwnerAwayDigestTests : IClassFixture<OwnerAwayDigestFixture>
 		var json = JsonSerializer.Serialize(view, CamelCase);
 
 		var awaiting = json.IndexOf("\"awaitingDecision\"", StringComparison.Ordinal);
+		var approvalGated = json.IndexOf("\"approvalGated\"", StringComparison.Ordinal);
 		var closed = json.IndexOf("\"closed\"", StringComparison.Ordinal);
 		var cohorts = json.IndexOf("\"newCohorts\"", StringComparison.Ordinal);
 		var timeline = json.IndexOf("\"timeline\"", StringComparison.Ordinal);
 
 		awaiting.Should().BeGreaterThan(-1);
-		closed.Should().BeGreaterThan(awaiting, "(1) waiting on your decision leads — the owner's fixed order");
+		approvalGated.Should().BeGreaterThan(awaiting, "(1b) waiting on approval sits right after (1)");
+		closed.Should().BeGreaterThan(approvalGated, "(1)/(1b) waiting on you lead — the owner's fixed order");
 		cohorts.Should().BeGreaterThan(closed, "(2) what closed comes before (3) new cohorts");
 		timeline.Should().BeGreaterThan(cohorts, "(4) chronology is last, and only on request");
 	}
@@ -182,6 +193,61 @@ public sealed class OwnerAwayDigestTests : IClassFixture<OwnerAwayDigestFixture>
 		view.ClosedTotal.Should().Be(0);
 		Keys(view.AwaitingDecision).Should().Contain("old-decision",
 			"the decision queue is state — clipping it to the absence period is what this assertion forbids");
+	}
+
+	// ── (1b) waiting on your approval to proceed ─────────────────────────────────────────────────
+
+	// The gate is read off the board's OWN FSM (work: Review -> Done, RequiresApproval) — never a
+	// literal "Review" string. A node sitting in Review is reported; a plain open node
+	// (InProgress, no outgoing RequiresApproval edge) is not; and a Review node that ALSO carries
+	// the decisionPending flag is reported only in section (1) — never duplicated into (1b).
+	[Fact]
+	public async Task ApprovalGated_HoldsTheGatedStatus_NotAPlainOpenNode_AndDedupsAgainstAwaiting()
+	{
+		await BoardWork_(
+			Node("review1", status: "Review", type: "chore"),
+			Node("flagged-review", status: "Review", type: "chore", decisionPending: true),
+			Node("running", status: "InProgress", type: "chore"));
+
+		var view = await Run();
+
+		var gatedKeys = view.ApprovalGated.SelectMany(c => Keys(c.Items)).ToList();
+		gatedKeys.Should().Contain("review1", "Review has an outgoing RequiresApproval transition");
+		gatedKeys.Should().NotContain("flagged-review",
+			"already reported in section (1) via the decisionPending flag — not duplicated here");
+		gatedKeys.Should().NotContain("running", "InProgress has no outgoing RequiresApproval transition");
+		view.ApprovalGatedTotal.Should().Be(1);
+		Keys(view.AwaitingDecision).Should().Contain("flagged-review");
+	}
+
+	// A cluster past OwnerDigestService.ApprovalGatedCrowdedThreshold (5) is marked Crowded so a
+	// pile-up is visible without the owner having to count rows — the brief's own example (6).
+	[Fact]
+	public async Task ApprovalGated_MarksAClusterOfSixAsCrowded()
+	{
+		var nodes = Enumerable.Range(1, 6)
+			.Select(i => Node($"review{i}", status: "Review", type: "chore", tags: ["area:agent-wiring"]))
+			.ToArray();
+		await BoardWork_(nodes);
+
+		var view = await Run();
+
+		var cohort = view.ApprovalGated.Single(c => c.Area == "agent-wiring");
+		cohort.Total.Should().Be(6);
+		cohort.Crowded.Should().BeTrue("total exceeds the crowded threshold of 5");
+	}
+
+	// A board whose FSM declares no RequiresApproval transition at all (the `simple` preset) must
+	// report an empty section rather than erroring or guessing a status name.
+	[Fact]
+	public async Task ApprovalGated_IsEmpty_OnABoardWithNoApprovalGate()
+	{
+		await Board_(Node("a"), Node("b", status: "InProgress"));
+
+		var view = await Run();
+
+		view.ApprovalGated.Should().BeEmpty();
+		view.ApprovalGatedTotal.Should().Be(0);
 	}
 
 	// ── (2) what closed ──────────────────────────────────────────────────────────────────────────

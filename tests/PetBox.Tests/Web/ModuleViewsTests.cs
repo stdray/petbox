@@ -2225,4 +2225,41 @@ public sealed class ModuleViewsTests : IClassFixture<ModuleViewsFixture>
 				"the board is not empty — the node still shows up as new, just not as a decision waiting on you");
 		}
 	}
+
+	// Section (1b): a Review-carrying node with no decisionPending flag must still surface — the
+	// gate is read off the board's OWN FSM (work: Review -> Done, RequiresApproval), never a
+	// hard-coded status literal — and a cluster past the crowded threshold (5) is marked as such.
+	[Fact]
+	public async Task OwnerDigest_ApprovalGatedSection_ShowsAnUnflaggedReviewNode_AndMarksACrowdedCluster()
+	{
+		const string board = "ownerdigestapproval";
+		using (var scope = _factory.Services.CreateScope())
+		{
+			var boards = scope.ServiceProvider.GetRequiredService<PetBox.Tasks.Data.ITaskBoardStore>();
+			if (!await boards.ExistsAsync("$system", board))
+				await boards.CreateAsync("$system", board, "owner digest approval-gated smoke", kind: "work");
+			var tasks = scope.ServiceProvider.GetRequiredService<PetBox.Tasks.Contract.ITasksService>();
+			var nodes = Enumerable.Range(1, 6)
+				.Select(i => new PetBox.Tasks.Contract.NodePatch
+				{
+					Key = $"odapproval{i}",
+					Title = $"ODAPPROVAL{i}",
+					Body = "x",
+					Type = "chore",
+					Status = "Review",
+					Tags = ["area:agent-wiring"],
+				})
+				.ToArray();
+			await tasks.UpsertAsync("$system", board, nodes);
+		}
+
+		using var resp = await GetAuthedAsync($"/ui/$system/$system/digest/{board}");
+		resp.StatusCode.Should().Be(HttpStatusCode.OK);
+		var html = await resp.Content.ReadAsStringAsync();
+
+		html.Should().Contain("data-testid=\"digest-approval-gated-row\" data-node-key=\"odapproval1\"",
+			"a Review node without the decisionPending flag must still be shown — the gate is FSM-derived, not the flag");
+		html.Should().Contain("data-testid=\"digest-approval-gated-crowded\"",
+			"a cluster of 6 exceeds the crowded threshold of 5 and must be marked");
+	}
 }
