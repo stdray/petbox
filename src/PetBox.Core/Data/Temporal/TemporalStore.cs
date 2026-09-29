@@ -305,8 +305,14 @@ public static class TemporalStore
 			}
 		}
 
-		var (added, updated, removed) = await DeltaAsync(table, sinceVersion, partition, ct);
+		// Watermark FIRST, delta SECOND — the same order, for the same reason, as ChangesSinceAsync (work
+		// delta-watermark-outruns-delta). tasks_delta and memory_delta read through THIS path with an empty
+		// batch, and the reverse order let a write committing between the two reads be covered by the
+		// returned CurrentVersion yet absent from the delta: a caller advancing `sinceVersion` to it lost
+		// the row for good. This way the worst case is a duplicate on the next call, never zero deliveries.
+		// For a real write nothing changes: the batch is already applied when the watermark is read.
 		var currentVersion = await MaxVersionAsync(table, partition, ct);
+		var (added, updated, removed) = await DeltaAsync(table, sinceVersion, partition, ct);
 
 		// AutoResolved is only meaningful when the batch landed (a conflict elsewhere aborts
 		// the whole batch, so a "resolved" row was not actually written). In partial mode
