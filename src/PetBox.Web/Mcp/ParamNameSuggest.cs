@@ -73,15 +73,9 @@ static class ParamNameSuggest
 	}
 }
 
-// Card work/unknown-param-curated-hints. Two frequent misses where SIMILARITY (above) gives no
+// Card work/unknown-param-curated-hints. Frequent misses where SIMILARITY (above) gives no
 // useful hint, or the WRONG one, because the domain knowledge isn't in the schema at all — it is in
 // a decision the schema can't express:
-//   - `limit` on session_search: session-search-page-width-param-name deliberately did NOT add
-//     `limit` — the tool has TWO independent page-size knobs (`sessions`, `hitsPerSession`), and a
-//     single `limit` would have to pick one. Nearest() finds nothing close (no shared prefix, and
-//     the edit distance to every real name is well past budget), so without a curated entry the
-//     caller gets only the bare "Accepted parameters" list and has to guess which one plays
-//     `limit`'s role.
 //   - `usageSource` on a WRITE verb: the parameter is real, just not on THIS tool — it exists only
 //     on read verbs (`tasks_node_get`, `memory_search`, …), where it tags who triggered the read
 //     (deliberate vs. machine) for usage accounting. A write records no impressions, so it was never
@@ -100,15 +94,9 @@ static class CuratedParamHint
 	// Scoped by CONTENT where possible (does this scope declare `q`?) rather than a hardcoded tool
 	// list, so the `query` entry tracks memory_search/tasks_search/session_search/comments_search/
 	// config_binding_search — every *_search verb with a free-text query — without naming them, and
-	// never fires on health_search, which has no `q` at all. `limit`/session_search has no schema
-	// signal to key off (the absence of a knob can't be read from a knob), so that one entry is
-	// named explicitly by tool.
+	// never fires on health_search, which has no `q` at all.
 	static readonly (Func<string, bool> Leaf, Func<string, List<string>, bool> Fires, string Text)[] Table =
 	[
-		(Leaf: static l => l == "limit", Fires: static (tool, _) => tool == "session_search",
-			Text: "session_search has no 'limit' — its two page-size knobs are 'sessions' (how many " +
-				"sessions to hydrate and search inside) and 'hitsPerSession' (hits returned per session)."),
-
 		(Leaf: static l => l == "usageSource", Fires: static (_, _) => true,
 			Text: "'usageSource' exists only on read verbs — it tags who triggered the read " +
 				"(deliberate vs. machine) for usage accounting. A write records no impressions, so " +

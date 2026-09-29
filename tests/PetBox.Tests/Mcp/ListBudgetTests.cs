@@ -188,6 +188,22 @@ public sealed class ListBudgetTests : IDisposable
 		res.Hint.Should().ContainAll("q", "session_get");
 	}
 
+	[Fact]
+	public async Task SessionList_Limit_CapsRows_AndSaysSo()
+	{
+		for (var i = 0; i < 3; i++)
+			await _sessions.UpsertAsync(Proj, $"s{i}", "claude-code", [new SessionMessageInput("session", "x")]);
+
+		var res = await SessionTools.SearchAsync(Http(), Flags(), _sessions, null!, new PetBox.Tests.Memory.NoopUsageRecorder(), Proj, limit: 2);
+
+		res.Items.Should().HaveCount(2);
+		res.Truncated.Should().BeTrue();
+		res.Omitted.Should().Be(1);
+		res.Hint.Should().Contain("limit");
+		(await SessionTools.SearchAsync(Http(), Flags(), _sessions, null!, new PetBox.Tests.Memory.NoopUsageRecorder(), Proj, limit: 3))
+			.Truncated.Should().BeNull("a limit that covers everything is not a cut");
+	}
+
 	// ---- comments_search (listing mode — the former comments_list) ----
 
 	static PetBox.Web.Mcp.Contract.CommentItemInput NewComment(string node, string body) =>

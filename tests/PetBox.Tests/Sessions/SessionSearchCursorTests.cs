@@ -323,9 +323,46 @@ public sealed class SessionSearchCursorTests : IClassFixture<SessionSearchCursor
 	}
 
 	Task<PetBox.Web.Mcp.Contract.SessionSearchResultView> SearchTool(
-		int sessions = 0, int? bodyLen = null, string? cursor = null) =>
+		int sessions = 0, int? bodyLen = null, string? cursor = null, int limit = 0) =>
 		PetBox.Web.Mcp.SessionTools.SearchAsync(ToolHttp(), ToolFlags(), _sessions, _search, _usage, Proj,
-			"векторизацию", sessions, 0, false, bodyLen, cursor);
+			"векторизацию", limit, sessions, 0, false, bodyLen, cursor);
+
+	// card session-search-real-limit-param: `limit` is the canonical page width; `sessions` a deprecated alias.
+	[Fact]
+	public async Task Limit_InQueryMode_BoundsThePage_AndAliasSessionsAgrees()
+	{
+		await SeedSix();
+
+		var byLimit = await SearchTool(limit: 2);
+		var byAlias = await SearchTool(sessions: 2);
+
+		byLimit.Items.Should().HaveCount(2);
+		byAlias.Items.Select(i => i.SessionId).Should().Equal(byLimit.Items.Select(i => i.SessionId));
+		(await SearchTool(limit: 3, sessions: 3)).Items.Should().HaveCount(3, "equal values are not a conflict");
+	}
+
+	[Fact]
+	public async Task Limit_ConflictingWithSessions_IsAClearError()
+	{
+		await SeedSix();
+
+		var act = () => SearchTool(limit: 2, sessions: 5);
+
+		await act.Should().ThrowAsync<ArgumentException>().WithMessage("*`limit`*`sessions`*");
+	}
+
+	[Fact]
+	public async Task Limit_IsNotInTheCursorFingerprint_ACursorContinuesWithAnotherLimit()
+	{
+		await SeedSix();
+		var first = await SearchTool(limit: 2);
+		first.NextCursor.Should().NotBeNullOrEmpty();
+
+		var second = await SearchTool(limit: 3, cursor: first.NextCursor);
+
+		second.Items.Should().NotBeEmpty();
+		second.Items.Select(i => i.SessionId).Should().NotIntersectWith(first.Items.Select(i => i.SessionId));
+	}
 
 	static IHttpContextAccessor ToolHttp()
 	{

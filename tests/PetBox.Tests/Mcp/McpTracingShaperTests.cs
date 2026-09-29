@@ -77,7 +77,7 @@ public sealed class McpTracingShaperTests
 		// `cursor` joined here too when session_search became pageable — same PRESENCE-only rule as
 		// memory_search's, for the same reason (an opaque token is caller position, not diagnostics).
 		McpLoggedArgs.For("session_search").Select(a => a.Name)
-			.Should().BeEquivalentTo(["q", "sessions", "hitsPerSession", "fullScan", "bodyLen", "cursor"]);
+			.Should().BeEquivalentTo(["q", "limit", "sessions", "hitsPerSession", "fullScan", "bodyLen", "cursor"]);
 		McpLoggedArgs.For("session_search").Single(a => a.Name == "cursor").Mode.Should().Be(LogArgMode.Presence);
 	}
 

@@ -657,11 +657,10 @@ public sealed class UnknownParameterFilterTests : IClassFixture<UnknownParameter
 
 	// ── work/unknown-param-curated-hints: hints where SIMILARITY alone finds nothing useful ──────
 	//
-	// `limit` on session_search: session-search-page-width-param-name deliberately did NOT add
-	// `limit` (two independent page-size knobs, not one), so Nearest() has nothing close to offer —
-	// without the curated entry the caller only sees the bare accepted-parameter dump.
+	// `limit` on session_search is now REAL (card session-search-real-limit-param), so it is no longer a
+	// curated miss — it must be accepted, not rejected.
 	[Fact]
-	public async Task SessionSearch_Limit_IsRejected_AndPointsAtSessionsAndHitsPerSession()
+	public async Task SessionSearch_Limit_IsAccepted()
 	{
 		var result = await (await Tool(_fx.Mcp, "session_search")).CallAsync(new Dictionary<string, object?>
 		{
@@ -669,10 +668,7 @@ public sealed class UnknownParameterFilterTests : IClassFixture<UnknownParameter
 			["limit"] = 10,
 		});
 
-		result.IsError.Should().Be(true);
-		var text = Text(result);
-		text.Should().Contain("'limit'");
-		text.Should().Contain("'sessions'").And.Contain("'hitsPerSession'");
+		Text(result).Should().NotContain("Accepted parameters");
 	}
 
 	// `usageSource` is a real parameter — just not on a WRITE verb, which records no impressions.
