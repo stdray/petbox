@@ -259,8 +259,12 @@ public static class SessionTools
 		THE session read verb — one tool for both LISTING and SEARCH (list = search without
 		`q`).
 
-		Without `q`: a deterministic LISTING of the project's active sessions — compact rows
-		{ sessionId, agent, version }. Requires tasks:read.
+		Without `q`: a deterministic LISTING of the project's active sessions ordered by sessionId —
+		compact rows { sessionId, agent, version }, KEYSET-paged: when rows were withheld (by `limit`
+		or the output budget) the response carries `nextCursor`; pass it back as `cursor` with the
+		same project to continue — a session added or removed mid-walk never duplicates or drops a
+		row. No `nextCursor` = the end of the listing. `limit`/`bodyLen` may vary between pages.
+		Requires tasks:read.
 
 		With `q`: a two-stage search over the session archive. Stage 1 DISCOVERY fuses up to
 		THREE legs (RRF) over per-session state, no hydration: the `session-digests` memory
@@ -300,12 +304,12 @@ public static class SessionTools
 		IMemoryUsageRecorder usage,
 		string? projectKey = null,
 		[LogArg(LogArgMode.Presence)][Description("Search query. Omit for a deterministic listing of the project's sessions (list = search without q).")] string? q = null,
-		[LogArg][Description("Page width — max sessions per page (a row = a session). With q: how many discovered sessions to hydrate and search inside (default 10, max 30, clamped). Without q: caps the listing rows (default: all, still under the output budget; no cursor in listing — raise `limit` or use q). Shapes a page only (the discovery pool's own candidate depth is a fixed constant) — free to vary between pages, not part of the cursor fingerprint.")] int limit = 0,
+		[LogArg][Description("Page width — max sessions per page (a row = a session). With q: how many discovered sessions to hydrate and search inside (default 10, max 30, clamped). Without q: rows per page of the listing (default: unbounded, still under the output budget; a page cut by `limit` or the budget returns `nextCursor`). Shapes a page only (the discovery pool's own candidate depth is a fixed constant) — free to vary between pages, not part of the cursor fingerprint.")] int limit = 0,
 		[LogArg][Description("DEPRECATED alias of `limit` — use `limit`. Passing both with different values is an error.")] int sessions = 0,
 		[LogArg][Description("With q: max hits returned per session (default 5, max 20). Shapes a page only — free to vary between pages.")] int hitsPerSession = 0,
 		[LogArg][Description("With q: opt into the full-scan escape hatch (raw substring scan over every session). Only actually runs if the deployment's permission setting also allows it — see fullScanRan/fullScanReason in the response. Default false: never on automatically.")] bool fullScan = false,
 		[LogArg][Description("With q: body length knob (uniform contract) for each hit's snippet — omitted = a query-centered ~240-char preview (the compact default); 0 = no snippet text; N>0 = a query-centered preview N chars wide; -1 = the full raw message (or jump there directly with session_get {fromOrdinal: the hit's `message` ordinal}). Shapes a page only — free to vary between pages.")] int? bodyLen = null,
-		[LogArg(LogArgMode.Presence)][Description("With q: pagination — the opaque `nextCursor` from the previous page, passed back verbatim to continue after it. `q` and `fullScan` decide the QUESTION and must stay identical, or the call FAILS with an explaining error rather than silently restarting you inside a different ordering. `limit`/`sessions`/`hitsPerSession`/`bodyLen` shape a page, not the sequence, and are free to vary. The walk is separately bound to the POOL it was ranked in: that pool lives about 15 minutes from the last page, and once it expires the walk is over — the next page is REFUSED — the error names the expired pool — rather than re-ranked, because a cross-encoder does not reproduce its own order. Page promptly, and on that refusal start the query over.")] string? cursor = null,
+		[LogArg(LogArgMode.Presence)][Description("Pagination (listing AND q) — the opaque `nextCursor` from the previous page, passed back verbatim to continue after it. `q` and `fullScan` decide the QUESTION and must stay identical, or the call FAILS with an explaining error rather than silently restarting you inside a different ordering. `limit`/`sessions`/`hitsPerSession`/`bodyLen` shape a page, not the sequence, and are free to vary. The walk is separately bound to the POOL it was ranked in: that pool lives about 15 minutes from the last page, and once it expires the walk is over — the next page is REFUSED — the error names the expired pool — rather than re-ranked, because a cross-encoder does not reproduce its own order. Page promptly, and on that refusal start the query over.")] string? cursor = null,
 		CancellationToken ct = default)
 	{
 		ModuleMcp.AssertFeature(features, Feature.Tasks);
@@ -318,28 +322,35 @@ public static class SessionTools
 
 		if (string.IsNullOrWhiteSpace(q))
 		{
-			// A cursor belongs to the walk that issued it. The listing branch has no ranked pool and no
-			// resume token of its own (that is listing-keyset-memory-sessions' work), so a token arriving
-			// here came from a QUERY walk — refuse it rather than ignoring it and serving an unrelated
-			// first page that looks like a continuation.
+			// LISTING (the former session.list): compact rows in a deterministic order (sessionId, ordinal),
+			// KEYSET-paged the way tasks_search's listing is (card session-search-listing-cursor). The
+			// token names the last row actually SENT, so a session inserted or deleted between pages
+			// neither duplicates nor drops a row; sessionId is the whole order, so there is no volatile
+			// sort axis to chase. The fingerprint is the QUESTION only (tool, project) — `limit`,
+			// `sessions` and `bodyLen` shape a page and may vary between pages. A cursor from a `q` walk
+			// (or another project) carries a different fingerprint and is refused, never restarted.
+			var listFingerprint = KeysetCursor.FingerprintOf("session_search:list", projectKey);
+			var list = (await sessionSvc.ListAsync(projectKey, ct))
+				.OrderBy(s => s.SessionId, StringComparer.Ordinal).ToList();
+			IReadOnlyList<SessionHeader> remaining = list;
 			if (!string.IsNullOrWhiteSpace(cursor))
-				throw new ArgumentException(
-					"session_search: this cursor was issued for a `q` walk — dropping `q` changes both the "
-					+ "selection and the ordering basis, so continuing would splice two orderings. Keep the "
-					+ "query while paging, or drop the cursor.");
-			// LISTING (the former session.list): compact rows, budget-enveloped.
-			var list = await sessionSvc.ListAsync(projectKey, ct);
-			var rows = list.Select(s => new SessionSearchItemView(s.SessionId, s.Agent, s.Version)).ToList();
-			// `limit` caps the listing to its first N rows; the listing has no resume token, so the cut
-			// rows are reported as omitted with a hint rather than paged.
-			var capped = limit > 0 && rows.Count > limit;
-			var page = capped ? rows.Take(limit).ToList() : rows;
-			var (keptRows, omittedBudget) = new ResponseBudget().Take(page);
-			var omittedRows = omittedBudget + (capped ? rows.Count - limit : 0);
+				remaining = KeysetCursor.Advance(
+					list, KeysetCursor.Decode(cursor, listFingerprint, "session_search"),
+					h => ("", h.SessionId, projectKey), static (_, _) => 0, desc: false, "session_search");
+			// `limit` = rows per PAGE, applied AFTER the seek. Unset = unbounded (the output budget still
+			// applies), the same default as tasks_search's listing.
+			var pageHeaders = limit > 0 && remaining.Count > limit ? remaining.Take(limit).ToList() : remaining;
+			var rows = pageHeaders.Select(h => new SessionSearchItemView(h.SessionId, h.Agent, h.Version)).ToList();
+			var (keptRows, omittedRows) = new ResponseBudget().Take(rows);
+			// A token only when rows were withheld (by `limit` or by the budget); it resumes from the last
+			// row actually SENT so budget-cut rows are not stranded. No token = the end of the listing.
+			var listNext = keptRows.Count > 0 && keptRows.Count < remaining.Count
+				? new KeysetCursor(listFingerprint, "", keptRows[^1].SessionId, projectKey).Encode()
+				: null;
 			return omittedRows == 0
-				? new SessionSearchResultView(rows)
+				? new SessionSearchResultView(rows, NextCursor: listNext)
 				: new SessionSearchResultView(keptRows, Truncated: true, Omitted: omittedRows,
-					Hint: omittedBudget == 0 ? ListLimitHint : ListBudgetHint);
+					NextCursor: listNext, Hint: ListBudgetHint);
 		}
 
 		// QUERY: the two-stage pipeline (digest discovery → episodic hydration) leans on
@@ -459,15 +470,11 @@ public static class SessionTools
 	static string SearchFingerprint(string projectKey, string? query, bool fullScan) =>
 		KeysetCursor.FingerprintOf("session_search", projectKey, query, fullScan ? "1" : "0");
 
-	// Surfaced when the listing was cut by the caller's own `limit` (the listing has no resume token).
-	const string ListLimitHint =
-		"Listing capped by `limit` (see truncated/omitted): raise `limit`, drop it to list everything, " +
-		"or pass `q` to find a session by content.";
-
 	// Surfaced on SessionSearchResultView.Hint when listing rows were cut by the budget.
 	const string ListBudgetHint =
-		"Output budget exceeded: session rows were truncated (see truncated/omitted). Find a " +
-		"session by content by passing `q` (session_search), or read one directly with session_get.";
+		"Output budget exceeded: session rows were truncated (see truncated/omitted). The rest is " +
+		"reachable: pass `nextCursor` back as `cursor`. Or find a session by content with `q`, or " +
+		"read one directly with session_get.";
 
 	// Surfaced when a query answer was cut by the budget.
 	const string SearchBudgetHint =
