@@ -246,21 +246,23 @@ public static class CommentTools
 
 	[RequiresScope(ApiKeyScopes.TasksRead)]
 	[McpServerTool(Name = "comments_delta", Title = "Comments delta since cursor", ReadOnly = true, UseStructuredContent = true, OutputSchemaType = typeof(CommentsUpsertResult))]
-	[Description("Return comments added/updated/removed on a board since `sinceVersion` (no writes) — THE cursor/catch-up surface and the way to enumerate a board's comments incrementally (comments_search's `q` is a relevance slice, never an enumeration; a comments_upsert ack echoes only its own call — pass its `currentVersion` here for the full board comment delta). Bodies follow the uniform bodyLen knob (compact by default). Requires tasks:read.")]
+	[Description("Return comments added/updated/removed on a board since `sinceVersion` (no writes) — THE cursor/catch-up surface and the way to enumerate a board's comments incrementally (comments_search's `q` is a relevance slice, never an enumeration; a comments_upsert ack echoes only its own call — pass its `currentVersion` here for the full board comment delta). Bodies follow the uniform bodyLen knob (compact by default). PAGED: the changed rows are cut by the ~30k-char output budget and the optional `limit`, whichever comes first, extended to the end of a version group; a cut response carries `truncated:true`, `omitted:N`, a `hint`, and `currentVersion` = the watermark of the delivered prefix — pass it back as `sinceVersion` and REPEAT until a response has no `truncated` (a loop that instead runs until added and updated are empty also reaches the end). Never take `currentVersion` from anywhere but the response you are consuming. `removed` is returned whole on every page (idempotent). Requires tasks:read.")]
 	public static async Task<CommentsUpsertResult> DeltaAsync(
 		IHttpContextAccessor http, FeatureFlags features, ICommentService comments,
 		string projectKey, string board, long sinceVersion,
 		[Description("Body length knob (uniform contract): omitted = NO body (compact default); 0 = no body; N>0 = the first N chars (\"…\" when cut); -1 = the full body.")] int? bodyLen = null,
+		[Description("Max changed rows (added + updated) per page, optional. The response is ALSO cut by the ~30k-char output budget, whichever comes first; the cut is extended to the end of a version group (a batch is never split; one giant batch is returned whole). A cut page sets truncated/omitted/hint and returns `currentVersion` = the watermark of what it delivered: pass it back as `sinceVersion`.")] int? limit = null,
 		CancellationToken ct = default)
 	{
 		ModuleMcp.AssertFeature(features, Feature.Tasks);
 		var d = await comments.DeltaAsync(projectKey, board, sinceVersion, ct);
-		return new CommentsUpsertResult(
-			Applied: true, d.CurrentVersion,
-			d.Added.Select(c => Shape(c, bodyLen, ModuleMcp.NoBody)).ToList(),
-			d.Updated.Select(c => Shape(c, bodyLen, ModuleMcp.NoBody)).ToList(),
-			d.Removed,
-			[]);
+		var added = d.Added.Select(c => Shape(c, bodyLen, ModuleMcp.NoBody)).ToList();
+		var updated = d.Updated.Select(c => Shape(c, bodyLen, ModuleMcp.NoBody)).ToList();
+		var page = McpDeltaPage.Cut(added, updated, d.CurrentVersion, c => c.Version, limit);
+		return page.Omitted == 0
+			? new CommentsUpsertResult(Applied: true, d.CurrentVersion, added, updated, d.Removed, [])
+			: new CommentsUpsertResult(Applied: true, page.CurrentVersion, page.Added, page.Updated, d.Removed, [],
+				Truncated: true, Omitted: page.Omitted, Hint: McpDeltaPage.Hint);
 	}
 
 	[RequiresScope(ApiKeyScopes.TasksRead)]

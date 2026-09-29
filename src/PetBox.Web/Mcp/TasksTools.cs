@@ -1846,17 +1846,22 @@ public static class TasksTools
 
 	[RequiresScope(ApiKeyScopes.TasksRead)]
 	[McpServerTool(Name = "tasks_delta", Title = "Task node delta since cursor", ReadOnly = true, UseStructuredContent = true, OutputSchemaType = typeof(UpsertResultView))]
-	[Description("Return nodes added/updated/removed since `sinceVersion` (no writes) — THE cursor/catch-up surface and the way to enumerate a WHOLE board incrementally (tasks_search's `q` is a relevance slice, never an enumeration; a tasks_upsert ack echoes only its own call — pass its `currentVersion` here for the full board delta). Bodies follow the uniform bodyLen knob (compact by default). Requires tasks:read.")]
+	[Description("Return nodes added/updated/removed since `sinceVersion` (no writes) — THE cursor/catch-up surface and the way to enumerate a WHOLE board incrementally (tasks_search's `q` is a relevance slice, never an enumeration; a tasks_upsert ack echoes only its own call — pass its `currentVersion` here for the full board delta). Bodies follow the uniform bodyLen knob (compact by default). PAGED: the changed rows are cut by the ~30k-char output budget and the optional `limit`, whichever comes first, extended to the end of a version group; a cut response carries `truncated:true`, `omitted:N`, a `hint`, and `currentVersion` = the watermark of the delivered prefix — pass it back as `sinceVersion` and REPEAT until a response has no `truncated` (a loop that instead runs until added and updated are empty also reaches the end). Never take `currentVersion` from anywhere but the response you are consuming. `removed` is returned whole on every page (idempotent). Requires tasks:read.")]
 	public static async Task<UpsertResultView> DeltaAsync(
 		IHttpContextAccessor http, FeatureFlags features, ITasksService tasks,
 		string projectKey, string board, long sinceVersion,
 		[Description("Body length knob (uniform contract): omitted = NO body (compact default); 0 = no body; N>0 = the first N chars (\"…\" when cut); -1 = the full body.")] int? bodyLen = null,
 		[Description("Include an absolute `url` permalink to each returned node's detail page (off by default).")] bool includeUrl = false,
+		[Description("Max changed rows (added + updated) per page, optional. The response is ALSO cut by the ~30k-char output budget, whichever comes first; the cut is extended to the end of a version group (a batch is never split; one giant batch is returned whole). A cut page sets truncated/omitted/hint and returns `currentVersion` = the watermark of what it delivered: pass it back as `sinceVersion`.")] int? limit = null,
 		CancellationToken ct = default)
 	{
 		ModuleMcp.AssertFeature(features, Feature.Tasks);
 		var urlPrefix = await UrlPrefixAsync(http, tasks, projectKey, includeUrl, ct);
-		return Serialize(await tasks.DeltaAsync(projectKey, board, sinceVersion, ct), urlPrefix, bodyLen);
+		var view = Serialize(await tasks.DeltaAsync(projectKey, board, sinceVersion, ct), urlPrefix, bodyLen);
+		var page = McpDeltaPage.Cut(view.Added, view.Updated, view.CurrentVersion, n => n.Version, limit);
+		return page.Omitted == 0
+			? view
+			: view with { Added = page.Added, Updated = page.Updated, CurrentVersion = page.CurrentVersion, Truncated = true, Omitted = page.Omitted, Hint = McpDeltaPage.Hint };
 	}
 
 	[RequiresScope(ApiKeyScopes.TasksRead)]

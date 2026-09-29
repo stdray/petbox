@@ -61,18 +61,18 @@ tasks_upsert board="spec" projectKey="<proj>" nodes=[
 ]
 ```
 
-`priority` is a sparse ordering int (lower first). `version` is the baseline you last saw (0 = new). Rename with `prevKey`. The upsert response is a pure ack for *your* call (`added/updated/removed` + `currentVersion`); catch up on everyone's changes via `tasks_delta` with a previous `currentVersion`.
+`priority` is a sparse ordering int (lower first). `version` is the baseline you last saw (0 = new). Rename with `prevKey`. The upsert response is a pure ack for *your* call (`added/updated/removed` + `currentVersion`); catch up on everyone's changes via `tasks_delta` with a previous `currentVersion`. A delta is PAGED: when a response carries `truncated:true` (cut by a ~30k-char budget or `limit`), pass its `currentVersion` back as `sinceVersion` and repeat until there is no `truncated` — never take the cursor from anywhere but the response you are reading.
 
 > A board has a **kind** (spec / work / ideas / intake / simple) that drives its statuses, links and invariants. Before writing real plans, read the [methodology cheatsheet](/doc/methodology) — it's the operational contract (and call `tasks_workflow` for a board's live statuses).
 
 ## 5. Tools
 
 - `tasks_board_create(kind?) / board_list / board_delete` — named boards; `kind` ∈ spec|work|ideas|intake|simple. A cold `tasks_upsert` auto-creates a simple board.
-- `tasks_search / node_get / upsert / delta` — nodes (key, nodeId, parentSlug, depth, status, type, title, body, priority, version; on a spec board also computed `delivery`). `search` is the one read verb: without `q` a deterministic listing (board or whole project), with `q` hybrid relevance search; filters (`status`, `nodes`, `underNode`) and `sort` work in both modes. `links:{kind:ref}` / `blockedBy` create links.
+- `tasks_search / node_get / upsert / delta` — nodes (key, nodeId, parentSlug, depth, status, type, title, body, priority, version; on a spec board also computed `delivery`). `search` is the one read verb: without `q` a deterministic listing (board or whole project), with `q` hybrid relevance search; filters (`status`, `nodes`, `underNode`) and `sort` work in both modes. `links:{kind:ref}` / `blockedBy` create links. `delta` is paged: repeat with the returned `currentVersion` as `sinceVersion` while the response says `truncated`.
 - `tasks_workflow` — the live statuses/transitions for a board's kind.
 - `relations_create / list / delete` — typed temporal edges (task_spec|issue_task|idea_spec|blocks|part_of|supersedes). See the [cheatsheet](/doc/methodology).
 - `memory_store_list / store_create / store_delete` — named memory stores (a cold `memory_upsert` auto-creates the store).
-- `memory_search / get / upsert / delta / remember` — durable notes. Each entry needs a `type` (User|Feedback|Project|Reference) plus description, body, optional `tags` (an array of strings). `upsert` is a PATCH on edits: an omitted field stays unchanged, an explicit `""` (or `[]` for tags) clears it. `search` is the one read verb: without `q` a deterministic listing (updated desc), with `q` hybrid relevance search (FTS ⊕ vectors); no `scope` cascades project ⊕ workspace over every store; optional `type` filter and `sort` work in both modes.
+- `memory_search / get / upsert / delta / remember` — durable notes (`delta` is paged like `tasks_delta`: repeat while `truncated`). Each entry needs a `type` (User|Feedback|Project|Reference) plus description, body, optional `tags` (an array of strings). `upsert` is a PATCH on edits: an omitted field stays unchanged, an explicit `""` (or `[]` for tags) clears it. `search` is the one read verb: without `q` a deterministic listing (updated desc), with `q` hybrid relevance search (FTS ⊕ vectors); no `scope` cascades project ⊕ workspace over every store; optional `type` filter and `sort` work in both modes.
 - `session_search / get / upsert / append / delete` — the session archive. `search` is the one read verb: without `q` a listing of compact rows, with `q` a two-stage search (digest discovery → episodic hits with message ordinals for `session_get`).
 
 ## 6. Memory: tasks vs memory vs session

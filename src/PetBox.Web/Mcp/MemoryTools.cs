@@ -434,12 +434,13 @@ public static class MemoryTools
 
 	[RequiresScope(ApiKeyScopes.MemoryRead)]
 	[McpServerTool(Name = "memory_delta", Title = "Memory delta since cursor", ReadOnly = true, UseStructuredContent = true, OutputSchemaType = typeof(MemoryUpsertResultView))]
-	[Description("Return entries added/updated/removed since `sinceVersion` (no writes) — THE cursor/catch-up surface and the way to enumerate a store incrementally (memory_search's `q` is a relevance slice, never an enumeration). `scope`: project (default) | workspace. Omit to CASCADE project first, then workspace — the same cascade contract as memory_search: the first container that HAS the store answers; a leg that lacks it, or that you may not read, is skipped silently. When no readable container has the store the answer is ONE not-found error, identical in both cases (the memory-family read contract: absent and not-yours are deliberately the same answer). Bodies follow the uniform bodyLen knob (compact by default). Requires memory:read.")]
+	[Description("Return entries added/updated/removed since `sinceVersion` (no writes) — THE cursor/catch-up surface and the way to enumerate a store incrementally (memory_search's `q` is a relevance slice, never an enumeration). `scope`: project (default) | workspace. Omit to CASCADE project first, then workspace — the same cascade contract as memory_search: the first container that HAS the store answers; a leg that lacks it, or that you may not read, is skipped silently. When no readable container has the store the answer is ONE not-found error, identical in both cases (the memory-family read contract: absent and not-yours are deliberately the same answer). Bodies follow the uniform bodyLen knob (compact by default). PAGED: the changed rows are cut by the ~30k-char output budget and the optional `limit`, whichever comes first, extended to the end of a version group; a cut response carries `truncated:true`, `omitted:N`, a `hint`, and `currentVersion` = the watermark of the delivered prefix — pass it back as `sinceVersion` and REPEAT until a response has no `truncated` (a loop that instead runs until added and updated are empty also reaches the end). Never take `currentVersion` from anywhere but the response you are consuming. `removed` is returned whole on every page (idempotent). Requires memory:read.")]
 	public static async Task<MemoryUpsertResultView> DeltaAsync(
 		IHttpContextAccessor http, FeatureFlags features, IWorkspaceMemoryDirectory wsmem, IMemoryService memory,
 		string projectKey, string store, long sinceVersion,
 		[Description("Body length knob (uniform contract): omitted = NO body (compact default); 0 = no body; N>0 = the first N chars (\"…\" when cut); -1 = the full body.")] int? bodyLen = null,
 		[Description("project | workspace; omit to cascade project first, then workspace.")] string? scope = null,
+		[Description("Max changed rows (added + updated) per page, optional. The response is ALSO cut by the ~30k-char output budget, whichever comes first; the cut is extended to the end of a version group (a batch is never split; one giant batch is returned whole). A cut page sets truncated/omitted/hint and returns `currentVersion` = the watermark of what it delivered: pass it back as `sinceVersion`.")] int? limit = null,
 		CancellationToken ct = default)
 	{
 		ModuleMcp.AssertFeature(features, Feature.Memory);
@@ -457,7 +458,11 @@ public static class MemoryTools
 			// a bare delta, and the error MESSAGE differed from the all-legs-skipped one below,
 			// which let a caller tell a refused cascade apart from an absent store.
 			if (!await memory.StoreExistsAsync(container, store, ct)) continue;
-			return Serialize(await memory.DeltaAsync(container, store, sinceVersion, ct), bodyLen);
+			var view = Serialize(await memory.DeltaAsync(container, store, sinceVersion, ct), bodyLen);
+			var page = McpDeltaPage.Cut(view.Added, view.Updated, view.CurrentVersion, e => e.Version, limit);
+			return page.Omitted == 0
+				? view
+				: view with { Added = page.Added, Updated = page.Updated, CurrentVersion = page.CurrentVersion, Truncated = true, Omitted = page.Omitted, Hint = McpDeltaPage.Hint };
 		}
 
 		// THE ONE ABSENCE ANSWER (work `memory-container-authz-throw-vs-skip`). This message is the
