@@ -244,9 +244,8 @@ public static class SessionTools
 		output budget. Each hit's snippet follows the uniform `bodyLen` knob (omitted = a
 		query-centered ~240-char preview; 0 = no snippet; N>0 = a wider/narrower preview; -1 =
 		the full raw message).
-		No `limit` parameter here, unlike tasks_search/memory_search: page width is `sessions`
-		(how many discovered sessions to hydrate) plus `hitsPerSession` (hits per session) —
-		passing `limit` is rejected as unknown.
+		Page width is `limit` (rows = sessions), like tasks_search/memory_search; `hitsPerSession`
+		separately caps hits per session. `sessions` is a deprecated alias of `limit`.
 
 		Cost — your context pays it. Hits carry verbatim transcript text, so widening how many
 		sessions are hydrated and how many hits each returns multiplies the response fast —
@@ -301,15 +300,21 @@ public static class SessionTools
 		IMemoryUsageRecorder usage,
 		string? projectKey = null,
 		[LogArg(LogArgMode.Presence)][Description("Search query. Omit for a deterministic listing of the project's sessions (list = search without q).")] string? q = null,
-		[LogArg][Description("With q: how many discovered sessions to hydrate and search inside (default 10, max 30). Shapes a page only (the discovery pool's own candidate depth is a fixed constant, not derived from this) — free to vary between pages.")] int sessions = 0,
+		[LogArg][Description("Page width — max sessions per page (a row = a session). With q: how many discovered sessions to hydrate and search inside (default 10, max 30, clamped). Without q: caps the listing rows (default: all, still under the output budget; no cursor in listing — raise `limit` or use q). Shapes a page only (the discovery pool's own candidate depth is a fixed constant) — free to vary between pages, not part of the cursor fingerprint.")] int limit = 0,
+		[LogArg][Description("DEPRECATED alias of `limit` — use `limit`. Passing both with different values is an error.")] int sessions = 0,
 		[LogArg][Description("With q: max hits returned per session (default 5, max 20). Shapes a page only — free to vary between pages.")] int hitsPerSession = 0,
 		[LogArg][Description("With q: opt into the full-scan escape hatch (raw substring scan over every session). Only actually runs if the deployment's permission setting also allows it — see fullScanRan/fullScanReason in the response. Default false: never on automatically.")] bool fullScan = false,
 		[LogArg][Description("With q: body length knob (uniform contract) for each hit's snippet — omitted = a query-centered ~240-char preview (the compact default); 0 = no snippet text; N>0 = a query-centered preview N chars wide; -1 = the full raw message (or jump there directly with session_get {fromOrdinal: the hit's `message` ordinal}). Shapes a page only — free to vary between pages.")] int? bodyLen = null,
-		[LogArg(LogArgMode.Presence)][Description("With q: pagination — the opaque `nextCursor` from the previous page, passed back verbatim to continue after it. `q` and `fullScan` decide the QUESTION and must stay identical, or the call FAILS with an explaining error rather than silently restarting you inside a different ordering. `sessions`/`hitsPerSession`/`bodyLen` shape a page, not the sequence, and are free to vary. The walk is separately bound to the POOL it was ranked in: that pool lives about 15 minutes from the last page, and once it expires the walk is over — the next page is REFUSED — the error names the expired pool — rather than re-ranked, because a cross-encoder does not reproduce its own order. Page promptly, and on that refusal start the query over.")] string? cursor = null,
+		[LogArg(LogArgMode.Presence)][Description("With q: pagination — the opaque `nextCursor` from the previous page, passed back verbatim to continue after it. `q` and `fullScan` decide the QUESTION and must stay identical, or the call FAILS with an explaining error rather than silently restarting you inside a different ordering. `limit`/`sessions`/`hitsPerSession`/`bodyLen` shape a page, not the sequence, and are free to vary. The walk is separately bound to the POOL it was ranked in: that pool lives about 15 minutes from the last page, and once it expires the walk is over — the next page is REFUSED — the error names the expired pool — rather than re-ranked, because a cross-encoder does not reproduce its own order. Page promptly, and on that refusal start the query over.")] string? cursor = null,
 		CancellationToken ct = default)
 	{
 		ModuleMcp.AssertFeature(features, Feature.Tasks);
 		projectKey = await ModuleMcp.ResolveProject(http, projectKey, ct);
+		if (limit > 0 && sessions > 0 && limit != sessions)
+			throw new ArgumentException(
+				$"session_search: `limit` ({limit}) and `sessions` ({sessions}) are the same knob — `sessions` is a "
+				+ "deprecated alias of `limit`. Pass only `limit`, or make the two values equal.");
+		var width = limit > 0 ? limit : sessions;
 
 		if (string.IsNullOrWhiteSpace(q))
 		{
@@ -325,10 +330,16 @@ public static class SessionTools
 			// LISTING (the former session.list): compact rows, budget-enveloped.
 			var list = await sessionSvc.ListAsync(projectKey, ct);
 			var rows = list.Select(s => new SessionSearchItemView(s.SessionId, s.Agent, s.Version)).ToList();
-			var (keptRows, omittedRows) = new ResponseBudget().Take(rows);
+			// `limit` caps the listing to its first N rows; the listing has no resume token, so the cut
+			// rows are reported as omitted with a hint rather than paged.
+			var capped = limit > 0 && rows.Count > limit;
+			var page = capped ? rows.Take(limit).ToList() : rows;
+			var (keptRows, omittedBudget) = new ResponseBudget().Take(page);
+			var omittedRows = omittedBudget + (capped ? rows.Count - limit : 0);
 			return omittedRows == 0
 				? new SessionSearchResultView(rows)
-				: new SessionSearchResultView(keptRows, Truncated: true, Omitted: omittedRows, Hint: ListBudgetHint);
+				: new SessionSearchResultView(keptRows, Truncated: true, Omitted: omittedRows,
+					Hint: omittedBudget == 0 ? ListLimitHint : ListBudgetHint);
 		}
 
 		// QUERY: the two-stage pipeline (digest discovery → episodic hydration) leans on
@@ -344,7 +355,7 @@ public static class SessionTools
 		// EDGE default (search-ranking-mode-is-caller-choice): an MCP verb is an agent acting on the
 		// answer, where a ranking mistake costs more than latency — Precision, same as
 		// memory_search/tasks_search. Not a caller-exposed argument (mirrors those two verbs).
-		var o = await search.SearchAsync(projectKey, q, sessions, hitsPerSession, fullScan, bodyLen,
+		var o = await search.SearchAsync(projectKey, q, width, hitsPerSession, fullScan, bodyLen,
 			afterSessionId: token?.Key, mode: SearchRankingMode.Precision, ct: ct);
 		// The discovery ORDER moved out of the fingerprint and into the order commitment, where the other
 		// two surfaces now carry it. Same guarantee, better words: a fingerprint mismatch tells the caller
@@ -439,7 +450,7 @@ public static class SessionTools
 	// The query identity a cursor is bound to — the QUESTION only. The discovery ORDER lives in the
 	// token's order commitment instead (see AssertPoolOrder at the call site), so the two failures stay
 	// tellable apart: "you changed the query" versus "the ranking moved under you".
-	// `sessions`/`hitsPerSession`/`bodyLen` are deliberately EXCLUDED: they shape a page, not the
+	// `limit`/`sessions`/`hitsPerSession`/`bodyLen` are deliberately EXCLUDED: they shape a page, not the
 	// sequence, so a caller may vary them mid-walk. That is true of the pool's CACHE KEY too, not only
 	// its fingerprint — SessionSearchService.TermPoolDepth is a fixed constant rather than `3 ×
 	// sessions`, precisely so `sessions` cannot touch which pool a page reads (card:
@@ -447,6 +458,11 @@ public static class SessionTools
 	// pool on its own, which AssertPoolAlive could then only misname as an ordinary timeout).
 	static string SearchFingerprint(string projectKey, string? query, bool fullScan) =>
 		KeysetCursor.FingerprintOf("session_search", projectKey, query, fullScan ? "1" : "0");
+
+	// Surfaced when the listing was cut by the caller's own `limit` (the listing has no resume token).
+	const string ListLimitHint =
+		"Listing capped by `limit` (see truncated/omitted): raise `limit`, drop it to list everything, " +
+		"or pass `q` to find a session by content.";
 
 	// Surfaced on SessionSearchResultView.Hint when listing rows were cut by the budget.
 	const string ListBudgetHint =

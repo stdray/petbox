@@ -354,7 +354,7 @@ public sealed class SessionSearchPoolCacheTests : IDisposable
 	Task<PetBox.Web.Mcp.Contract.SessionSearchResultView> SearchToolAsync(
 		SessionSearchService search, int sessions = 0, string? cursor = null) =>
 		PetBox.Web.Mcp.SessionTools.SearchAsync(ToolHttp(), ToolFlags(), _sessions, search, _usage, Proj,
-			Query, sessions, 0, false, null, cursor);
+			Query, 0, sessions, 0, false, null, cursor);
 
 	static IHttpContextAccessor ToolHttp()
 	{
