@@ -169,9 +169,16 @@ public sealed record CommentBatchResult(
 
 // A comments_search answer: the selected comments plus honest retrieval provenance (null in a
 // deterministic listing; in query mode it reports the lexical floor — semantic is not wired yet).
+// PAGING (card comments-search-cursor): the adapter asks for the WHOLE ordered set (limit 0) and seeks/pages
+// it itself, so `limit` never reshapes a walk. In query mode `PoolBounded`/`PoolLimit` say whether ranking
+// looked only PoolLimit deep (more may have matched behind it) and `OrderHash` commits the ranked order of
+// the COMMENT rows returned — what a cursor binds to, so a re-ranked pool ends the walk instead of splicing.
 public sealed record CommentSearchResult(
 	IReadOnlyList<CommentView> Items,
-	PetBox.Core.Search.SearchRetrievers? Retrievers = null);
+	PetBox.Core.Search.SearchRetrievers? Retrievers = null,
+	bool PoolBounded = false,
+	int PoolLimit = 0,
+	string? OrderHash = null);
 
 // A comments_delta answer: the comments added/updated/removed on a board since a version cursor,
 // plus the board's current comment cursor to advance to (mirrors the tasks delta split).

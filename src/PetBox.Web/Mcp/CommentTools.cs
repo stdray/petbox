@@ -1,3 +1,4 @@
+using System.Globalization;
 using System.ComponentModel;
 using ModelContextProtocol.Server;
 using PetBox.Core.Auth;
@@ -168,7 +169,7 @@ public static class CommentTools
 
 	[RequiresScope(ApiKeyScopes.TasksRead)]
 	[McpServerTool(Name = "comments_search", Title = "Read node comments (list + search)", ReadOnly = true, UseStructuredContent = true, OutputSchemaType = typeof(CommentsSearchResult))]
-	[Description("THE comment read verb — one tool for LISTING (no `q`) and SEARCH (`q`). Without `q`: a deterministic chronological list of active comments, optionally scoped to one `board` and/or one `node` (a node reference — a slug key or a 32-hex NodeId, both accepted). With `q`: a lexical FTS relevance SELECTION over comment bodies in the same scope, NOT an enumeration (semantic isn't wired for comments yet, so a query runs on the lexical floor — `retrievers` reports semantic:false). Bodies follow the uniform bodyLen knob (omitted = a ~240-char snippet in BOTH modes, listing and `q` alike; fetch one full comment with comments_get). Hard ~30k-char output budget: overflow rows are prefix-cut + flagged (truncated/omitted/hint). `includeUrl` adds an absolute `url` per row — the owner node's page plus this comment's `#comment-{id}` anchor — the same affordance tasks_search has; `slug` (when the comment has one) is its human-readable address within that node. Tracking changes since a known version cursor (added/updated/removed, including tombstones this search cannot show)? Use comments_delta instead — it's the way to enumerate a board's comments incrementally. Requires tasks:read.\n\nCost — your context pays it. Same query, same rows: bodyLen:0 = 1x, the default snippet ~1.5-2x, bodyLen:-1 ~3x+ and unbounded per row — a single long comment can add thousands of chars on its own.\nCheap path: search with bodyLen:0, read the row identities, then comments_get the 1-3 comments you actually need. Use -1 only when you already know the ids and there are few.\nPulling full bodies across a wide limit \"just in case\" is the most expensive habit available here: it routinely spends a third of the response budget on text you will not read.")]
+	[Description("THE comment read verb — one tool for LISTING (no `q`) and SEARCH (`q`). Without `q`: a deterministic chronological list of active comments, optionally scoped to one `board` and/or one `node` (a node reference — a slug key or a 32-hex NodeId, both accepted). With `q`: a lexical FTS relevance SELECTION over comment bodies in the same scope, NOT an enumeration (semantic isn't wired for comments yet, so a query runs on the lexical floor — `retrievers` reports semantic:false). Bodies follow the uniform bodyLen knob (omitted = a ~240-char snippet in BOTH modes, listing and `q` alike; fetch one full comment with comments_get). Hard ~30k-char output budget: overflow rows are prefix-cut + flagged (truncated/omitted/hint). PAGING: when rows were withheld - by `limit` or by the budget - the response carries `nextCursor`; pass it back as `cursor` with q/board/node UNCHANGED to continue (`limit`/`bodyLen`/`includeUrl` may vary). Listing is chronological (created, id) and keyset-paged; with `q` the ranked pool is walked and `stop` says why it ended: \"more\" | \"exhausted\" | \"pool-boundary\" (ranking looked only `poolLimit` deep - narrow the read; there is no further page). A ranking that moved between pages ends the walk with an explaining error: start over. `includeUrl` adds an absolute `url` per row — the owner node's page plus this comment's `#comment-{id}` anchor — the same affordance tasks_search has; `slug` (when the comment has one) is its human-readable address within that node. Tracking changes since a known version cursor (added/updated/removed, including tombstones this search cannot show)? Use comments_delta instead — it's the way to enumerate a board's comments incrementally. Requires tasks:read.\n\nCost — your context pays it. Same query, same rows: bodyLen:0 = 1x, the default snippet ~1.5-2x, bodyLen:-1 ~3x+ and unbounded per row — a single long comment can add thousands of chars on its own.\nCheap path: search with bodyLen:0, read the row identities, then comments_get the 1-3 comments you actually need. Use -1 only when you already know the ids and there are few.\nPulling full bodies across a wide limit \"just in case\" is the most expensive habit available here: it routinely spends a third of the response budget on text you will not read.")]
 	public static async Task<CommentsSearchResult> SearchAsync(
 		IHttpContextAccessor http, FeatureFlags features, ICommentService comments, ITasksService tasks,
 		string projectKey,
@@ -176,8 +177,9 @@ public static class CommentTools
 		[Description("Scope to one board. Omit = the whole project.")] string? board = null,
 		[Description("Scope to one owner node: a node reference — its slug key or its 32-hex NodeId (both accepted). The slug resolves on `board` when `board` is given; when `board` is omitted it resolves PROJECT-WIDE and must be unambiguous (2+ boards sharing the slug is an error naming them — pass the NodeId then). A node that matches nothing → an empty result (not an error). A response row's `nodeId` is a valid `node` here — reading and writing address the same owner node.")] string? node = null,
 		[LogArg][Description("Body length knob (uniform contract): omitted = a ~240-char snippet, in a listing or with q alike; 0 = no body; N>0 = the first N chars (\"…\" when cut); -1 = the full body.")] int? bodyLen = null,
-		[LogArg][Description("Max rows returned. Default: unbounded listing / 20 with q (0 = no cap).")] int? limit = null,
+		[LogArg][Description("Rows per PAGE. Default: unbounded listing / 20 with q (0 = no cap). Not part of the cursor fingerprint: free to vary between pages.")] int? limit = null,
 		[Description("Include an absolute `url` permalink to each comment (off by default) — the owner node's page plus the comment's own `#comment-{id}` anchor.")] bool includeUrl = false,
+		[LogArg(LogArgMode.Presence)][Description("Pagination - the opaque `nextCursor` from the previous page, passed back verbatim. `q`, `board` and `node` decide the QUESTION and must stay identical, or the call FAILS with an explaining error rather than restarting. `limit`/`bodyLen`/`includeUrl` may vary between pages.")] string? cursor = null,
 		CancellationToken ct = default)
 	{
 		ModuleMcp.AssertFeature(features, Feature.Tasks);
@@ -190,18 +192,56 @@ public static class CommentTools
 			if (resolvedNode is null) return new CommentsSearchResult([]); // no such node → an empty result (soft read)
 		}
 
-		var res = await comments.SearchAsync(projectKey, board, resolvedNode, q, limit ?? (hasQuery ? DefaultSearchLimit : 0), ct);
+		// The service returns the WHOLE ordered set (limit 0): chronological (created, id) in a listing, the
+		// ranked comment pool with `q`. This adapter seeks and pages it (card comments-search-cursor), so the
+		// page width can never reshape the sequence a cursor walks.
+		var res = await comments.SearchAsync(projectKey, board, resolvedNode, q, 0, ct);
+		var fingerprint = KeysetCursor.FingerprintOf("comments_search", projectKey, hasQuery ? q!.Trim() : null, board, resolvedNode);
+		IReadOnlyList<CommentView> remaining = res.Items;
+		if (!string.IsNullOrWhiteSpace(cursor))
+		{
+			var token = KeysetCursor.Decode(cursor, fingerprint, "comments_search");
+			if (hasQuery)
+			{
+				// THE ORDER COMMITMENT: the ranked comment order the token was issued against must be the
+				// one we just rebuilt, or the identity seek below would land in a different list.
+				token.AssertPoolOrder(res.OrderHash ?? "", "comments_search");
+				var at = res.Items.ToList().FindIndex(c => string.Equals(c.Id, token.Key, StringComparison.Ordinal));
+				if (at < 0)
+					throw new ArgumentException("comments_search: the comment this cursor resumes after is no longer in the result — start the query over.");
+				remaining = res.Items.Skip(at + 1).ToList();
+			}
+			else
+				remaining = KeysetCursor.Advance(res.Items, token, c => (c.Created.Ticks.ToString(CultureInfo.InvariantCulture), c.Id, ""),
+					static (a, b) => long.Parse(a, CultureInfo.InvariantCulture).CompareTo(long.Parse(b, CultureInfo.InvariantCulture)),
+					desc: false, "comments_search");
+		}
+
+		// `limit` = rows per PAGE, applied after the seek; with `q` an unspecified limit keeps its 20 default.
+		var pageSize = limit ?? (hasQuery ? DefaultSearchLimit : 0);
+		var pageViews = pageSize > 0 && remaining.Count > pageSize ? remaining.Take(pageSize).ToList() : remaining;
 		// Uniform bodyLen: a ~240-char snippet by default in BOTH modes (listing and with q) —
 		// same ModuleMcp.DefaultSnippet constant tasks_search/memory_search use, not a second
 		// number. Shaped BEFORE the budget so it measures the real wire payload. A full comment
 		// body is still one comments_get away.
 		var urlPrefix = await UrlPrefixAsync(http, tasks, projectKey, includeUrl, ct);
-		var rows = res.Items.Select(c => Shape(c, bodyLen, ModuleMcp.DefaultSnippet, urlPrefix)).ToList();
+		var rows = pageViews.Select(c => Shape(c, bodyLen, ModuleMcp.DefaultSnippet, urlPrefix)).ToList();
 		var (kept, omitted) = new ResponseBudget().Take(rows);
 		var retrievers = res.Retrievers is { } r ? new RetrieverInfo(r.Lexical, r.Semantic, r.Degraded, r.DegradedReason) : null;
-		return omitted == 0
-			? new CommentsSearchResult(kept, retrievers)
-			: new CommentsSearchResult(kept, retrievers, Truncated: true, Omitted: omitted, Hint: SearchBudgetHint);
+		// A token only when rows were withheld (by `limit` or the budget), from the last row actually SENT;
+		// no token = the end of what was ranked (with `q`, `stop` says which end).
+		var more = kept.Count > 0 && kept.Count < remaining.Count;
+		var last = more ? pageViews[kept.Count - 1] : null;
+		var nextCursor = last is null ? null
+			: new KeysetCursor(fingerprint, hasQuery ? "" : last.Created.Ticks.ToString(CultureInfo.InvariantCulture), last.Id, "",
+				hasQuery ? res.OrderHash ?? "" : "").Encode();
+		var stop = !hasQuery ? (string?)null : more ? "more" : res.PoolBounded ? "pool-boundary" : "exhausted";
+		return new CommentsSearchResult(kept, retrievers,
+			Truncated: omitted == 0 ? null : true, Omitted: omitted == 0 ? null : omitted,
+			Hint: omitted == 0 ? null : SearchBudgetHint,
+			NextCursor: nextCursor, Stop: stop,
+			PoolLimit: hasQuery ? res.PoolLimit : null,
+			PoolBoundaryHint: stop == "pool-boundary" ? PoolBoundaryHintText : null);
 	}
 
 	[RequiresScope(ApiKeyScopes.TasksRead)]
@@ -289,8 +329,16 @@ public static class CommentTools
 	}
 
 	// Surfaced on CommentsSearchResult.Hint when the rows were cut by the response budget.
+	// Surfaced ONLY on stop:"pool-boundary" - the case a caller must not read as "that was everything".
+	const string PoolBoundaryHintText =
+		"Ranking depth reached (see poolLimit): more comments matched than relevance ranking looked at, so " +
+		"this is a PREFIX of the match set, NOT the whole of it — and there is no further page, because the " +
+		"rest was never ranked. NARROW the read (`board`, `node`, a more specific `q`), or enumerate a " +
+		"board's comments with comments_delta (sinceVersion:0).";
+
 	const string SearchBudgetHint =
-		"Output budget exceeded: comment rows were truncated (see truncated/omitted). Narrow the " +
+		"Output budget exceeded: comment rows were truncated (see truncated/omitted). The rest is " +
+		"reachable: pass `nextCursor` back as `cursor` with the same arguments. Or narrow the " +
 		"read: `node` (one node's thread), `board` (one board), `q` (a relevance selection), " +
 		"`bodyLen` (snippet bodies), a smaller `limit`, comments_get for one full comment — or, " +
 		"for the COMPLETE set, comments_delta (sinceVersion:0 enumerates from scratch).";
