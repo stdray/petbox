@@ -384,7 +384,10 @@ public sealed class CommentService : ICommentService
 			if (board is not null) listQ = listQ.Where(c => c.Board == board);
 			if (nodeId is not null) listQ = listQ.Where(c => c.NodeId == nodeId);
 			var rows = await listQ.ToListAsync(ct);
-			IEnumerable<CommentView> views = rows.OrderBy(r => r.Created).Select(r => ToView(r, tags));
+			// Created then Id: a total order (two comments can share a timestamp), which is what makes a
+			// keyset cursor over the listing exact.
+			IEnumerable<CommentView> views = rows.OrderBy(r => r.Created).ThenBy(r => r.Key, StringComparer.Ordinal)
+				.Select(r => ToView(r, tags));
 			if (limit > 0) views = views.Take(limit);
 			return new CommentSearchResult(views.ToList());
 		}
@@ -392,34 +395,38 @@ public sealed class CommentService : ICommentService
 		// QUERY: the lexical floor only (semantic is a later Class-B item for comments). Reads open
 		// a FRESH connection (SqliteFtsIndex disposes it) — never the cached request context.
 		var indexes = new List<ISearchIndex> { new SqliteFtsIndex(() => _factory.NewEnsuredConnection(projectKey)) };
-		var k = limit > 0 ? Math.Max(limit * 3, 50) : 200;
+		// FIXED leg depth, not derived from `limit`: the ranked pool a cursor walks must not change shape
+		// with the page width (same rule as SessionSearchService.TermPoolDepth).
+		const int legDepth = 200;
 		// The candidate budget caps the fused pool on EVERY ranking path, reranked or not
 		// (rerank-budget-params-to-settings) — resolved from settings at this project's scope.
 		var budget = await RerankCandidateBudget.ResolveAsync(_settings, projectKey, ct);
-		var resp = await new SearchService(indexes, budget: budget).SearchAsync(projectKey, q, new SearchFilter(board), k, ct: ct);
+		var pool = await new SearchService(indexes, budget: budget).SearchPoolAsync(projectKey, q, new SearchFilter(board), legDepth, ct: ct);
 
 		// The FTS covers node docs AND comment docs in the same (scope, board) partition — keep
 		// only comment hits ("c:"+key), in fused-rank order, dedup by key.
 		var hitKeys = new List<string>();
 		var seen = new HashSet<string>(StringComparer.Ordinal);
-		foreach (var h in resp.Hits)
+		foreach (var h in pool.Ordered)
 		{
 			if (!h.Id.StartsWith(TasksSearchDocs.CommentIdPrefix, StringComparison.Ordinal)) continue;
 			var key = h.Id[TasksSearchDocs.CommentIdPrefix.Length..];
 			if (seen.Add(key)) hitKeys.Add(key);
 		}
-		if (hitKeys.Count == 0) return new CommentSearchResult([], resp.Retrievers);
+		if (hitKeys.Count == 0) return new CommentSearchResult([], pool.Retrievers, pool.PoolBounded, pool.PoolLimit);
 
 		var rowsById = (await ctx.GetTable<CommentRow>()
 				.Where(c => hitKeys.Contains(c.Key) && c.ActiveTo == null).ToListAsync(ct))
 			.ToDictionary(c => c.Key, StringComparer.Ordinal);
-		IEnumerable<CommentView> ordered = hitKeys
+		var orderedViews = hitKeys
 			.Where(rowsById.ContainsKey)
 			.Select(key => rowsById[key])
 			.Where(r => nodeId is null || r.NodeId == nodeId)
-			.Select(r => ToView(r, tags));
-		if (limit > 0) ordered = ordered.Take(limit);
-		return new CommentSearchResult(ordered.ToList(), resp.Retrievers);
+			.Select(r => ToView(r, tags))
+			.ToList();
+		var orderHash = KeysetCursor.OrderHashOf(orderedViews.Select(v => (v.Id, 0d)));
+		IReadOnlyList<CommentView> result = limit > 0 ? orderedViews.Take(limit).ToList() : orderedViews;
+		return new CommentSearchResult(result, pool.Retrievers, pool.PoolBounded, pool.PoolLimit, orderHash);
 	}
 
 	public async Task<CommentDelta> DeltaAsync(

@@ -72,10 +72,18 @@ public sealed record CommentsUpsertResult(
 // comments_search answer (list = search without a query). `Retrievers` is present only in query
 // mode (the lexical floor — semantic isn't wired for comments yet). Truncated/Omitted/Hint are the
 // response-budget markers (null/omitted on an in-budget answer).
+// PAGINATION (card comments-search-cursor): `NextCursor` is the keyset resume token, present only when rows
+// were withheld (by `limit` or the budget). With `q`, `Stop` is ALWAYS present ("more" | "exhausted" |
+// "pool-boundary" - the vocabulary tasks_search/memory_search/session_search use) and `PoolLimit` is the
+// ranking depth; do not infer the end from a missing cursor.
 public sealed record CommentsSearchResult(
 	IReadOnlyList<CommentView> Items,
 	RetrieverInfo? Retrievers = null,
-	bool? Truncated = null, int? Omitted = null, string? Hint = null);
+	bool? Truncated = null, int? Omitted = null, string? Hint = null,
+	string? NextCursor = null,
+	string? Stop = null,
+	int? PoolLimit = null,
+	string? PoolBoundaryHint = null);
 
 public sealed record CommentDeleteResult(bool Deleted);
 

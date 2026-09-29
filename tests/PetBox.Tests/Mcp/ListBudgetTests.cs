@@ -327,4 +327,33 @@ public sealed class ListBudgetTests : IDisposable
 		res.Omitted.Should().Be(total - res.Items.Count);
 		res.Hint.Should().NotBeNull();
 	}
+
+	[Fact]
+	public async Task CommentsList_BudgetCut_StillIssuesACursor_AndTheWalkLosesNothing()
+	{
+		var node = Guid.NewGuid().ToString("N");
+		var body = new string('c', 2500);
+		var ids = new List<string>();
+		for (var i = 0; i < 20; i++)
+			ids.Add((await CommentTools.UpsertAsync(Http(), Flags(), _comments, _tasks, Proj, "ideas", [NewComment(node, body)])).Added[0].Id);
+
+		var seen = new List<string>();
+		string? cursor = null;
+		var pages = 0;
+		do
+		{
+			var page = await CommentTools.SearchAsync(Http(), Flags(), _comments, _tasks, Proj, board: "ideas", node: node, bodyLen: -1, cursor: cursor);
+			if (pages == 0)
+			{
+				page.Truncated.Should().BeTrue();
+				page.Hint.Should().Contain("nextCursor");
+			}
+			seen.AddRange(page.Items.Select(i => i.Id));
+			cursor = page.NextCursor;
+			pages++;
+		} while (cursor is not null && pages < 20);
+
+		pages.Should().BeGreaterThan(1);
+		seen.Should().Equal(ids);
+	}
 }

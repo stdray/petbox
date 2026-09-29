@@ -396,6 +396,106 @@ public sealed class CommentsUniformVerbsTests : IDisposable
 		res.Retrievers.Degraded.Should().BeFalse();
 	}
 
+	// card comments-search-cursor: keyset paging, listing + q.
+	Task<CommentsSearchResult> Page(string node, string? q = null, int? limit = null, string? cursor = null, string? board = Board, int? bodyLen = 0) =>
+		CommentTools.SearchAsync(Http(), Flags(), _comments, _tasks, Proj, q: q, board: board, node: node, bodyLen: bodyLen, limit: limit, cursor: cursor);
+
+	async Task<List<string>> SeedThread(string node, int n, string bodyPrefix = "thread")
+	{
+		var ids = new List<string>();
+		for (var i = 0; i < n; i++)
+			ids.Add((await Upsert(Http(), Create(node, "alice", $"{bodyPrefix} number {i:d2} kestrel"))).Added[0].Id);
+		return ids;
+	}
+
+	[Fact]
+	public async Task Listing_Limit_PagesWholeThread_NoDupesNoGaps_ChronologicalOrder()
+	{
+		var node = NewNode();
+		var ids = await SeedThread(node, 7);
+		var seen = new List<string>();
+		string? cursor = null;
+		var pages = 0;
+		do
+		{
+			var page = await Page(node, limit: 3, cursor: cursor);
+			page.Items.Count.Should().BeLessThanOrEqualTo(3);
+			page.Stop.Should().BeNull("listing has no ranking pool");
+			seen.AddRange(page.Items.Select(i => i.Id));
+			cursor = page.NextCursor;
+			pages++;
+		} while (cursor is not null && pages < 10);
+
+		pages.Should().Be(3);
+		seen.Should().Equal(ids);
+		(await Page(node, limit: 7)).NextCursor.Should().BeNull();
+	}
+
+	[Fact]
+	public async Task Listing_InsertBetweenPages_AndLimitChange_ContinueWithoutDupesOrGaps()
+	{
+		var node = NewNode();
+		var ids = await SeedThread(node, 6);
+		var first = await Page(node, limit: 3);
+		var added = (await Upsert(Http(), Create(node, "bob", "late arrival"))).Added[0].Id;
+
+		var second = await Page(node, limit: 10, cursor: first.NextCursor);
+
+		second.Items.Select(i => i.Id).Should().Equal(ids.Skip(3).Append(added));
+	}
+
+	[Fact]
+	public async Task Listing_CursorWithChangedNode_IsRefused_NotRestarted()
+	{
+		var node = NewNode();
+		await SeedThread(node, 4);
+		var first = await Page(node, limit: 2);
+
+		var act = () => Page(NewNode(), limit: 2, cursor: first.NextCursor);
+
+		await act.Should().ThrowAsync<ArgumentException>().WithMessage("*DIFFERENT query*");
+	}
+
+	[Fact]
+	public async Task Query_Limit_WalksTheRankedPool_StopReportsWhy()
+	{
+		var node = NewNode();
+		var ids = await SeedThread(node, 5);
+		var seen = new List<string>();
+		string? cursor = null;
+		var pages = 0;
+		CommentsSearchResult last;
+		do
+		{
+			last = await Page(node, q: "kestrel", limit: 2, cursor: cursor);
+			last.Stop.Should().NotBeNull("with q the stop reason is always present");
+			seen.AddRange(last.Items.Select(i => i.Id));
+			cursor = last.NextCursor;
+			pages++;
+		} while (cursor is not null && pages < 10);
+
+		pages.Should().Be(3);
+		seen.Should().HaveCount(5).And.OnlyHaveUniqueItems().And.BeEquivalentTo(ids);
+		last.Stop.Should().Be("exhausted");
+		last.PoolLimit.Should().BeGreaterThan(0);
+		(await Page(node, q: "kestrel", limit: 2)).Stop.Should().Be("more");
+	}
+
+	[Fact]
+	public async Task Query_CursorContinues_WhenLimitChanges_AndRefusedWhenQueryChanges()
+	{
+		var node = NewNode();
+		await SeedThread(node, 6);
+		var first = await Page(node, q: "kestrel", limit: 2);
+
+		var second = await Page(node, q: "kestrel", limit: 3, cursor: first.NextCursor);
+		second.Items.Should().HaveCount(3);
+		second.Items.Select(i => i.Id).Should().NotIntersectWith(first.Items.Select(i => i.Id));
+
+		var act = () => Page(node, q: "thread", limit: 2, cursor: first.NextCursor);
+		await act.Should().ThrowAsync<ArgumentException>().WithMessage("*DIFFERENT query*");
+	}
+
 	[Fact]
 	public async Task Delta_ReturnsChangesSinceCursor()
 	{
