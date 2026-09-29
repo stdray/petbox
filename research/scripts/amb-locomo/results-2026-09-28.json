@@ -1,0 +1,51 @@
+{
+ "date": "2026-09-28",
+ "benchmark": "vectorize-io/agent-memory-benchmark",
+ "dataset": "locomo/locomo10",
+ "mode": "rag (own harness, AMB prompts)",
+ "system": "PetBox prod memory_search",
+ "ingest": "raw 6-turn windows, no extraction, 995 entries in 10 per-conversation stores in project smoke",
+ "k": 25,
+ "answer_and_judge_llm": "deepseek-v4-pro via PetBox llm_chat (AMB published runs: answer gemini-3.1-pro-preview, judge gemini-2.5-flash-lite)",
+ "n": 1540,
+ "correct": 1339,
+ "accuracy": 0.8695,
+ "errors": 1,
+ "by_category": {
+  "temporal": {
+   "correct": 279,
+   "n": 321,
+   "acc": 0.8692
+  },
+  "multi-hop": {
+   "correct": 61,
+   "n": 96,
+   "acc": 0.6354
+  },
+  "single-hop": {
+   "correct": 232,
+   "n": 282,
+   "acc": 0.8227
+  },
+  "open-domain": {
+   "correct": 767,
+   "n": 841,
+   "acc": 0.912
+  }
+ },
+ "wall_s": {
+  "ingest_last_run": 353,
+  "queries": 3950
+ },
+ "calls": {
+  "llm_calls": 3081,
+  "search_calls": 1539,
+  "upsert_calls": 21
+ },
+ "published_amb_run_same_track": {
+  "hybrid-search": 0.7909,
+  "cognee_152q": 0.8026,
+  "hindsight": 0.9201
+ },
+ "note": "Not comparable to Mem0/Zep/Letta (external_results.json: other judges/backbones). Fair comparison: hybrid-search 0.7909. See work/memory-agent-benchmark-run."
+}
