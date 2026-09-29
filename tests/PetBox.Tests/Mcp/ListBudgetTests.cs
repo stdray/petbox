@@ -4,6 +4,7 @@ using System.Text.Json.Serialization;
 using LinqToDB;
 using Microsoft.AspNetCore.Http;
 using Microsoft.Extensions.Configuration;
+using PetBox.Core.Contract;
 using PetBox.Core.Data;
 using PetBox.Core.Features;
 using PetBox.Core.Models;
@@ -185,23 +186,105 @@ public sealed class ListBudgetTests : IDisposable
 		res.Items.Count.Should().BeGreaterThan(0).And.BeLessThan(total);
 		res.Truncated.Should().BeTrue();
 		res.Omitted.Should().Be(total - res.Items.Count);
-		res.Hint.Should().ContainAll("q", "session_get");
+		res.Hint.Should().ContainAll("q", "session_get", "nextCursor");
+		res.NextCursor.Should().NotBeNullOrEmpty();
+	}
+
+	// card session-search-listing-cursor: the listing is KEYSET-paged like tasks_search's.
+	async Task SeedSessions(int n, string prefix = "s")
+	{
+		for (var i = 0; i < n; i++)
+			await _sessions.UpsertAsync(Proj, $"{prefix}{i:d2}", "claude-code", [new SessionMessageInput("session", "x")]);
+	}
+
+	Task<PetBox.Web.Mcp.Contract.SessionSearchResultView> ListPage(int limit = 0, string? cursor = null) =>
+		SessionTools.SearchAsync(Http(), Flags(), _sessions, null!, new PetBox.Tests.Memory.NoopUsageRecorder(), Proj,
+			limit: limit, cursor: cursor);
+
+	[Fact]
+	public async Task SessionList_Limit_PagesWholeListing_NoDupesNoGaps()
+	{
+		await SeedSessions(7);
+		var seen = new List<string>();
+		string? cursor = null;
+		var pages = 0;
+		do
+		{
+			var page = await ListPage(limit: 3, cursor: cursor);
+			page.Items.Count.Should().BeLessThanOrEqualTo(3);
+			seen.AddRange(page.Items.Select(i => i.SessionId));
+			cursor = page.NextCursor;
+			pages++;
+		} while (cursor is not null && pages < 10);
+
+		pages.Should().Be(3);
+		seen.Should().Equal(Enumerable.Range(0, 7).Select(i => $"s{i:d2}"), "sessionId order, every row exactly once");
+		(await ListPage(limit: 7)).NextCursor.Should().BeNull("a limit that covers everything is the end");
+		(await ListPage()).NextCursor.Should().BeNull("unbounded by default");
 	}
 
 	[Fact]
-	public async Task SessionList_Limit_CapsRows_AndSaysSo()
+	public async Task SessionList_InsertBetweenPages_NeitherDuplicatesNorDrops()
 	{
-		for (var i = 0; i < 3; i++)
-			await _sessions.UpsertAsync(Proj, $"s{i}", "claude-code", [new SessionMessageInput("session", "x")]);
+		await SeedSessions(6);
+		var first = await ListPage(limit: 3);
+		await _sessions.UpsertAsync(Proj, "s00-new", "claude-code", [new SessionMessageInput("session", "x")]); // sorts BEFORE the boundary
+		await _sessions.UpsertAsync(Proj, "s99-new", "claude-code", [new SessionMessageInput("session", "x")]); // sorts after
 
-		var res = await SessionTools.SearchAsync(Http(), Flags(), _sessions, null!, new PetBox.Tests.Memory.NoopUsageRecorder(), Proj, limit: 2);
+		var second = await ListPage(limit: 10, cursor: first.NextCursor);
 
-		res.Items.Should().HaveCount(2);
-		res.Truncated.Should().BeTrue();
-		res.Omitted.Should().Be(1);
-		res.Hint.Should().Contain("limit");
-		(await SessionTools.SearchAsync(Http(), Flags(), _sessions, null!, new PetBox.Tests.Memory.NoopUsageRecorder(), Proj, limit: 3))
-			.Truncated.Should().BeNull("a limit that covers everything is not a cut");
+		second.Items.Select(i => i.SessionId).Should().Equal("s03", "s04", "s05", "s99-new");
+	}
+
+	[Fact]
+	public async Task SessionList_CursorContinues_WhenLimitChanges()
+	{
+		await SeedSessions(6);
+		var first = await ListPage(limit: 2);
+
+		var second = await ListPage(limit: 3, cursor: first.NextCursor);
+
+		second.Items.Select(i => i.SessionId).Should().Equal("s02", "s03", "s04");
+		second.NextCursor.Should().NotBeNull();
+	}
+
+	[Fact]
+	public async Task SessionList_CursorFromAnotherProject_IsRefused_NotRestarted()
+	{
+		await SeedSessions(3);
+		var foreign = new KeysetCursor(KeysetCursor.FingerprintOf("session_search:list", "other-project"), "", "s00", "other-project").Encode();
+
+		var act = () => ListPage(limit: 2, cursor: foreign);
+
+		await act.Should().ThrowAsync<ArgumentException>().WithMessage("*DIFFERENT query*");
+	}
+
+	[Fact]
+	public async Task SessionList_BudgetCut_StillIssuesACursor_AndTheWalkLosesNothing()
+	{
+		const int total = 8;
+		var pad = new string('s', 8000);
+		for (var i = 0; i < total; i++)
+			await _sessions.UpsertAsync(Proj, $"{i:d2}-{pad}", "claude-code", [new SessionMessageInput("session", "x")]);
+
+		var seen = new List<string>();
+		string? cursor = null;
+		var pages = 0;
+		do
+		{
+			var page = await ListPage(cursor: cursor);
+			if (pages == 0)
+			{
+				page.Truncated.Should().BeTrue();
+				page.Hint.Should().Contain("nextCursor");
+			}
+			seen.AddRange(page.Items.Select(i => i.SessionId));
+			cursor = page.NextCursor;
+			pages++;
+		} while (cursor is not null && pages < 20);
+
+		pages.Should().BeGreaterThan(1);
+		seen.Should().HaveCount(total).And.OnlyHaveUniqueItems();
 	}
 
 	// ---- comments_search (listing mode — the former comments_list) ----
