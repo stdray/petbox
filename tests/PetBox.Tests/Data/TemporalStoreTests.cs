@@ -593,6 +593,50 @@ public sealed class TemporalStoreTests : IDisposable
 			"or not yet be covered by the watermark — it must never be both missed here AND already covered");
 	}
 
+	// ── the delta read used by tasks_delta / memory_delta (work delta-watermark-outruns-delta) ──
+	// Those verbs read through UpsertAsync(empty batch, sinceVersion), not ChangesSinceAsync. That path
+	// used to read the delta FIRST and the watermark SECOND, so a write committing in between was covered
+	// by the returned CurrentVersion yet absent from the delta — a caller advancing to CurrentVersion lost
+	// the row for good. The interleaving is EXHAUSTIVE rather than tied to one query order: a dry run counts
+	// the reads, then a competing write is injected before EACH read in turn, and every one of them must
+	// satisfy at-least-once (delivered now, or not yet covered by the watermark).
+	[Fact]
+	public async Task DeltaViaUpsert_ConcurrentWriteAtAnyReadBoundary_IsDeliveredAtLeastOnce()
+	{
+		var born = await Upsert(Node("a", PlanStatus.Done, "A"));
+
+		var counter = new CountingReadInterceptor();
+		using (var db = new DataConnection(new DataOptions().UseSQLite(_cs)))
+		{
+			db.AddInterceptor(counter);
+			await TemporalStore.UpsertAsync(db, Array.Empty<PlanRow>(), born.CurrentVersion);
+		}
+		counter.Reads.Should().BeGreaterThan(1, "the dry run must see the delta's reads for the sweep below to mean anything");
+
+		var since = born.CurrentVersion;
+		for (var at = 0; at < counter.Reads; at++)
+		{
+			var key = $"b{at}";
+			var injectedVersion = since + 1;
+			using var db = new DataConnection(new DataOptions().UseSQLite(_cs));
+			var injector = new InjectBeforeReadInterceptor(at, () =>
+			{
+				using var db2 = new DataConnection(new DataOptions().UseSQLite(_cs));
+				TemporalStore.UpsertAsync(db2, [Node(key, PlanStatus.Pending, "B")]).GetAwaiter().GetResult();
+			});
+			db.AddInterceptor(injector);
+
+			var r = await TemporalStore.UpsertAsync(db, Array.Empty<PlanRow>(), since);
+
+			injector.Injected.Should().BeTrue($"the write must have been injected before read #{at}");
+			var deliveredNow = r.Added.Any(x => x.Key == key);
+			var watermarkStillBehindIt = r.CurrentVersion < injectedVersion;
+			(deliveredNow || watermarkStillBehindIt).Should().BeTrue(
+				$"a write landing before read #{at} of the delta must be delivered this call or not yet covered by the watermark — never missed AND covered");
+			since = r.CurrentVersion >= injectedVersion ? r.CurrentVersion : injectedVersion; // the next round starts past this write
+		}
+	}
+
 	// Control: the SAME shape of assertion, with NO interleaving at all — "b" is written and
 	// fully committed before ChangesSinceAsync is even called. This must pass regardless of the
 	// watermark-vs-delta ordering, so a green result here rules out "the harness/helpers are
@@ -822,6 +866,36 @@ sealed class InterleavedWriteInterceptor(Action inject) : CommandInterceptor
 
 		if (isWatermark) _sawWatermark = true; else _sawOther = true;
 
+		return await base.ExecuteReaderAsync(eventData, command, commandBehavior, result, cancellationToken);
+	}
+}
+
+sealed class CountingReadInterceptor : CommandInterceptor
+{
+	public int Reads { get; private set; }
+
+	public override Task<Option<DbDataReader>> ExecuteReaderAsync(
+		CommandEventData eventData, DbCommand command, CommandBehavior commandBehavior,
+		Option<DbDataReader> result, CancellationToken cancellationToken)
+	{
+		Reads++;
+		return base.ExecuteReaderAsync(eventData, command, commandBehavior, result, cancellationToken);
+	}
+}
+
+// Fires `inject` once, immediately before the reader query with the given zero-based index.
+sealed class InjectBeforeReadInterceptor(int at, Action inject) : CommandInterceptor
+{
+	int _seen;
+
+	public bool Injected { get; private set; }
+
+	public override async Task<Option<DbDataReader>> ExecuteReaderAsync(
+		CommandEventData eventData, DbCommand command, CommandBehavior commandBehavior,
+		Option<DbDataReader> result, CancellationToken cancellationToken)
+	{
+		if (!Injected && _seen == at) { inject(); Injected = true; }
+		_seen++;
 		return await base.ExecuteReaderAsync(eventData, command, commandBehavior, result, cancellationToken);
 	}
 }
