@@ -223,13 +223,14 @@ public static class ConfigTools
 
 	[RequiresScope(ApiKeyScopes.ConfigRead)]
 	[McpServerTool(Name = "config_binding_search", Title = "Read config bindings (list + search)", ReadOnly = true, UseStructuredContent = true, OutputSchemaType = typeof(ConfigBindingsSearchResult))]
-	[Description("THE config-binding read verb — one tool for LISTING (no `q`) and SEARCH (`q`). Without `q`: a deterministic list of a workspace's ACTIVE bindings (id, path, tags, kind), ordered by path, optionally narrowed by `pathPrefix`. With `q`: a case-insensitive SUBSTRING match over path/tags/plaintext-value (config has no FTS/vector index, so a query degrades to this lexical floor — `retrievers` reports semantic:false). Secret values are NEVER returned (rows carry no value), so there is no bodyLen knob; the ~30k-char output budget still applies (overflow → truncated/omitted/hint). Requires config:read, and `workspaceKey` must be YOUR OWN workspace (the one your key's project belongs to) — a foreign workspace is refused.")]
+	[Description("THE config-binding read verb — one tool for LISTING (no `q`) and SEARCH (`q`). Without `q`: a deterministic list of a workspace's ACTIVE bindings (id, path, tags, kind), ordered by path, optionally narrowed by `pathPrefix`. With `q`: a case-insensitive SUBSTRING match over path/tags/plaintext-value (config has no FTS/vector index, so a query degrades to this lexical floor — `retrievers` reports semantic:false). Secret values are NEVER returned (rows carry no value), so there is no bodyLen knob; the ~30k-char output budget still applies (overflow → truncated/omitted/hint). Rows are ordered by (path, id) and KEYSET-paged: when rows were withheld — by `limit` or by the budget — the response carries `nextCursor`; pass it back as `cursor` with `workspaceKey`/`q`/`pathPrefix` unchanged to continue (`limit` may vary). No `nextCursor` = the end. Requires config:read, and `workspaceKey` must be YOUR OWN workspace (the one your key's project belongs to) — a foreign workspace is refused.")]
 	public static async Task<ConfigBindingsSearchResult> BindingSearchAsync(
 		IHttpContextAccessor http, IConfigDbFactory configFactory,
 		[Description("Workspace key to read bindings for.")] string workspaceKey,
 		[Description("Search query: a case-insensitive substring matched over path/tags/plaintext-value. Omit for a deterministic listing (list = search without q).")] string? q = null,
 		[Description("Keep only bindings whose path starts with this prefix (case-insensitive). Applies in both modes.")] string? pathPrefix = null,
-		[Description("Max rows returned (0 = no cap — the output budget still applies).")] int? limit = null,
+		[Description("Rows per page (0/omitted = no cap — the output budget still applies). A page cut by `limit` or the budget returns `nextCursor`. Not part of the cursor fingerprint: free to vary between pages.")] int? limit = null,
+		[Description("Pagination — the opaque `nextCursor` from the previous page, passed back verbatim. `workspaceKey`, `q` and `pathPrefix` decide the QUESTION and must stay identical, or the call FAILS with an explaining error rather than restarting.")] string? cursor = null,
 		CancellationToken ct = default)
 	{
 		if (string.IsNullOrWhiteSpace(workspaceKey)) throw new ArgumentException("workspaceKey is required");
@@ -258,15 +259,32 @@ public static class ConfigTools
 				|| (b.Kind == BindingKind.Plain && b.Value.Contains(needle, StringComparison.OrdinalIgnoreCase)));
 		}
 
-		var wire = rows.Select(b => new ConfigBindingRow(b.Id, b.Path, b.Tags, b.Kind.ToString()));
-		if (limit is > 0) wire = wire.Take(limit.Value);
-		var list = wire.ToList();
+		// KEYSET paging (card config-binding-search-cursor). The order is (path, id) in BOTH modes — `q`
+		// is a substring FILTER, not a relevance rank — so the token is just the last row SENT. Id is
+		// zero-padded so the token's ordinal tie-break agrees with the numeric order. The fingerprint is
+		// the QUESTION only; `limit` shapes a page and may vary.
+		var ordered = rows
+			.Select(b => (Row: new ConfigBindingRow(b.Id, b.Path, b.Tags, b.Kind.ToString()), Key: b.Id.ToString("D20")))
+			.OrderBy(x => x.Row.Path, StringComparer.Ordinal).ThenBy(x => x.Key, StringComparer.Ordinal)
+			.ToList();
+		IReadOnlyList<(ConfigBindingRow Row, string Key)> remaining = ordered;
+		var fingerprint = KeysetCursor.FingerprintOf("config_binding_search", workspaceKey,
+			hasQuery ? q!.Trim() : null, pathPrefix);
+		if (!string.IsNullOrWhiteSpace(cursor))
+			remaining = KeysetCursor.Advance(
+				ordered, KeysetCursor.Decode(cursor, fingerprint, "config_binding_search"),
+				x => (x.Row.Path, x.Key, workspaceKey), string.CompareOrdinal, desc: false, "config_binding_search");
 
-		var (kept, omitted) = new ResponseBudget().Take(list);
+		var page = limit is > 0 && remaining.Count > limit ? remaining.Take(limit.Value).ToList() : remaining;
+		var (kept, omitted) = new ResponseBudget().Take(page.Select(x => x.Row).ToList());
+		// A token only when rows were withheld (by `limit` or the budget), from the last row SENT.
+		var next = kept.Count > 0 && kept.Count < remaining.Count
+			? new KeysetCursor(fingerprint, page[kept.Count - 1].Row.Path, page[kept.Count - 1].Key, workspaceKey).Encode()
+			: null;
 		var retrievers = hasQuery ? new RetrieverInfo(Lexical: true, Semantic: false, Degraded: false) : null;
 		return omitted == 0
-			? new ConfigBindingsSearchResult(kept, retrievers)
-			: new ConfigBindingsSearchResult(kept, retrievers, Truncated: true, Omitted: omitted, Hint: SearchBudgetHint);
+			? new ConfigBindingsSearchResult(kept, retrievers, NextCursor: next)
+			: new ConfigBindingsSearchResult(kept, retrievers, Truncated: true, Omitted: omitted, Hint: SearchBudgetHint, NextCursor: next);
 	}
 
 	[RequiresScope(ApiKeyScopes.ConfigRead)]
@@ -330,8 +348,9 @@ public static class ConfigTools
 
 	// Surfaced on ConfigBindingsSearchResult.Hint when the rows were cut by the response budget.
 	const string SearchBudgetHint =
-		"Output budget exceeded: config binding rows were truncated (see truncated/omitted). Narrow " +
-		"the read: `pathPrefix` (a path subtree), `q` (a substring), or a smaller `limit`.";
+		"Output budget exceeded: config binding rows were truncated (see truncated/omitted). The rest " +
+		"is reachable: pass `nextCursor` back as `cursor` with the same arguments. Or narrow the read: " +
+		"`pathPrefix` (a path subtree), `q` (a substring), or a smaller `limit`.";
 
 	// A validated, encryption-ready binding to insert (secret ciphertext computed up front).
 	readonly record struct PreparedBinding(

@@ -156,6 +156,80 @@ public sealed class ConfigBindingUniformVerbsTests : IDisposable
 		q.Retrievers.Degraded.Should().BeFalse();
 	}
 
+	// card config-binding-search-cursor: keyset paging over (path, id), both modes.
+	[Fact]
+	public async Task Search_Limit_PagesWholeListing_NoDupesNoGaps()
+	{
+		var http = Http();
+		await Upsert(http, Enumerable.Range(0, 7).Select(i => Item($"p/{i:d2}", "v")).ToArray());
+		var seen = new List<string>();
+		string? cursor = null;
+		var pages = 0;
+		do
+		{
+			var page = await ConfigTools.BindingSearchAsync(http, _factory, Ws, pathPrefix: "p/", limit: 3, cursor: cursor);
+			page.Bindings.Count.Should().BeLessThanOrEqualTo(3);
+			seen.AddRange(page.Bindings.Select(b => b.Path));
+			cursor = page.NextCursor;
+			pages++;
+		} while (cursor is not null && pages < 10);
+
+		pages.Should().Be(3);
+		seen.Should().Equal(Enumerable.Range(0, 7).Select(i => $"p/{i:d2}"));
+		(await ConfigTools.BindingSearchAsync(http, _factory, Ws, pathPrefix: "p/", limit: 7)).NextCursor.Should().BeNull();
+	}
+
+	[Fact]
+	public async Task Search_InsertBetweenPages_AndLimitChange_ContinueWithoutDupesOrGaps()
+	{
+		var http = Http();
+		await Upsert(http, Enumerable.Range(0, 6).Select(i => Item($"q/{i:d2}", "v")).ToArray());
+		var first = await ConfigTools.BindingSearchAsync(http, _factory, Ws, pathPrefix: "q/", limit: 3);
+		await Upsert(http, Item("q/00-new", "v"), Item("q/99-new", "v"));
+
+		var second = await ConfigTools.BindingSearchAsync(http, _factory, Ws, pathPrefix: "q/", limit: 10, cursor: first.NextCursor);
+
+		second.Bindings.Select(b => b.Path).Should().Equal("q/03", "q/04", "q/05", "q/99-new");
+	}
+
+	[Fact]
+	public async Task Search_CursorWithChangedQuestion_IsRefused_NotRestarted()
+	{
+		var http = Http();
+		await Upsert(http, Enumerable.Range(0, 4).Select(i => Item($"r/{i:d2}", "v")).ToArray());
+		var first = await ConfigTools.BindingSearchAsync(http, _factory, Ws, pathPrefix: "r/", limit: 2);
+
+		var act = () => ConfigTools.BindingSearchAsync(http, _factory, Ws, pathPrefix: "s/", limit: 2, cursor: first.NextCursor);
+
+		await act.Should().ThrowAsync<ArgumentException>().WithMessage("*DIFFERENT query*");
+	}
+
+	[Fact]
+	public async Task Search_BudgetCut_StillIssuesACursor_AndTheWalkLosesNothing()
+	{
+		var http = Http();
+		var pad = new string('x', 8000);
+		await Upsert(http, Enumerable.Range(0, 8).Select(i => Item($"b/{i:d2}-{pad}", "v")).ToArray());
+		var seen = new List<string>();
+		string? cursor = null;
+		var pages = 0;
+		do
+		{
+			var page = await ConfigTools.BindingSearchAsync(http, _factory, Ws, pathPrefix: "b/", cursor: cursor);
+			if (pages == 0)
+			{
+				page.Truncated.Should().BeTrue();
+				page.Hint.Should().Contain("nextCursor");
+			}
+			seen.AddRange(page.Bindings.Select(b => b.Path));
+			cursor = page.NextCursor;
+			pages++;
+		} while (cursor is not null && pages < 20);
+
+		pages.Should().BeGreaterThan(1);
+		seen.Should().HaveCount(8).And.OnlyHaveUniqueItems();
+	}
+
 	[Fact]
 	public async Task Get_ById_And_Missing_IsError()
 	{

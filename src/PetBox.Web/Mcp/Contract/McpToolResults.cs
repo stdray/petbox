@@ -113,11 +113,13 @@ public sealed record ConfigBindingConflict(string Path, string Tags, string Kind
 // query mode — config has no FTS/vector index, so a query is a server-side substring match over
 // path/tags/plaintext-value and reports the lexical floor (semantic:false, degraded:false). Secret
 // values are never returned (rows carry id/path/tags/kind only), so there is no body/bodyLen knob;
-// the output budget still applies (Truncated/Omitted/Hint when the rows overflow).
+// the output budget still applies (Truncated/Omitted/Hint when the rows overflow). NextCursor: the keyset
+// resume token, present only when rows were withheld by `limit` or the budget.
 public sealed record ConfigBindingsSearchResult(
 	IReadOnlyList<ConfigBindingRow> Bindings,
 	RetrieverInfo? Retrievers = null,
-	bool? Truncated = null, int? Omitted = null, string? Hint = null);
+	bool? Truncated = null, int? Omitted = null, string? Hint = null,
+	string? NextCursor = null);
 
 public sealed record ConfigBindingDeletedResult(bool Deleted, long Id);
 
