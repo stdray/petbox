@@ -67,7 +67,9 @@ public sealed record CommentsUpsertResult(
 	IReadOnlyList<CommentView> Updated,
 	IReadOnlyList<string> Removed,
 	IReadOnlyList<CommentConflict> Conflicts,
-	string? Warning = null);
+	string? Warning = null,
+	// DELTA paging (card delta-verbs-response-cap): set only by comments_delta on a cut page.
+	bool? Truncated = null, int? Omitted = null, string? Hint = null);
 
 // comments_search answer (list = search without a query). `Retrievers` is present only in query
 // mode (the lexical floor — semantic isn't wired for comments yet). Truncated/Omitted/Hint are the
@@ -459,7 +461,9 @@ public sealed record MemoryUpsertResultView(
 	IReadOnlyList<string> Removed,
 	IReadOnlyList<string> AutoResolved,
 	string? Warning = null,
-	IReadOnlyList<SimilarEntriesView>? Similar = null);
+	IReadOnlyList<SimilarEntriesView>? Similar = null,
+	// DELTA paging (card delta-verbs-response-cap): set only by memory_delta on a cut page.
+	bool? Truncated = null, int? Omitted = null, string? Hint = null);
 
 // `Warning` (card mcp-write-degrades-silently-fix) is non-null when the write landed
 // DEGRADED in a way the caller could not see otherwise: an empty `description` (the primary

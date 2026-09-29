@@ -18,6 +18,7 @@ using PetBox.Sessions.Services;
 using PetBox.Tasks.Data;
 using PetBox.Tasks.Services;
 using PetBox.Web.Mcp;
+using PetBox.Web.Mcp.Contract;
 
 namespace PetBox.Tests.Mcp;
 
@@ -355,5 +356,119 @@ public sealed class ListBudgetTests : IDisposable
 
 		pages.Should().BeGreaterThan(1);
 		seen.Should().Equal(ids);
+	}
+
+	// ---- *_delta paging (card delta-verbs-response-cap) ----
+
+	[Fact]
+	public async Task CommentsDelta_BigBoard_PagesByTheReturnedWatermark_LosingNothing()
+	{
+		var node = Guid.NewGuid().ToString("N");
+		var body = new string('c', 2500);
+		var ids = new List<string>();
+		for (var i = 0; i < 20; i++)
+			ids.Add((await CommentTools.UpsertAsync(Http(), Flags(), _comments, _tasks, Proj, "ideas", [NewComment(node, body)])).Added[0].Id);
+
+		var seen = new List<string>();
+		long since = 0;
+		var pages = 0;
+		CommentsUpsertResult page;
+		do
+		{
+			page = await CommentTools.DeltaAsync(Http(), Flags(), _comments, Proj, "ideas", since, bodyLen: -1);
+			JsonSerializer.Serialize(page, Wire).Length.Should().BeLessThan(45_000, "a page is one budget plus at most one version group");
+			seen.AddRange(page.Added.Concat(page.Updated).Select(c => c.Id));
+			if (page.Truncated == true)
+			{
+				page.Omitted.Should().BeGreaterThan(0);
+				page.Hint.Should().Contain("sinceVersion");
+			}
+			since = page.CurrentVersion;
+			pages++;
+		} while (page.Truncated == true && pages < 30);
+
+		pages.Should().BeGreaterThan(1);
+		seen.Should().BeEquivalentTo(ids).And.OnlyHaveUniqueItems();
+		page.Truncated.Should().BeNull("the last page carries no markers");
+	}
+
+	[Fact]
+	public async Task CommentsDelta_Limit_CapsRows_AndTheLoopUntilEmptyStillReachesTheEnd()
+	{
+		var node = Guid.NewGuid().ToString("N");
+		var ids = new List<string>();
+		for (var i = 0; i < 7; i++)
+			ids.Add((await CommentTools.UpsertAsync(Http(), Flags(), _comments, _tasks, Proj, "ideas", [NewComment(node, "short")])).Added[0].Id);
+
+		var seen = new List<string>();
+		long since = 0;
+		for (var guard = 0; guard < 20; guard++)
+		{
+			var page = await CommentTools.DeltaAsync(Http(), Flags(), _comments, Proj, "ideas", since, limit: 3);
+			var delivered = page.Added.Concat(page.Updated).ToList();
+			delivered.Count.Should().BeLessThanOrEqualTo(3);
+			if (delivered.Count == 0) break; // a client that ignores `truncated`
+			seen.AddRange(delivered.Select(c => c.Id));
+			since = page.CurrentVersion;
+		}
+
+		seen.Should().BeEquivalentTo(ids).And.OnlyHaveUniqueItems();
+	}
+
+	[Fact]
+	public async Task MemoryDelta_BigStore_PagesByTheReturnedWatermark_LosingNothing()
+	{
+		var body = new string('m', 2000);
+		var keys = new List<string>();
+		for (var i = 0; i < 20; i++)
+		{
+			var key = $"walk-{i:d2}";
+			keys.Add(key);
+			await _memory.UpsertAsync(Proj, "notes", [new MemoryEntryInput { Key = key, Version = 0, Type = "Project", Description = $"d{i}", Body = body }], []);
+		}
+
+		var seen = new List<string>();
+		long since = 0;
+		var pages = 0;
+		MemoryUpsertResultView page;
+		do
+		{
+			page = await MemoryTools.DeltaAsync(Http(), Flags(), _db.Factory().WorkspaceMemory(), _memory, Proj, "notes", since, bodyLen: -1, scope: "project");
+			seen.AddRange(page.Added.Concat(page.Updated).Select(e => e.Key));
+			since = page.CurrentVersion;
+			pages++;
+		} while (page.Truncated == true && pages < 30);
+
+		pages.Should().BeGreaterThan(1);
+		seen.Where(k => k.StartsWith("walk-")).Should().BeEquivalentTo(keys).And.OnlyHaveUniqueItems();
+	}
+
+	[Fact]
+	public async Task TasksDelta_BigBoard_PagesByTheReturnedWatermark_LosingNothing()
+	{
+		await TasksTools.BoardCreateAsync(Http(), Flags(), _tasks, Proj, "roadmap");
+		var keys = new List<string>();
+		var body = new string('t', 2500);
+		for (var i = 0; i < 20; i++)
+		{
+			var key = $"walk-node-{i:d2}";
+			keys.Add(key);
+			await TasksTools.UpsertAsync(Http(), Flags(), _tasks, Proj, "roadmap", McpInputs.Nodes(new object[] { new { key, status = "Todo", body } }));
+		}
+
+		var seen = new List<string>();
+		long since = 0;
+		var pages = 0;
+		PetBox.Tasks.Contract.UpsertResultView page;
+		do
+		{
+			page = await TasksTools.DeltaAsync(Http(), Flags(), _tasks, Proj, "roadmap", since, bodyLen: -1);
+			seen.AddRange(page.Added.Concat(page.Updated).Select(n => n.Key));
+			since = page.CurrentVersion;
+			pages++;
+		} while (page.Truncated == true && pages < 30);
+
+		pages.Should().BeGreaterThan(1);
+		seen.Where(k => k.StartsWith("walk-node-")).Should().BeEquivalentTo(keys).And.OnlyHaveUniqueItems();
 	}
 }

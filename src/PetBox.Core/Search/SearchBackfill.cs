@@ -81,12 +81,19 @@ public static class SearchDeltaCap
 	// cap by design; correctness beats the ceiling).
 	public static (IReadOnlyList<TRow> Rows, long Watermark) Take<TRow>(
 		IEnumerable<TRow> changed, long current, int maxDocs)
-		where TRow : TemporalRow
+		where TRow : TemporalRow =>
+		Take(changed, r => r.Version, current, maxDocs);
+
+	// The same version-aligned cut over ANY row shape that carries a version — the MCP delta adapters
+	// page WIRE VIEWS (a comment delta is views, not TemporalRows), and re-implementing the group
+	// alignment there would be a second copy of the one rule that must not drift.
+	public static (IReadOnlyList<T> Rows, long Watermark) Take<T>(
+		IEnumerable<T> changed, Func<T, long> versionOf, long current, int maxDocs)
 	{
-		var ordered = changed.OrderBy(r => r.Version).ToList();
+		var ordered = changed.OrderBy(versionOf).ToList();
 		if (maxDocs <= 0 || ordered.Count <= maxDocs) return (ordered, current);
-		var watermark = ordered[maxDocs - 1].Version;
-		var taken = ordered.TakeWhile(r => r.Version <= watermark).ToList();
+		var watermark = versionOf(ordered[maxDocs - 1]);
+		var taken = ordered.TakeWhile(r => versionOf(r) <= watermark).ToList();
 		return (taken, watermark);
 	}
 }

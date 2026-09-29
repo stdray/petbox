@@ -18,7 +18,7 @@ grouping is `tags` (`area:*` / `concern:*`). Give each node a short `title` and 
 `body`. A cold `tasks_upsert` to an **unknown** board is rejected (with a did-you-mean) —
 create it first with `tasks_board_create` (or a methodology). The upsert response is a pure ack for
 YOUR call (added/updated/removed cover only your nodes); to catch up on everyone's changes
-call `tasks_delta` with `sinceVersion` = a previous `currentVersion`. `nodes`/`entries` are
+call `tasks_delta` with `sinceVersion` = a previous `currentVersion`; a big delta is PAGED (`truncated:true` -> pass `currentVersion` back as `sinceVersion`, repeat until no `truncated`). `nodes`/`entries` are
 TYPED arrays — pass real JSON arrays, not stringified JSON.
 
 **`tasks_search` is THE read verb** — two modes: without `q` it's a deterministic LISTING

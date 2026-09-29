@@ -182,7 +182,11 @@ public sealed record UpsertResultView(
 	// size-inflation notice) and from Conflicts (an actual refusal): set only on an APPLIED call
 	// that tripped at least one rule; null the rest of the time, including on a refused/conflicted
 	// call, which never reaches the point these rules are judged from.
-	IReadOnlyList<UpsertWarningView>? Warnings = null);
+	IReadOnlyList<UpsertWarningView>? Warnings = null,
+	// DELTA paging (card delta-verbs-response-cap) — set only by tasks_delta when the rows were cut by the
+	// response budget or `limit`: `CurrentVersion` is then the watermark of the kept prefix, to pass back as
+	// `sinceVersion`. Null/omitted on every upsert and on a complete delta.
+	bool? Truncated = null, int? Omitted = null, string? Hint = null);
 
 // The raw temporal upsert/delta result plus the board's resolved kind name (a defined
 // kind's slug verbatim, else the preset name — lowercase either way), ready for an
