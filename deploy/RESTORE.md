@@ -86,3 +86,14 @@ once it's healthy again), plus ping a dead-man's-switch URL on success. Both are
 optional and env-gated: unset `TELEGRAM_BOT_TOKEN`/`TELEGRAM_CHAT_ID`/`HEALTHCHECK_URL`
 (see `deploy/backup/secrets.local.env.example`) means no alerting, no heartbeat — the
 backups themselves are unaffected either way.
+
+## First-time init of a NEW offsite repo
+
+`backup.sh` never runs `restic init` on its own: an open failure that is not exit code 10
+("repository does not exist") fails the leg, and even a missing repo is only initialised when
+`RESTIC_ALLOW_INIT=1` is set (an empty repo created by accident would mask lost history — this
+is what a moved S3 endpoint would have done). To start a genuinely new repo, once:
+
+```sh
+docker exec petbox-backup env RESTIC_ALLOW_INIT=1 /usr/local/bin/backup.sh
+```

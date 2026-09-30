@@ -113,7 +113,7 @@ alert_probe_failure() {
 	curl -fsS -m 15 --data-urlencode "chat_id=$TELEGRAM_CHAT_ID" \
 		--data-urlencode "text=🔴 petbox backup: repo NOT readable at start-up on $(hostname 2>/dev/null || echo unknown)
 unreachable: $1
-bad credentials, wrong RESTIC_PASSWORD, bad endpoint, S3 down, or not initialised yet.
+bad credentials, wrong RESTIC_PASSWORD, bad endpoint, S3 down, or the repo does not exist.
 Scheduled runs will retry: $CRON" \
 		"https://api.telegram.org/bot$TELEGRAM_BOT_TOKEN/sendMessage" >/dev/null 2>&1 \
 		|| echo "[entrypoint] WARNING: telegram alert failed to send"
@@ -132,7 +132,7 @@ check_repo() {
 		echo "[entrypoint] $_label repo reachable"
 	else
 		PROBE_FAILED="${PROBE_FAILED}${PROBE_FAILED:+, }$_label"
-		echo "[entrypoint] WARNING: $_label repo NOT readable within ${PROBE_TIMEOUT_SECONDS}s — bad credentials, bad endpoint, wrong RESTIC_PASSWORD, unreachable S3, or not initialised yet (backup.sh initialises on its first run). Scheduled runs will retry: $CRON"
+		echo "[entrypoint] WARNING: $_label repo NOT readable within ${PROBE_TIMEOUT_SECONDS}s — bad credentials, bad endpoint, wrong RESTIC_PASSWORD, unreachable S3, or the repo does not exist (backup.sh never inits on its own: first-time init needs RESTIC_ALLOW_INIT=1, see backup.sh). Scheduled runs will retry: $CRON"
 	fi
 }
 

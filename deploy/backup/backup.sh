@@ -173,7 +173,31 @@ push() {
 	CURRENT_REPO="$repo"
 	CURRENT_LEG_LOG=""      # our stdout IS the leg log here; on_term must not append it to itself
 	trap on_term TERM INT   # re-armed: this runs in run_leg's subshell, where ash reset it
-	timeout "$(leg_remaining)" restic -r "$repo" snapshots >/dev/null 2>&1 || { log "init $tag repo"; timeout "$(leg_remaining)" restic -r "$repo" init; }
+	# Open-or-init, with init GUARDED (work/backup-full-leg-firstvds-s3-domain-moved). This line used to be
+	# `snapshots || init`, i.e. ANY failure to open the repo (DNS, auth, TLS, network, a moved endpoint)
+	# fell through to `restic init`. Against an existing repo init fails harmlessly, but against a live S3
+	# that simply has no repo at that path (empty bucket, wiped repo, a changed endpoint/prefix) it created
+	# an EMPTY repo, the run went green, "recovered" was sent, and the lost history was masked.
+	# Now: init happens only when restic says UNAMBIGUOUSLY that no repository exists (exit code 10,
+	# "repository does not exist", restic >= 0.17; measured on the 0.18.1 image: 10 for a missing repo, 12
+	# wrong password, 1 for DNS / access denied / missing bucket) AND the operator opted in with
+	# RESTIC_ALLOW_INIT=1. Anything else fails the leg with a plain message and NO init.
+	# First-time init of a genuinely new repo:
+	#   docker exec petbox-backup env RESTIC_ALLOW_INIT=1 /usr/local/bin/backup.sh
+	_open_rc=0
+	timeout "$(leg_remaining)" restic -r "$repo" snapshots >/dev/null 2>&1 || _open_rc=$?
+	if [ "$_open_rc" -ne 0 ]; then
+		if [ "$_open_rc" -eq 10 ] && [ "${RESTIC_ALLOW_INIT:-}" = "1" ]; then
+			log "init $tag repo (restic: repository does not exist; RESTIC_ALLOW_INIT=1)"
+			timeout "$(leg_remaining)" restic -r "$repo" init
+		elif [ "$_open_rc" -eq 10 ]; then
+			log "ERROR: $tag repo $repo does not exist. Refusing to init: an empty repo would mask lost history. If this is a NEW repo, run once: docker exec petbox-backup env RESTIC_ALLOW_INIT=1 /usr/local/bin/backup.sh"
+			return 1
+		else
+			log "ERROR: cannot open $tag repo $repo (restic exit $_open_rc: unreachable endpoint, bad credentials, wrong RESTIC_PASSWORD or TLS — not a missing repo). NOT initialising."
+			return 1
+		fi
+	fi
 	log "backup $tag -> $repo"
 	# --group-by host,tags on BOTH backup and forget. The source path is
 	# /data/backups/<timestamp>-auto and so has a different name every run, so restic's

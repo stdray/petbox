@@ -53,6 +53,28 @@ public sealed class BackupSidecarScriptTests
 		return matches[0];
 	}
 
+	// work/backup-full-leg-firstvds-s3-domain-moved: `snapshots || init` turned ANY open failure
+	// (DNS, auth, a moved endpoint) into `restic init`, so an endpoint pointing at a live S3 with no
+	// repo would have created an EMPTY repo, gone green and masked the lost history.
+	[Fact]
+	public void Init_Is_Guarded_By_Exit_Code_10_And_An_Explicit_Opt_In()
+	{
+		var code = BackupScript().Select(l => l.Trim()).Where(l => !l.StartsWith('#')).ToArray();
+
+		code.Should().NotContain(l => Regex.IsMatch(l, @"snapshots[^|]*\|\|.*init"),
+			"`snapshots || init` is the exact shape that initialised an empty repo on any open failure");
+
+		var initCalls = code.Where(l => Regex.IsMatch(l, @"restic\s+-r\s+""\$repo""\s+init")).ToArray();
+		initCalls.Should().ContainSingle("push() runs `restic init` at exactly one, guarded place");
+
+		var joined = string.Join('\n', code);
+		joined.Should().Contain("-eq 10",
+			"restic exit code 10 (>= 0.17) is the only unambiguous 'repository does not exist' signal");
+		joined.Should().Contain("RESTIC_ALLOW_INIT",
+			"even a truly missing repo is only initialised on explicit opt-in, so a changed endpoint " +
+			"or wiped repo fails loudly instead of silently starting an empty history");
+	}
+
 	[Fact]
 	public void Backup_Groups_Snapshots_By_Host_And_Tags()
 	{
