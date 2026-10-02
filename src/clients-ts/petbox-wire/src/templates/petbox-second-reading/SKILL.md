@@ -5,7 +5,7 @@ description: >-
   "however much is reasonable", "at least"), the moment you notice you already picked one path
   among several, or when the owner calls it directly. A blind second reading of deliverables and
   open choices, checked against your own sealed reading before any plan or diff exists.
-petbox: managed
+# petbox: managed
 petbox-digest: manual
 ---
 

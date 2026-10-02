@@ -41,9 +41,9 @@ import {
   isModelInvocationDisabled,
   PETBOX_DIGEST_KEY,
   PETBOX_MANUAL_COMMENT_LINE,
-  PETBOX_MANUAL_LINE,
+  PETBOX_MANUAL_HASH_LINE,
   PETBOX_MARKER_COMMENT_LINE,
-  PETBOX_MARKER_LINE,
+  PETBOX_MARKER_HASH_LINE,
   readArtifactState,
   readDigestMode,
   readPetboxProvenance,
@@ -63,16 +63,16 @@ function freshDir(): string {
   return mkdtempSync(join(tmpdir(), "petbox-wire-skill-test-"));
 }
 
-// The legacy (pre-declaration) rendering: what the OLD template — before `petbox: managed` and
-// `petbox-digest: <mode>` were added to the templates' frontmatter — would have produced for the
-// same project/workspace. Used to set up "already materialized by an old wire" fixtures. BOTH
-// lines come back out: a file left by a pre-fix wire carries neither.
+// The legacy (pre-declaration) rendering: what the OLD template — before the `# petbox: managed`
+// comment and the `petbox-digest: <mode>` key were added to the templates' frontmatter — would
+// have produced for the same project/workspace. Used to set up "already materialized by an old
+// wire" fixtures. BOTH lines come back out: a file left by a pre-fix wire carries neither.
 function legacyRender(spec: string, project: string, workspace: string, envVar: string = ENV_VAR): string {
   const tpl = readFileSync(join(TEMPLATES_ROOT, spec, "SKILL.md"), "utf8");
   const rendered = renderSkillTemplate(tpl, project, workspace, envVar);
   return rendered
-    .replace(new RegExp(`^${PETBOX_MARKER_LINE}\\r?\\n`, "m"), "")
-    .replace(new RegExp(`^${PETBOX_DIGEST_KEY}:[ \\t]*\\S+\\r?\\n`, "m"), "");
+    .replace(new RegExp(`^${PETBOX_MARKER_HASH_LINE}\\r?\\n`, "m"), "")
+    .replace(new RegExp(`^${PETBOX_DIGEST_KEY}:[ \\t]*\\S+[ \\t]*\\r?\\n`, "m"), "");
 }
 
 function pathFor(dir: string, surface: string[], specDir: string): string {
@@ -234,10 +234,22 @@ test("every PROJECT_SKILLS entry is named in README.md's What it installs sectio
 
 // ---- origin marker (bug: skill-files-clobber-and-apply-skips) -------------------------------
 
-test("every template's frontmatter carries the PetBox origin marker", () => {
+test("every template's frontmatter carries the PetBox origin marker — as a COMMENT, never a bare key", () => {
   for (const spec of PROJECT_SKILLS) {
     const body = readFileSync(join(TEMPLATES_ROOT, spec.dir, "SKILL.md"), "utf8");
-    assert.ok(hasPetboxMarker(body), `${spec.dir}: template frontmatter must carry \`${PETBOX_MARKER_LINE}\``);
+    assert.ok(hasPetboxMarker(body), `${spec.dir}: template frontmatter must carry \`${PETBOX_MARKER_HASH_LINE}\``);
+    // The regression this pins (work: wire-marker-comment-line-everywhere): opencode passes
+    // unknown frontmatter keys through to the LLM provider, so a bare `petbox:` key leaked into
+    // every request body. The marker may exist ONLY as a `# petbox: managed` comment line.
+    assert.ok(
+      /^# petbox: managed\r?$/m.test(body),
+      `${spec.dir}: the marker must be the commented \`# petbox: managed\` line`,
+    );
+    assert.doesNotMatch(
+      body,
+      /^petbox:[ \t]/m,
+      `${spec.dir}: a bare \`petbox:\` key must never reappear in the frontmatter`,
+    );
   }
 });
 
@@ -250,16 +262,16 @@ test("every template's frontmatter carries the PetBox origin marker", () => {
 // cleanupLegacyArtifact DELETES. If `petbox: manual` satisfied it, a path the project had
 // explicitly claimed as its own would be silently rewritten — and, once the skill pipeline calls
 // the cleanup (work: wire-skill-cleanup-on-replace), silently deleted.
-test("provenance: `petbox: manual` is NOT the managed marker — never overwritable, never deletable", () => {
-  const managed = `---\nname: x\n${PETBOX_MARKER_LINE}\n---\n\nbody`;
-  const manual = `---\nname: x\n${PETBOX_MANUAL_LINE}\n---\n\nbody`;
+test("provenance: `# petbox: manual` is NOT the managed marker — never overwritable, never deletable", () => {
+  const managed = `---\nname: x\n${PETBOX_MARKER_HASH_LINE}\n---\n\nbody`;
+  const manual = `---\nname: x\n${PETBOX_MANUAL_HASH_LINE}\n---\n\nbody`;
   const undeclared = "---\nname: x\n---\n\nbody";
 
   assert.equal(readPetboxProvenance(managed), "managed");
   assert.equal(readPetboxProvenance(manual), "manual");
   assert.equal(readPetboxProvenance(undeclared), null);
   // An unrecognized value is undeclared, not "close enough to managed".
-  assert.equal(readPetboxProvenance("---\nname: x\npetbox: something-else\n---\n\nbody"), null);
+  assert.equal(readPetboxProvenance("---\nname: x\n# petbox: something-else\n---\n\nbody"), null);
 
   assert.equal(hasPetboxMarker(managed), true);
   assert.equal(hasPetboxMarker(manual), false, "a manual file must never pass the write/delete gate");
@@ -282,7 +294,7 @@ test("readArtifactState: a declared-manual file is its own state, not 'foreign'"
   const dir = freshDir();
   try {
     const p = join(dir, "manual.md");
-    writeFileSync(p, `---\nname: x\n${PETBOX_MANUAL_LINE}\n---\n\nmine\n`, "utf8");
+    writeFileSync(p, `---\nname: x\n${PETBOX_MANUAL_HASH_LINE}\n---\n\nmine\n`, "utf8");
     assert.equal(readArtifactState(p), "manual");
   } finally {
     rmSync(dir, { recursive: true, force: true });
@@ -333,7 +345,7 @@ test("writeSkillFiles: a file declared `petbox: manual` survives apply byte-for-
   const dir = freshDir();
   const target = pathFor(dir, SKILL_SURFACES[0]!, "petbox");
   try {
-    const mine = `---\nname: petbox\ndescription: my own replacement. Use always.\n${PETBOX_MANUAL_LINE}\n---\n\n# MY version of this skill\n`;
+    const mine = `---\nname: petbox\ndescription: my own replacement. Use always.\n${PETBOX_MANUAL_HASH_LINE}\n---\n\n# MY version of this skill\n`;
     mkdirSync(dirname(target), { recursive: true });
     writeFileSync(target, mine, "utf8");
 
@@ -359,7 +371,7 @@ test("writeSkillFiles: a manual declaration survives a SECOND apply too (never m
     writeSkillFiles(dir, TEMPLATES_ROOT, "hellopet", "newpet", ENV_VAR);
     // The owner takes this path over after the first apply: content the kit itself wrote, with
     // the provenance flipped to manual.
-    const taken = readFileSync(target, "utf8").replace(PETBOX_MARKER_LINE, PETBOX_MANUAL_LINE);
+    const taken = readFileSync(target, "utf8").replace(PETBOX_MARKER_HASH_LINE, PETBOX_MANUAL_HASH_LINE);
     writeFileSync(target, taken, "utf8");
 
     const { writes: outcomes } = writeSkillFiles(dir, TEMPLATES_ROOT, "hellopet", "newpet", ENV_VAR);
@@ -401,7 +413,7 @@ test("writeSkillFiles: an identical re-run is 'unchanged' (idempotent), a change
     const first = outcomes[0]!;
     assert.equal(first.kind, "written");
     // Real frontmatter — the marker is only ever read from the `---` block (origin-marker.ts).
-    writeFileSync(first.path, `---\nname: x\n${PETBOX_MARKER_LINE}\n---\nan older generation\n`, "utf8");
+    writeFileSync(first.path, `---\nname: x\n${PETBOX_MARKER_HASH_LINE}\n---\nan older generation\n`, "utf8");
     const { writes: after } = writeSkillFiles(dir, TEMPLATES_ROOT, "hellopet", "newpet", ENV_VAR);
     const refreshed = after.find((o) => o.path === first.path)!;
     assert.equal(refreshed.kind, "written");
@@ -507,7 +519,7 @@ function fixtureRegistry(legacyDirs: string[]): { templatesRoot: string; specs: 
   mkdirSync(join(templatesRoot, "petbox-renamed"), { recursive: true });
   writeFileSync(
     join(templatesRoot, "petbox-renamed", "SKILL.md"),
-    `---\nname: petbox-renamed\ndescription: A renamed skill. Use always.\n${PETBOX_MARKER_LINE}\n${PETBOX_DIGEST_KEY}: auto\n---\n\n# Renamed\n`,
+    `---\nname: petbox-renamed\ndescription: A renamed skill. Use always.\n${PETBOX_MARKER_HASH_LINE}\n${PETBOX_DIGEST_KEY}: auto\n---\n\n# Renamed\n`,
     "utf8",
   );
   return {
@@ -529,7 +541,7 @@ test("writeSkillFiles: a renamed skill's OWNED pre-rename copy is removed, and i
   const { templatesRoot, specs } = fixtureRegistry(["petbox-old-name"]);
   try {
     const legacyPaths = SKILL_SURFACES.map((s) =>
-      seedLegacy(dir, s, "petbox-old-name", `---\nname: petbox-old-name\n${PETBOX_MARKER_LINE}\n---\n\n# Old\n`),
+      seedLegacy(dir, s, "petbox-old-name", `---\nname: petbox-old-name\n${PETBOX_MARKER_HASH_LINE}\n---\n\n# Old\n`),
     );
 
     const { writes, cleanups } = writeSkillFiles(dir, templatesRoot, "hellopet", "newpet", ENV_VAR, specs);
@@ -660,7 +672,7 @@ test("writeSkillFiles: a file declared `petbox: manual` at the pre-rename path s
   const { templatesRoot, specs } = fixtureRegistry(["petbox-old-name"]);
   const surface = SKILL_SURFACES[0]!;
   try {
-    const claimed = `---\nname: petbox-old-name\n${PETBOX_MANUAL_LINE}\n---\n\n# I took this path over\n`;
+    const claimed = `---\nname: petbox-old-name\n${PETBOX_MANUAL_HASH_LINE}\n---\n\n# I took this path over\n`;
     const legacyPath = seedLegacy(dir, surface, "petbox-old-name", claimed);
 
     const { cleanups } = writeSkillFiles(dir, templatesRoot, "hellopet", "newpet", ENV_VAR, specs);
@@ -679,7 +691,7 @@ test("writeSkillFiles: a legacy directory holding anything the kit did not write
   const { templatesRoot, specs } = fixtureRegistry(["petbox-old-name"]);
   const surface = SKILL_SURFACES[0]!;
   try {
-    const legacyPath = seedLegacy(dir, surface, "petbox-old-name", `---\nname: x\n${PETBOX_MARKER_LINE}\n---\n\n# Old\n`);
+    const legacyPath = seedLegacy(dir, surface, "petbox-old-name", `---\nname: x\n${PETBOX_MARKER_HASH_LINE}\n---\n\n# Old\n`);
     const companion = join(dir, ...surface, "petbox-old-name", "references", "notes.md");
     mkdirSync(dirname(companion), { recursive: true });
     writeFileSync(companion, "the owner's own reference material\n", "utf8");
@@ -703,13 +715,13 @@ test("writeSkillFiles: a legacy directory holding anything the kit did not write
 test("writeSkillFiles: no sweep at all when the replacement did not land (blocked / declared-manual)", () => {
   for (const [label, newBody] of [
     ["blocked (foreign at the new path)", "# a real file of mine, no marker\n"],
-    ["declared-manual (project owns the new path)", `---\nname: x\n${PETBOX_MANUAL_LINE}\n---\n\n# mine\n`],
+    ["declared-manual (project owns the new path)", `---\nname: x\n${PETBOX_MANUAL_HASH_LINE}\n---\n\n# mine\n`],
   ] as const) {
     const dir = freshDir();
     const { templatesRoot, specs } = fixtureRegistry(["petbox-old-name"]);
     const surface = SKILL_SURFACES[0]!;
     try {
-      const legacyPath = seedLegacy(dir, surface, "petbox-old-name", `---\nname: x\n${PETBOX_MARKER_LINE}\n---\n\n# Old\n`);
+      const legacyPath = seedLegacy(dir, surface, "petbox-old-name", `---\nname: x\n${PETBOX_MARKER_HASH_LINE}\n---\n\n# Old\n`);
       const newPath = pathFor(dir, surface, "petbox-renamed");
       mkdirSync(dirname(newPath), { recursive: true });
       writeFileSync(newPath, newBody, "utf8");
@@ -735,9 +747,9 @@ test("writeSkillFiles: the real specs' legacyDirs sweep the pre-rename copies (p
     const legacyPaths: string[] = [];
     for (const surface of SKILL_SURFACES) {
       legacyPaths.push(
-        seedLegacy(dir, surface, "analysis-workspace", `---\nname: analysis-workspace\n${PETBOX_MARKER_LINE}\n---\n\n# Old\n`),
-        seedLegacy(dir, surface, "factory-run", `---\nname: factory-run\n${PETBOX_MARKER_LINE}\n---\n\n# Old\n`),
-        seedLegacy(dir, surface, "petbox-card-check", `---\nname: petbox-card-check\n${PETBOX_MARKER_LINE}\n---\n\n# Old\n`),
+        seedLegacy(dir, surface, "analysis-workspace", `---\nname: analysis-workspace\n${PETBOX_MARKER_HASH_LINE}\n---\n\n# Old\n`),
+        seedLegacy(dir, surface, "factory-run", `---\nname: factory-run\n${PETBOX_MARKER_HASH_LINE}\n---\n\n# Old\n`),
+        seedLegacy(dir, surface, "petbox-card-check", `---\nname: petbox-card-check\n${PETBOX_MARKER_HASH_LINE}\n---\n\n# Old\n`),
       );
     }
 
@@ -800,7 +812,7 @@ test("refill: an apply over a real-shaped tree touches ONLY PROJECT_SKILLS paths
     // A repo-native skill the kit must never carry, declared manual — this was the live $system
     // case (`petbox-methodology-system`) until it was folded into the kit template and removed;
     // kept here as a synthetic fixture, the scenario it guards is still real.
-    const methodologySystem = `---\nname: petbox-methodology-system\ndescription: >-\n  Operate PetBox's OWN project methodology. Use when creating or refining ideas on $system itself.\n${PETBOX_MANUAL_LINE}\n---\n\n# $system-specific operator detail the kit must never overwrite\n`;
+    const methodologySystem = `---\nname: petbox-methodology-system\ndescription: >-\n  Operate PetBox's OWN project methodology. Use when creating or refining ideas on $system itself.\n${PETBOX_MANUAL_HASH_LINE}\n---\n\n# $system-specific operator detail the kit must never overwrite\n`;
     // The owner's personal integrations: no frontmatter marker at all — foreign, hands off.
     const droidHandoff = "# droid-handoff\n\nMY integration. Not part of any delivery.\n";
     const playwright = `---\nname: playwright-cli\ndescription: Automate browser interactions. Use for browser work.\n---\n\n# not ours\n`;
@@ -834,11 +846,11 @@ test("refill: an apply over a real-shaped tree touches ONLY PROJECT_SKILLS paths
       legacy.push(
         [
           join(dir, ...surface, "analysis-workspace", "SKILL.md"),
-          `---\nname: analysis-workspace\n${PETBOX_MARKER_LINE}\n---\n\n# Old\n`,
+          `---\nname: analysis-workspace\n${PETBOX_MARKER_HASH_LINE}\n---\n\n# Old\n`,
         ],
         [
           join(dir, ...surface, "factory-run", "SKILL.md"),
-          `---\nname: factory-run\n${PETBOX_MARKER_LINE}\n---\n\n# Old\n`,
+          `---\nname: factory-run\n${PETBOX_MARKER_HASH_LINE}\n---\n\n# Old\n`,
         ],
       );
     }
@@ -902,7 +914,7 @@ test("refill: a declared-manual file AT a PROJECT_SKILLS path is skipped, not re
     const mine: Record<string, string> = {};
     for (const spec of PROJECT_SKILLS) {
       const target = pathFor(dir, SKILL_SURFACES[0]!, spec.dir);
-      const body = `---\nname: ${spec.dir}\ndescription: MY replacement for ${spec.dir}. Use never.\n${PETBOX_MANUAL_LINE}\n---\n\n# mine, hands off\n`;
+      const body = `---\nname: ${spec.dir}\ndescription: MY replacement for ${spec.dir}. Use never.\n${PETBOX_MANUAL_HASH_LINE}\n---\n\n# mine, hands off\n`;
       mkdirSync(dirname(target), { recursive: true });
       writeFileSync(target, body, "utf8");
       mine[target] = body;
@@ -1012,7 +1024,7 @@ test("checkSkillFile: absent -> false; foreign -> false; ours+rendered unknown -
     assert.equal(foreignReport.matchesTemplate, false);
 
     const ours = join(dir, "o.md");
-    const rendered = "---\nname: petbox\npetbox: managed\n---\nbody\n";
+    const rendered = "---\nname: petbox\n# petbox: managed\n---\nbody\n";
     writeFileSync(ours, rendered, "utf8");
     assert.deepEqual(checkSkillFile(ours, undefined), {
       path: ours,
@@ -1044,7 +1056,7 @@ test("formatSkillFile: a foreign (BLOCKED) file reads distinctly from an owned f
     assert.doesNotMatch(foreignLine, /DRIFTED/);
 
     const driftedPath = join(dir, "drifted.md");
-    const rendered = "---\nname: petbox\npetbox: managed\n---\nbody\n";
+    const rendered = "---\nname: petbox\n# petbox: managed\n---\nbody\n";
     writeFileSync(driftedPath, rendered, "utf8");
     const driftedLine = formatSkillFile(checkSkillFile(driftedPath, rendered + "\nnew template line\n"));
     assert.match(driftedLine, /DRIFTED/, "an owned file whose content no longer matches the template must read as drifted");
@@ -1484,12 +1496,12 @@ test("readAutoDigestSkillTriggers: provenance and invocation mode are independen
     writeSkillMd(
       skillsDir,
       "mine-but-auto",
-      `---\nname: mine-but-auto\ndescription: Use when the project says so.\n${PETBOX_MANUAL_LINE}\n${PETBOX_DIGEST_KEY}: auto\n---\n\n# Mine\n`,
+      `---\nname: mine-but-auto\ndescription: Use when the project says so.\n${PETBOX_MANUAL_HASH_LINE}\n${PETBOX_DIGEST_KEY}: auto\n---\n\n# Mine\n`,
     );
     writeSkillMd(
       skillsDir,
       "kit-but-manual",
-      `---\nname: kit-but-manual\ndescription: Use only when explicitly called.\n${PETBOX_MARKER_LINE}\n${PETBOX_DIGEST_KEY}: manual\n---\n\n# Kit's\n`,
+      `---\nname: kit-but-manual\ndescription: Use only when explicitly called.\n${PETBOX_MARKER_HASH_LINE}\n${PETBOX_DIGEST_KEY}: manual\n---\n\n# Kit's\n`,
     );
     assert.deepEqual(
       readAutoDigestSkillTriggers(root).map((t) => t.name),

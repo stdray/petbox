@@ -135,7 +135,7 @@ export function formatAction(label: string, action: ApplyAction, dryRun: boolean
         stderr: true,
         text:
           `${label}: ${dryRun ? "would refuse" : "REFUSED"} to overwrite ${subject}${action.path} — it exists and ` +
-          `does not carry the PetBox origin marker (no \`petbox: managed\` in its frontmatter), so it is a real ` +
+          `does not carry the PetBox origin marker (no \`# petbox: managed\` comment in its frontmatter), so it is a real ` +
           `file, not one apply wrote before. ${dryRun ? "Nothing would be touched." : "Nothing was touched."} ` +
           `Adopt it deliberately with \`--adopt ${action.path}\` if it IS an old PetBox render, or move it aside.`,
       };
@@ -144,12 +144,12 @@ export function formatAction(label: string, action: ApplyAction, dryRun: boolean
         stderr: false,
         text:
           `${label}: left ${subject}${action.path} in place${action.note ? ` — ${action.note}` : ""} — ` +
-          `no \`petbox: managed\` origin marker, so it is not ours to delete.`,
+          `no \`# petbox: managed\` origin marker, so it is not ours to delete.`,
       };
     case "manual":
       return {
         stderr: false,
-        text: `${label}: left ${subject}${action.path} alone — declared \`petbox: manual\`, the project owns this path.`,
+        text: `${label}: left ${subject}${action.path} alone — declared \`# petbox: manual\`, the project owns this path.`,
       };
   }
 }

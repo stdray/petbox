@@ -27,7 +27,7 @@ import { test } from "node:test";
 import { DEFAULT_AGENT_DEFINITION } from "./agent-definition.ts";
 import { agentFilesDir } from "./apply-artifacts.ts";
 import { HARNESS_IDS } from "./harness-capabilities.ts";
-import { PETBOX_MARKER_LINE } from "./origin-marker.ts";
+import { PETBOX_MARKER_HASH_LINE } from "./origin-marker.ts";
 import { WIRE_EXIT } from "./wire-exit.ts";
 import { makeGitWorkingTree } from "./test-git-tree.ts";
 
@@ -198,7 +198,7 @@ test("the orphan sweep runs UNCONDITIONALLY — there is no 'degraded resolve' l
     const dir = join(projectDir, agentFilesDir("claude-code"));
     mkdirSync(dir, { recursive: true });
     const ours = join(dir, "petbox-review.md");
-    writeFileSync(ours, `---\nname: petbox-review\n${PETBOX_MARKER_LINE}\n---\n\nours\n`, "utf8");
+    writeFileSync(ours, `---\nname: petbox-review\n${PETBOX_MARKER_HASH_LINE}\n---\n\nours\n`, "utf8");
 
     const { out, status } = runApply(projectDir, homeDir, ["--offline", "--roles=project"]);
     assert.equal(status, WIRE_EXIT.ok, `Output:\n${out}`);

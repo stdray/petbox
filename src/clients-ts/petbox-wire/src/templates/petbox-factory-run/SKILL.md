@@ -9,7 +9,7 @@ description: >-
   orchestrator must keep going alone. Not for a single task, for exploratory work, or for
   tasks that mostly touch the same files — see "When not to use this". Never automatic —
   the caller invokes it on purpose.
-petbox: managed
+# petbox: managed
 petbox-digest: manual
 disable-model-invocation: true
 ---

@@ -7,7 +7,7 @@ description: >-
   diagram earns its place all live in the skill body — open it before writing, don't answer from
   this description alone. Ships a zero-dependency validator to self-check a draft body before you
   write it.
-petbox: managed
+# petbox: managed
 petbox-digest: auto
 ---
 

@@ -8,18 +8,23 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, wri
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
-import { renderAgentMarkdown } from "./apply-artifacts.ts";
+import { renderAgentMarkdown, renderCodexAgentToml, renderDroidMarkdown } from "./apply-artifacts.ts";
 import { cleanupLegacyArtifact, writeArtifact } from "./apply-write.ts";
 import { DEFAULT_AGENT_DEFINITION } from "./agent-definition.ts";
-import { hasPetboxMarker, PETBOX_MANUAL_LINE, PETBOX_MARKER_LINE } from "./origin-marker.ts";
+import {
+  hasPetboxMarker,
+  PETBOX_MANUAL_HASH_LINE,
+  PETBOX_MARKER_HASH_LINE,
+} from "./origin-marker.ts";
 
 function freshDir(): string {
   return mkdtempSync(join(tmpdir(), "petbox-apply-write-"));
 }
 
 test("hasPetboxMarker: true only for our marker inside frontmatter, never body text", () => {
-  assert.equal(hasPetboxMarker(`---\nname: x\n${PETBOX_MARKER_LINE}\n---\n\nbody`), true);
+  assert.equal(hasPetboxMarker(`---\nname: x\n${PETBOX_MARKER_HASH_LINE}\n---\n\nbody`), true);
   assert.equal(hasPetboxMarker(`---\nname: x\n---\n\nbody mentions petbox: managed here`), false);
+  assert.equal(hasPetboxMarker(`---\nname: x\n---\n\nbody mentions # petbox: managed here`), false);
   assert.equal(hasPetboxMarker("no frontmatter at all"), false);
   assert.equal(hasPetboxMarker(""), false);
 });
@@ -33,8 +38,8 @@ test("hasPetboxMarker: true only for our marker inside frontmatter, never body t
 test("the write/delete gate rejects `petbox: manual` — a declared-manual file is neither overwritten nor deleted", () => {
   const dir = freshDir();
   try {
-    const manualBody = `---\nname: x\n${PETBOX_MANUAL_LINE}\n---\n\nthe project's own file\n`;
-    assert.equal(hasPetboxMarker(manualBody), false, "`petbox: manual` must not satisfy the managed gate");
+    const manualBody = `---\nname: x\n${PETBOX_MANUAL_HASH_LINE}\n---\n\nthe project's own file\n`;
+    assert.equal(hasPetboxMarker(manualBody), false, "`# petbox: manual` must not satisfy the managed gate");
 
     const abs = join(dir, "petbox-worker.md");
     writeFileSync(abs, manualBody, "utf8");
@@ -82,10 +87,10 @@ test("writeArtifact: an existing file WITH our marker is overwritten silently (r
   const dir = freshDir();
   try {
     const abs = join(dir, "petbox-worker.md");
-    const oldOurs = `---\nname: petbox-worker\n${PETBOX_MARKER_LINE}\n---\n\nold body\n`;
+    const oldOurs = `---\nname: petbox-worker\n${PETBOX_MARKER_HASH_LINE}\n---\n\nold body\n`;
     writeFileSync(abs, oldOurs, "utf8");
 
-    const newContent = `---\nname: petbox-worker\n${PETBOX_MARKER_LINE}\n---\n\nnew body\n`;
+    const newContent = `---\nname: petbox-worker\n${PETBOX_MARKER_HASH_LINE}\n---\n\nnew body\n`;
     const outcome = writeArtifact(abs, newContent);
     assert.deepEqual(outcome, { kind: "written", path: abs, reason: "own" });
     assert.equal(readFileSync(abs, "utf8"), newContent);
@@ -99,7 +104,7 @@ test("writeArtifact: an existing marker-carrying file for a DIFFERENT role is st
   const dir = freshDir();
   try {
     const abs = join(dir, "petbox-worker.md");
-    writeFileSync(abs, `---\nname: petbox-explore\n${PETBOX_MARKER_LINE}\n---\n\nstale\n`, "utf8");
+    writeFileSync(abs, `---\nname: petbox-explore\n${PETBOX_MARKER_HASH_LINE}\n---\n\nstale\n`, "utf8");
     const outcome = writeArtifact(abs, "fresh");
     assert.equal(outcome.kind, "written");
   } finally {
@@ -120,7 +125,7 @@ test("cleanupLegacyArtifact: an OWNED pre-rename file is removed", () => {
   const dir = freshDir();
   try {
     const abs = join(dir, "worker.md");
-    writeFileSync(abs, `---\nname: worker\n${PETBOX_MARKER_LINE}\n---\n\nold pre-rename body\n`, "utf8");
+    writeFileSync(abs, `---\nname: worker\n${PETBOX_MARKER_HASH_LINE}\n---\n\nold pre-rename body\n`, "utf8");
     assert.equal(cleanupLegacyArtifact(abs), "removed");
     assert.equal(existsSync(abs), false);
   } finally {
@@ -203,4 +208,50 @@ test("simulated apply flow: a real user's own worker.md survives the FIRST apply
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
+});
+
+// ---- regression guard, work wire-marker-comment-line-everywhere ------------------------------
+//
+// opencode funnels unknown YAML frontmatter keys into agent.options and passes them through to
+// the LLM provider, so the marker as a bare `petbox:` key leaked into every request body and
+// strict gateways rejected the turn (`unknown field "petbox"`). The marker must therefore ride
+// ONLY in a comment line, on every harness: present as `# petbox: managed`, absent as a bare key.
+
+test("rendered frontmatter carries the marker as a `# petbox: managed` COMMENT and never as a bare `petbox:` key, on every harness", () => {
+  const role = DEFAULT_AGENT_DEFINITION.roles.find((r) => r.slug === "worker")!;
+  const renders: Array<[string, string]> = [
+    ["claude-code/opencode/qwen (renderAgentMarkdown)", renderAgentMarkdown(role)],
+    ["droid (renderDroidMarkdown)", renderDroidMarkdown(role)],
+    ["codex (renderCodexAgentToml)", renderCodexAgentToml(role)],
+  ];
+  for (const [harness, content] of renders) {
+    assert.ok(
+      content.includes(PETBOX_MARKER_HASH_LINE),
+      `${harness}: the rendered file must contain the \`# petbox: managed\` comment line`,
+    );
+    assert.doesNotMatch(
+      content,
+      /^petbox:[ \t]/m,
+      `${harness}: a bare \`petbox:\` frontmatter key is the provider-leak shape — it must never be emitted`,
+    );
+  }
+
+  // And the round-trip: what the producers emit is what the reader accepts, per harness.
+  for (const [, content] of renders) {
+    assert.equal(hasPetboxMarker(content), true, "the rendered marker must satisfy the write/delete gate");
+  }
+  // codex is the real leading-`#`-comment path (whole TOML document, no `---` block): the manual
+  // declaration must read through it too, and a `# petbox: managed` typed AFTER content — not
+  // contiguous with byte 0 — must read as nothing.
+  const codex = renderCodexAgentToml(role);
+  assert.equal(
+    hasPetboxMarker(`# petbox: manual\n${codex.replace(PETBOX_MARKER_HASH_LINE + "\n", "")}`),
+    false,
+    "codex: `# petbox: manual` must not satisfy the managed gate",
+  );
+  assert.equal(
+    hasPetboxMarker(codex.replace(PETBOX_MARKER_HASH_LINE, `name = "x"`) + "\n# petbox: managed\n"),
+    false,
+    "codex: a marker comment placed after content (not contiguous with byte 0) is not a declaration",
+  );
 });
