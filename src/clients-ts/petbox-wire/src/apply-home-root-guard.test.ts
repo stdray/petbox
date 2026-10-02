@@ -170,7 +170,7 @@ test("PER HARNESS: claude-code, droid, codex and qwen are skipped, opencode is N
     const opencodeProjectDir = join(homeDir, ".opencode", "agent");
     mkdirSync(opencodeProjectDir, { recursive: true });
     const stale = join(opencodeProjectDir, "petbox-worker.md");
-    writeFileSync(stale, "---\nname: petbox-worker\npetbox: managed\n---\n\nstale project copy\n", "utf8");
+    writeFileSync(stale, "---\nname: petbox-worker\n# petbox: managed\n---\n\nstale project copy\n", "utf8");
 
     const { out, status } = runWire(["apply", "--roles=user"], homeDir, homeDir);
     assert.equal(status, WIRE_EXIT.ok, `Full output:\n${out}`);

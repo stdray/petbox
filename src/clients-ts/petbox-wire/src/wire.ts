@@ -375,7 +375,8 @@ function usage(exitCode: number = WIRE_EXIT.usage): never {
     "             claude-code .claude/agents/, opencode .opencode/agent/, droid .factory/droids/.\n" +
     "             Emitted names are namespaced petbox-<role> (frontmatter name: + file basename) —\n" +
     "             role.slug and ~/.petbox/roles.json stay unprefixed; only the render is. Every\n" +
-    "             generated file carries a `petbox: managed` origin marker; apply REFUSES (loud,\n" +
+    "             generated file carries a `# petbox: managed` origin marker (a comment line, never\n" +
+    "             a frontmatter key); apply REFUSES (loud,\n" +
     "             non-zero exit) to overwrite an existing file that lacks it — never clobbers a real\n" +
     "             user file. An owned pre-rename unprefixed leftover (e.g. worker.md) is removed once\n" +
     "             its petbox-<role>.md replacement is written; a same-named file without our marker is\n" +
@@ -407,7 +408,7 @@ function usage(exitCode: number = WIRE_EXIT.usage): never {
     "             yet, since 2026-09-09): ONCE into the three harness profiles —\n" +
     "             ~/.claude/agents, ~/.config/opencode/agents (plural; the singular `agent` is\n" +
     "             opencode legacy), ~/.factory/droids — 15 files instead of 90, and each project's own\n" +
-    "             role copies are then swept (marker-gated: a file without `petbox: managed` is\n" +
+    "             role copies are then swept (marker-gated: a file without `# petbox: managed` is\n" +
     "             reported and kept, never deleted). Skills stay per-project either way — their\n" +
     "             bodies carry {{PROJECT}} substitution. The choice is REMEMBERED in\n" +
     "             ~/.petbox/wire.json, so a later plain `apply`, `wire` step 11 or hook does not\n" +
@@ -418,7 +419,7 @@ function usage(exitCode: number = WIRE_EXIT.usage): never {
     "             PetBox render and overwrite it even though it carries no origin marker — the escape\n" +
     "             hatch for the pre-marker `petbox/SKILL.md` copies. There is deliberately no --force\n" +
     "             and no bulk variant: a path you did not name is still refused and still exits 1, and\n" +
-    "             a `petbox: manual` declaration outranks --adopt. A named path apply never considered\n" +
+    "             a `# petbox: manual` declaration outranks --adopt. A named path apply never considered\n" +
     "             is reported and exits 1 rather than passing silently.\n" +
     "status       Print FACT, not a verdict: per declared role x harness, the materialized artifact\n" +
     "             path, its bound model, WHERE that model came from (roster = ~/.petbox/roles.json;\n" +

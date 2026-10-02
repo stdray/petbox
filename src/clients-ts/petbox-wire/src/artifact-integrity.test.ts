@@ -17,7 +17,7 @@ import { agentFilesDir, artifactBasename, expectedArtifactBasenames } from "./ap
 import { sweepOrphanArtifacts } from "./apply-orphans.ts";
 import { findDanglingTargets, formatDanglingTargets } from "./definition-integrity.ts";
 import { HARNESS_IDS, type HarnessId } from "./harness-capabilities.ts";
-import { PETBOX_MARKER_LINE } from "./origin-marker.ts";
+import { PETBOX_MARKER_HASH_LINE } from "./origin-marker.ts";
 
 function role(slug: string, extra: Partial<AgentRole> = {}): AgentRole {
   return { slug, tier: "worker", requiredCapabilities: [], ...extra };
@@ -34,7 +34,7 @@ function freshRoot(): string {
 /** A file that looks exactly like one apply wrote: frontmatter carrying the origin marker. */
 function writeOurs(abs: string, body = "generated"): void {
   mkdirSync(dirname(abs), { recursive: true });
-  writeFileSync(abs, `---\nname: x\n${PETBOX_MARKER_LINE}\n---\n\n${body}\n`, "utf8");
+  writeFileSync(abs, `---\nname: x\n${PETBOX_MARKER_HASH_LINE}\n---\n\n${body}\n`, "utf8");
 }
 
 /** A real user file: frontmatter, but no origin marker anywhere. */

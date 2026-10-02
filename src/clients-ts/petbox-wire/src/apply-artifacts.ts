@@ -40,7 +40,7 @@ import { join } from "node:path";
 import { emittedRoleName, type AgentDefinition, type AgentRole } from "./agent-definition.ts";
 import { isKnownHarness, type HarnessId } from "./harness-capabilities.ts";
 import { allowedModels } from "./harness-models.ts";
-import { PETBOX_MARKER_LINE } from "./origin-marker.ts";
+import { PETBOX_MARKER_HASH_LINE } from "./origin-marker.ts";
 import {
   checkRoleTruthfulness,
   formatViolations,
@@ -223,8 +223,11 @@ export function buildRoleBody(role: AgentRole): string {
  * model only when bound — never invent a model id.
  * No `tools:` key: omitting it means the agent inherits the harness's full tool
  * set, including MCP — that is the intended policy (see harness-capabilities.ts).
- * Every generated file carries PETBOX_MARKER_LINE in its frontmatter (origin-marker.ts) —
- * the ONLY thing apply's write guard trusts to tell "ours" from a real user file.
+ * Every generated file carries PETBOX_MARKER_HASH_LINE in its frontmatter (origin-marker.ts) —
+ * the ONLY thing apply's write guard trusts to tell "ours" from a real user file. It is a
+ * COMMENT line (`# petbox: managed`), never a frontmatter key: opencode passes unknown
+ * frontmatter keys through to the LLM provider, so a bare `petbox:` key leaked into every
+ * request body and strict gateways rejected it (work: wire-marker-comment-line-everywhere).
  */
 export function renderAgentMarkdown(role: AgentRole, model?: string): string {
   const frontLines: string[] = [`name: ${emittedRoleName(role)}`];
@@ -232,7 +235,7 @@ export function renderAgentMarkdown(role: AgentRole, model?: string): string {
     frontLines.push(`model: ${model.trim()}`);
   }
   frontLines.push(`description: PetBox ${role.tier} role (${emittedRoleName(role)})`);
-  frontLines.push(PETBOX_MARKER_LINE);
+  frontLines.push(PETBOX_MARKER_HASH_LINE);
 
   const body = buildRoleBody(role);
   return `---\n${frontLines.join("\n")}\n---\n\n${body.endsWith("\n") ? body : body + "\n"}`;
@@ -248,7 +251,8 @@ export function renderAgentMarkdown(role: AgentRole, model?: string): string {
  * does on claude-code/opencode.
  * model: bound value from roles.json, else `inherit` (Factory default — not an invented id).
  * mcpServers: petbox when the role requires MCP (main or subagent surface).
- * Carries PETBOX_MARKER_LINE, same as renderAgentMarkdown — see origin-marker.ts.
+ * Carries PETBOX_MARKER_HASH_LINE (a `# petbox: managed` comment, never a bare key), same as
+ * renderAgentMarkdown — see origin-marker.ts.
  */
 export function renderDroidMarkdown(
   role: AgentRole,
@@ -281,7 +285,7 @@ export function renderDroidMarkdown(
     const server = opts?.mcpServerName ?? "petbox";
     front.push(`mcpServers: ["${server}"]`);
   }
-  front.push(PETBOX_MARKER_LINE);
+  front.push(PETBOX_MARKER_HASH_LINE);
 
   const body = buildRoleBody(role);
   return `---\n${front.join("\n")}\n---\n\n${body.endsWith("\n") ? body : body + "\n"}`;
@@ -316,8 +320,9 @@ function tomlQuote(s: string): string {
  * `#[serde(flatten)] ConfigToml`).
  *
  * The origin marker can't live in YAML frontmatter here — a leading `---` line is not valid
- * TOML and would break codex's own parser — so it is written as leading `# key: value` comment
- * lines instead; origin-marker.ts's frontmatterOf reads either container the same way.
+ * TOML and would break codex's own parser — so it is written as a leading `# key: value` comment
+ * line instead; origin-marker.ts's provenance matcher reads the SAME commented line in either
+ * container (markdown's frontmatter block, codex's leading comment block).
  *
  * developer_instructions uses a TOML literal multi-line string (`'''...'''`, no escape
  * processing) rather than a basic string: buildRoleBody's markdown is full of backslash-free but
@@ -326,7 +331,7 @@ function tomlQuote(s: string): string {
  */
 export function renderCodexAgentToml(role: AgentRole, model?: string): string {
   const name = emittedRoleName(role);
-  const lines: string[] = [`# ${PETBOX_MARKER_LINE}`, `name = ${tomlQuote(name)}`];
+  const lines: string[] = [PETBOX_MARKER_HASH_LINE, `name = ${tomlQuote(name)}`];
   const description = role.notes?.trim() || `PetBox ${role.tier} role (${name})`;
   lines.push(`description = ${tomlQuote(description)}`);
   if (model && model.trim()) {

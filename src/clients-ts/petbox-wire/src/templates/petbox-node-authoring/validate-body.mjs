@@ -17,9 +17,10 @@
 // for byte — removes the re-typing step that failure mode depends on.
 //
 // The first line above is the origin marker (origin-marker.ts's comment-marker contract,
-// mirroring the frontmatter `petbox: managed` markdown templates carry): it is what lets
-// `petbox-wire apply` tell "our render, safe to refresh" apart from a file the project edited by
-// hand, the same clobber-safety writeArtifact already gives every other managed file.
+// mirroring the `# petbox: managed` comment the markdown templates carry in their frontmatter):
+// it is what lets `petbox-wire apply` tell "our render, safe to refresh" apart from a file the
+// project edited by hand, the same clobber-safety writeArtifact already gives every other
+// managed file.
 //
 // The two constants below are parsed by a drift-guard test in the PetBox repo (which owns the
 // real sanitizer: NodeAuthoringSkillSvgDriftTests.cs, reading THIS file, not SKILL.md's prose) —

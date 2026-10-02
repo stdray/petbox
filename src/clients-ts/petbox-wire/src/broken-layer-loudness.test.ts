@@ -29,7 +29,7 @@ import { join } from "node:path";
 import { test } from "node:test";
 import { agentFilesDir } from "./apply-artifacts.ts";
 import { HARNESS_IDS } from "./harness-capabilities.ts";
-import { PETBOX_MARKER_LINE } from "./origin-marker.ts";
+import { PETBOX_MARKER_HASH_LINE } from "./origin-marker.ts";
 import { WIRE_EXIT } from "./wire-exit.ts";
 import { makeGitWorkingTree } from "./test-git-tree.ts";
 
@@ -92,7 +92,7 @@ test("apply: a broken layer discovered on a SECOND run leaves the artifacts from
     assert.equal(first.status, WIRE_EXIT.ok, `setup:\n${(first.stdout ?? "") + (first.stderr ?? "")}`);
     const artifact = join(projectDir, agentFilesDir("claude-code"), "petbox-worker.md");
     const before = readFileSync(artifact, "utf8");
-    assert.ok(before.includes(PETBOX_MARKER_LINE), "setup: the artifact must be one of ours");
+    assert.ok(before.includes(PETBOX_MARKER_HASH_LINE), "setup: the artifact must be one of ours");
 
     writeBrokenProjectLayer(projectDir);
     const second = spawnSync(process.execPath, [WIRE_TS, "apply", "--roles=project"], { cwd: projectDir, encoding: "utf8", env });

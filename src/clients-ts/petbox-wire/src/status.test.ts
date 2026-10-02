@@ -44,7 +44,7 @@ import {
   resolveRoleModelSource,
   roleRelativePath,
 } from "./status.ts";
-import { PETBOX_MARKER_LINE } from "./origin-marker.ts";
+import { PETBOX_MARKER_HASH_LINE } from "./origin-marker.ts";
 import { PROJECT_SKILLS, renderSkillTemplate } from "./skill-files.ts";
 import { readArtifactState } from "./origin-marker.ts";
 import { makeRoleBinding, ROLES_FORMAT_VERSION, type RolesFile } from "./roles.ts";
@@ -264,7 +264,7 @@ test("readArtifactState: absent / ours (origin marker) / foreign (no marker)", (
     assert.equal(readArtifactState(absent), "absent");
 
     const ours = join(dir, "ours.md");
-    writeFileSync(ours, "---\nname: petbox-worker\npetbox: managed\n---\nbody\n", "utf8");
+    writeFileSync(ours, "---\nname: petbox-worker\n# petbox: managed\n---\nbody\n", "utf8");
     assert.equal(readArtifactState(ours), "ours");
 
     const foreign = join(dir, "foreign.md");
@@ -748,7 +748,7 @@ test("computeRegistryStatusRow: a legacy pre-rename skill dir still present -> n
       writeFixtureSkill(dir, spec.dir, renderSkillTemplate(tpl, project, "", "X"));
     }
     // Plant the pre-rename leftover the sweep is supposed to have removed but didn't.
-    writeFixtureSkill(dir, specWithLegacy!.legacyDirs![0]!, `${PETBOX_MARKER_LINE}\nstale legacy copy\n`);
+    writeFixtureSkill(dir, specWithLegacy!.legacyDirs![0]!, `${PETBOX_MARKER_HASH_LINE}\nstale legacy copy\n`);
     const row = computeRegistryStatusRow({ prefix: dir, project, envVar: "X" }, REGISTRY_STATUS_TEMPLATES_ROOT);
     assert.equal(row.verdict, "stale");
     assert.equal(row.legacyLeftovers.length, 1);

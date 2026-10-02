@@ -18,10 +18,23 @@ import { existsSync, readFileSync } from "node:fs";
 export const PETBOX_MARKER_KEY = "petbox";
 export const PETBOX_MARKER_VALUE = "managed";
 export const PETBOX_MANUAL_VALUE = "manual";
-/** The literal frontmatter line every renderer appends to a generated file. */
+/** The base `key: value` token of the marker — never emitted bare. Every rendered form (the
+ * `#`-comment lines below, the `//` lines further down) is derived from THIS one string, which
+ * is what keeps codex's `# petbox: managed`, markdown's `# petbox: managed` and the `.mjs`
+ * assets' `// petbox: managed` from drifting apart.
+ *
+ * Work: wire-marker-comment-line-everywhere — the marker is NEVER a bare frontmatter KEY:
+ * opencode passes unknown frontmatter keys through to the LLM provider (`agent.options`), so a
+ * `petbox: managed` key leaked into every request body and strict gateways rejected it
+ * (`unknown field "petbox"`). Every renderer now emits the HASH-COMMENT form instead. */
 export const PETBOX_MARKER_LINE = `${PETBOX_MARKER_KEY}: ${PETBOX_MARKER_VALUE}`;
-/** The literal frontmatter line a project uses to declare a path as ITS OWN, hands off. */
+/** The base `key: value` token a project uses to declare a path as ITS OWN, hands off. */
 export const PETBOX_MANUAL_LINE = `${PETBOX_MARKER_KEY}: ${PETBOX_MANUAL_VALUE}`;
+/** The literal marker line every renderer appends to a generated file's YAML frontmatter
+ * (markdown harnesses) or leading TOML comment block (codex) — a COMMENT, never a key. */
+export const PETBOX_MARKER_HASH_LINE = `# ${PETBOX_MARKER_LINE}`;
+/** The manual-declaration counterpart of PETBOX_MARKER_HASH_LINE. */
+export const PETBOX_MANUAL_HASH_LINE = `# ${PETBOX_MANUAL_LINE}`;
 
 // Invocation-mode declaration, a SEPARATE frontmatter key from the provenance one above
 // (spec: wire-skill-invocation-mode). Provenance answers "may the kit write/delete this path";
@@ -76,7 +89,7 @@ const FRONTMATTER_RE = /^---\r?\n([\s\S]*?)\r?\n---/;
 // codex role files (apply-artifacts.ts's renderCodexAgentToml) are whole TOML documents: a
 // leading `---` line would not be a comment, it would be invalid TOML and break `codex`'s own
 // parser, so they cannot use the YAML delimiter form above. They instead carry the SAME
-// `key: value` marker lines as plain `# key: value` comments at the very top of the file.
+// `# key: value` marker comment as the very top of the file.
 // Declared-before-any-content, same as the YAML block: a `# petbox: managed` typed later in the
 // file body (inside a real TOML comment elsewhere) is not contiguous with line 1 and so is never
 // picked up here.
@@ -85,8 +98,13 @@ const TOML_LEADING_COMMENT_RE = /^(?:#[^\n]*\n?)+/;
 /**
  * The raw provenance-marker block, or null when `content` has neither container. Tries YAML
  * frontmatter first (markdown role/skill files); a content string that does not start with `---`
- * falls back to a leading TOML comment block, stripped of its `#` prefixes so the same
- * `key: value` line format (frontmatterValue below) reads either container identically.
+ * falls back to the leading TOML comment block. The block is returned RAW in both containers —
+ * codex's `#` prefixes are kept, so the provenance matcher below sees the same `# petbox: …`
+ * line shape in a YAML block and in a TOML comment block and ONE pattern reads both. The keys
+ * `frontmatterValue` reads bare (`petbox-digest`, `disable-model-invocation`) never appear in a
+ * codex file (TOML assignments are `key = value`, not `key: value`; the kit emits neither into
+ * one), so keeping the `#` there cannot lose them a reader — and it is what keeps a
+ * commented-out `# disable-model-invocation: true` in ANY container inert.
  */
 function frontmatterOf(content: string): string | null {
   const m = content.match(FRONTMATTER_RE);
@@ -95,15 +113,12 @@ function frontmatterOf(content: string): string | null {
   if (m) return m[1] ?? null;
   const c = content.match(TOML_LEADING_COMMENT_RE);
   if (!c) return null;
-  return c[0]
-    .split(/\r?\n/)
-    .filter((line) => line.length > 0)
-    .map((line) => line.replace(/^#[ \t]?/, ""))
-    .join("\n");
+  return c[0];
 }
 
 /** The single-token value of frontmatter key `key`, or null. `petbox:` never matches
- * `petbox-digest:` — the colon is part of the pattern. */
+ * `petbox-digest:` — the colon is part of the pattern. Bare-key matching, used ONLY for the
+ * invocation-mode keys; the provenance marker is read by the commented-form matcher below. */
 function frontmatterValue(content: string, key: string): string | null {
   const frontmatter = frontmatterOf(content);
   if (frontmatter === null) return null;
@@ -111,32 +126,50 @@ function frontmatterValue(content: string, key: string): string | null {
   return m?.[1] ?? null;
 }
 
+// The provenance marker as a COMMENT line: `# petbox: managed` / `# petbox: manual`. Deliberately
+// a dedicated matcher, NOT an optional-`#` flag on frontmatterValue: a generic optional-`#` would
+// activate a user's commented-out `# petbox-digest: auto` / `# disable-model-invocation: true`
+// lines (work: wire-marker-comment-line-everywhere). This one matches ONLY a line whose first
+// non-blank character is `#` — the exact shape every renderer emits and the five manually
+// converted opencode agents carry.
+const PROVENANCE_COMMENT_LINE_RE = new RegExp(
+  `^#[ \\t]?${PETBOX_MARKER_KEY}:[ \\t]*(\\S+)[ \\t]*\\r?$`,
+  "m",
+);
+
 /**
- * Which of the three provenance states `content` declares, read from its YAML frontmatter (the
- * block between the first pair of `---` lines). Frontmatter-scoped on purpose: a user's OWN file
- * that happens to mention the word "petbox" in its BODY prose must never be mistaken for ours. A
- * file with no frontmatter at all (no leading `---` block) is undeclared — it cannot be one of
- * our renders. An UNRECOGNIZED value (`petbox: something-else`) is undeclared too: the guards
- * below only ever act on a state they actually understand.
+ * Which of the three provenance states `content` declares, read from its container block (the
+ * YAML block between the first pair of `---` lines, or a codex file's leading TOML comment
+ * block). Block-scoped on purpose: a user's OWN file that happens to mention the word "petbox"
+ * in its BODY prose must never be mistaken for ours. The marker is matched ONLY in its
+ * commented form (`# petbox: managed|manual`) — a bare `petbox:` key is not ours (it is the
+ * pre-2026-10 leak shape this reader intentionally stopped understanding; migrate with
+ * `petbox-wire update` + `apply`, `--adopt` where refused). An UNRECOGNIZED value
+ * (`# petbox: something-else`) is undeclared too: the guards below only ever act on a state they
+ * actually understand.
  */
 export function readPetboxProvenance(content: string): PetboxProvenance | null {
-  const value = frontmatterValue(content, PETBOX_MARKER_KEY);
+  const frontmatter = frontmatterOf(content);
+  if (frontmatter === null) return null;
+  const value = frontmatter.match(PROVENANCE_COMMENT_LINE_RE)?.[1];
   if (value === PETBOX_MARKER_VALUE) return "managed";
   if (value === PETBOX_MANUAL_VALUE) return "manual";
   return null;
 }
 
 /**
- * True ONLY for `petbox: managed`. This is the write/delete gate of the whole package
+ * True ONLY for `# petbox: managed`. This is the write/delete gate of the whole package
  * (apply-write.ts) and it is deliberately narrow: before the provenance states existed it
  * accepted ANY `petbox: <token>` value, which would have made a file declared `petbox: manual`
- * silently overwritable and — worse — deletable by cleanupLegacyArtifact.
+ * silently overwritable and — worse — deletable by cleanupLegacyArtifact. Since
+ * wire-marker-comment-line-everywhere it accepts ONLY the commented form — a bare `petbox:`
+ * key is the leak shape this gate must never recognize again.
  */
 export function hasPetboxMarker(content: string): boolean {
   return readPetboxProvenance(content) === "managed";
 }
 
-/** True for `petbox: manual` — the project declared this path its own. Never written, never
+/** True for `# petbox: manual` — the project declared this path its own. Never written, never
  * deleted, and never counted as a conflict (spec: wire-skill-manual-declared-not-error). */
 export function isDeclaredManual(content: string): boolean {
   return readPetboxProvenance(content) === "manual";
@@ -161,7 +194,7 @@ export function isModelInvocationDisabled(content: string): boolean {
 }
 
 // Materialization fact for one path apply/wire may have written: absent (never written), ours
-// (`petbox: managed` — safe to overwrite silently), manual (`petbox: manual` — the project
+// (`# petbox: managed` — safe to overwrite silently), manual (`# petbox: manual` — the project
 // declared the path its own: left alone, and NOT a defect to report), or foreign (undeclared —
 // something else's file sits there: refuse, never touch it). One state per provenance value, so
 // every reader (doctor's blocked/drifted counts, status's per-file lines) can tell "left alone

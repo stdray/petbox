@@ -12,9 +12,10 @@
 // Origin marker (bug: skill-files-clobber-and-apply-skips): this module used to `writeFileSync`
 // unconditionally — no existence check, no marker, no refusal — the exact class `apply-write.ts`
 // already closed for `.claude/agents/*.md`. A user's own hand-edited `SKILL.md` was silently
-// destroyed on the next `wire`. All three templates now carry `petbox: managed` in their
-// frontmatter (origin-marker.ts), and every write goes through `writeArtifact` (apply-write.ts):
-// new path → write; marked existing path → overwrite ("own"); unmarked existing path → refused
+// destroyed on the next `wire`. All templates now carry `# petbox: managed` — a COMMENT line in
+// their frontmatter, never a bare key (work: wire-marker-comment-line-everywhere) — and every
+// write goes through `writeArtifact` (apply-write.ts): new path → write; marked existing path →
+// overwrite ("own"); unmarked existing path → refused
 // ("blocked"), UNLESS it is byte-for-byte identical to what the PRE-marker template would have
 // rendered, in which case it is a leftover from before this fix and gets promoted ("migrated") —
 // without that carve-out, the very first `wire`/`apply` after this fix would block on every
@@ -39,7 +40,7 @@ import {
   isDeclaredManual,
   isModelInvocationDisabled,
   PETBOX_DIGEST_KEY,
-  PETBOX_MARKER_LINE,
+  PETBOX_MARKER_HASH_LINE,
   readArtifactState,
   readArtifactStateFromComment,
   readDigestMode,
@@ -190,13 +191,13 @@ export function renderSkillTemplate(tpl: string, project: string, workspace: str
 }
 
 // What the PRE-declaration template used to render, byte-for-byte, for the migration carve-out
-// below. The two declaration lines (`petbox: managed` from the clobber fix, `petbox-digest: …`
+// below. The two declaration lines (`# petbox: managed` from the clobber fix, `petbox-digest: …`
 // from the invocation-mode contract) are the ONLY things those two changes added to the
 // templates, so stripping both back out of a freshly rendered body reconstructs the legacy
 // output — no separate "old template" copy to keep in sync. Both must be stripped: a file
 // materialized by a pre-fix wire carries NEITHER, so leaving the digest line in would make the
 // comparison miss and a legitimate migration candidate would be refused instead.
-const MARKER_LINE_WITH_EOL = new RegExp(`^${PETBOX_MARKER_LINE}\\r?\\n`, "m");
+const MARKER_LINE_WITH_EOL = new RegExp(`^${PETBOX_MARKER_HASH_LINE}\\r?\\n`, "m");
 const DIGEST_LINE_WITH_EOL = new RegExp(`^${PETBOX_DIGEST_KEY}:[ \\t]*\\S+[ \\t]*\\r?\\n`, "m");
 function stripMarkerLine(rendered: string): string {
   return rendered.replace(MARKER_LINE_WITH_EOL, "").replace(DIGEST_LINE_WITH_EOL, "");
@@ -480,7 +481,7 @@ export function formatSkillFile(report: SkillFileReport): string {
       : report.state === "foreign"
         ? "BLOCKED — a foreign (non-PetBox) file sits here"
         : report.state === "manual"
-          ? "declared manual (`petbox: manual`) — the project owns this path"
+          ? "declared manual (`# petbox: manual`) — the project owns this path"
           : "materialized (ours)";
   const match =
     report.state === "manual"

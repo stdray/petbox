@@ -6,7 +6,7 @@ description: >-
   than a few lines, and before any read that only needs headers or a couple of known keys.
   The actual mechanism — which technique applies and the exact call shape — lives in the
   skill body; open it before writing the call, don't answer from this description alone.
-petbox: managed
+# petbox: managed
 petbox-digest: auto
 ---
 

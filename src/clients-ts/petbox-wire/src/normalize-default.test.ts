@@ -44,7 +44,7 @@ import { createAdoptSet, pathKey } from "./adopt-paths.ts";
 import { formatAction, summarize, type ApplyAction } from "./apply-ledger.ts";
 import { GITIGNORE_BEGIN, GITIGNORE_END, spliceGitignoreBlock } from "./gitignore-block.ts";
 import { managedGitignoreEntries, projectRoleFiles } from "./managed-paths.ts";
-import { PETBOX_MANUAL_LINE, PETBOX_MARKER_LINE } from "./origin-marker.ts";
+import { PETBOX_MANUAL_HASH_LINE, PETBOX_MARKER_HASH_LINE } from "./origin-marker.ts";
 import { loadWireConfig, userAgentFilesDir } from "./role-scope.ts";
 import { WIRE_EXIT } from "./wire-exit.ts";
 import { makeGitWorkingTree } from "./test-git-tree.ts";
@@ -80,7 +80,7 @@ function plantOwnedRole(projectDir: string, rel: string[], name: string): string
   const dir = join(projectDir, ...rel);
   mkdirSync(dir, { recursive: true });
   const p = join(dir, name);
-  writeFileSync(p, `---\nname: ${name}\n${PETBOX_MARKER_LINE}\n---\nold generation\n`, "utf8");
+  writeFileSync(p, `---\nname: ${name}\n${PETBOX_MARKER_HASH_LINE}\n---\nold generation\n`, "utf8");
   return p;
 }
 
@@ -386,7 +386,7 @@ test("--adopt: an unmarked file at the NAMED path is overwritten; a second one i
     assert.equal(adopted.status, WIRE_EXIT.hard, `the un-named refusal must still fail the run:\n${adopted.out}`);
     assert.match(adopted.out, /ADOPTED/);
     assert.notDeepEqual(readFileSync(named.path), named.bytes, "the named path should have been overwritten");
-    assert.match(readFileSync(named.path, "utf8"), new RegExp(PETBOX_MARKER_LINE));
+    assert.match(readFileSync(named.path, "utf8"), new RegExp(PETBOX_MARKER_HASH_LINE));
     assert.deepEqual(readFileSync(notNamed.path), notNamed.bytes, "an un-named unmarked file was touched");
   } finally {
     rmSync(homeDir, { recursive: true, force: true });
@@ -402,7 +402,7 @@ test("--adopt: a `petbox: manual` declaration outranks it — the project's own 
     const declared = plantForeign(
       join(proj, ".claude", "agents"),
       "petbox-worker.md",
-      `---\nname: petbox-worker\n${PETBOX_MANUAL_LINE}\n---\nthe project owns this path\n`,
+      `---\nname: petbox-worker\n${PETBOX_MANUAL_HASH_LINE}\n---\nthe project owns this path\n`,
     );
 
     const run = runWire(["apply", "--offline", "--adopt", declared.path], homeDir, proj);
