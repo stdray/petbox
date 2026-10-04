@@ -87,8 +87,14 @@ The section is also **withheld where the protocol cannot be acted on**: if the s
 petbox MCP tool (`pi.getActiveTools()` has nothing under the kit's own tool prefix), neither the
 banner nor the nudge is injected — a pi subagent runs with a strict native tool allowlist and has
 no MCP tools at all, so the banner there was an instruction it could not follow. A subagent that
-does declare them (a custom agent listing them in `tools`) gets the banner normally. The decision
-is taken on the session's first run and traced to `~/.petbox/wire.log` when it abstains.
+does declare them (a custom agent listing them in `tools`) gets the banner normally.
+
+The check is asymmetric on purpose: **a positive sticks, a negative is re-checked every run.** MCP
+tools are declared asynchronously, so the first run of a restart can see an empty catalog on a
+session that does have them (observed live on a healthy main session). Freezing that first "no"
+would silently withhold the protocol for the whole session; re-checking costs at most one late
+injection on the run where the tools appear. The first negative is traced to
+`~/.petbox/wire.log`.
 
 Background: observation `pi-banner-reinjected-mid-conversation` (`$system` board `observations`),
 which recorded a 7.6 KB banner re-injected 157 messages into a live yobagent session.

@@ -355,19 +355,26 @@ export default function (pi: ExtensionAPI): void {
       const memo = banner;
       if (!memo) return; // unregistered cwd / no session yet — no banner by design
       const state = await memo;
-      // Gate, decided ONCE on the session's first run — not per run, deliberately. A per-run
-      // check would let a late MCP connection add the section to a live transcript, which is the
-      // same mid-conversation injection frozenBannerSection exists to prevent; a first-run
-      // decision makes the session's prompt shape final in both directions. The cost is the
-      // mirror image of the benefit: if the direct MCP tools really are missing on run one (a
-      // slow connect), this session runs without a banner — which is why the abstention is
-      // traced to wire.log rather than silent.
-      if (bannerAllowed === null) {
+      // Gate. POSITIVE IS STICKY, NEGATIVE IS PROVISIONAL — the asymmetry is the whole point. A
+      // pi process declares MCP tools asynchronously, so the FIRST run of a session can see an
+      // empty catalog on a session that does have them: measured live, a healthy main session
+      // that had been calling petbox tools all day was classified "no tools" at its first run
+      // after a restart, which silently cost it the nudge for the whole session. Freezing that NO
+      // would have made the negative permanent, so the check is re-run while it is false and
+      // sticks the moment it turns true (nothing can start declaring petbox tools mid-session
+      // either, so a true cannot rot).
+      //
+      // What the asymmetry costs: at most ONE late injection, on the first run where the tools
+      // show up — a banner that is useful, delivered once. What it buys: a session that would
+      // otherwise never receive the protocol at all. The trace fires on the first negative only,
+      // so a subagent does not write a line per turn.
+      if (bannerAllowed !== true) {
+        const firstLook = bannerAllowed === null;
         bannerAllowed = petboxToolsAreCallable(pi);
-        if (!bannerAllowed) {
+        if (!bannerAllowed && firstLook) {
           wireLog(
             "pi",
-            `no petbox MCP tool (${PETBOX_TOOL_PREFIX}*) is declared in this session — the protocol is not injected here (a subagent's strict tool allowlist is the usual reason)`,
+            `no petbox MCP tool (${PETBOX_TOOL_PREFIX}*) is declared in this session — the protocol is not injected here (a subagent's strict tool allowlist is the usual reason); re-checked each run`,
           );
         }
       }
