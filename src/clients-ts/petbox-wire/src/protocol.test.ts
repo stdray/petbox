@@ -38,6 +38,29 @@ test("orchestrationPrescriptionsAllowed tracks spawn_subagents for all three har
   assert.equal(orchestrationPrescriptionsAllowed("unknown"), false);
 });
 
+// Both directions of one honesty rule (spec definition-truthfulness, bug
+// truthfulness-no-capability-claims-and-no-unreachable-tools). An unknown harness is the ONLY
+// way into the no-spawn branch — every HARNESS_IDS member declares spawn_subagents — so the kit
+// may neither promise fan-out there nor deny it: inventing a NEGATIVE cell for a harness the kit
+// cannot see is inventing exactly as much as promising a positive one. The session's own tool
+// surface is the authority. This used to render "This harness does not declare
+// spawn_subagents — do not assume subagent fan-out is available; work in the main session",
+// which pi read while holding `subagent`, `subagent_supervisor` and `bg_wait`.
+test("an UNKNOWN harness gets NO capability claim at all — neither a promise nor a denial", () => {
+  const text = buildProtocol(project, mcpPetboxTool, { harness: "pi" });
+  const lower = text.toLowerCase();
+  // The memory protocol always applies, unknown harness or not.
+  assert.ok(lower.includes("petbox memory active"), `unknown harness still gets the banner:\n${text}`);
+  assert.ok(lower.includes("search before rework"), `the memory protocol must survive:\n${text}`);
+  // …and nothing at all is claimed about spawning, in either direction.
+  for (const claim of ["spawn_subagents", "does not declare", "work in the main session", "· orchestrator"]) {
+    assert.ok(!lower.includes(claim.toLowerCase()), `unknown harness must carry no "${claim}":\n${text}`);
+  }
+  // The self-intro label stays — identity, not a capability claim, and it keeps the banner's
+  // shape uniform. Pinned here so a future change has to move this test on purpose.
+  assert.ok(text.includes("· main"), `unknown harness keeps the neutral main self-intro:\n${text}`);
+});
+
 // Card usage-delivery-mixes-machine-traffic: the canon-fallback memory_get call is the one
 // real automated (non-deliberate) pull that exists in the wiring kit — pull-memory.ts /
 // droid-pull-memory.ts fetch canon over REST and never touch this instruction at all, so this

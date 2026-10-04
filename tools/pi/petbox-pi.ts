@@ -68,6 +68,10 @@ const BANNER_SECTION = "petbox";
 // transcript as a `custom_message` entry, so a session file tells you the nudge was delivered.
 const NUDGE_CUSTOM_TYPE = "petbox-recall-nudge";
 
+// Prefix every petbox MCP tool name shares, taken from the kit's OWN namer instead of being
+// spelled out a second time (mcpPetboxTool is `<prefix><verb>`, so an empty verb IS the prefix).
+const PETBOX_TOOL_PREFIX = mcpPetboxTool("");
+
 // A MessageEntry whose role is "system" carries the structured prompt state; only the section
 // THIS file owns is read back out of it (frozenBannerSection).
 function sectionOf(entry: SessionEntry): string | null {
@@ -111,6 +115,29 @@ let banner: Promise<BannerState> | null = null;
 // returns is appended to the transcript, so without this flag a resumed session would collect a
 // copy of the same line every turn.
 let nudgeSent = false;
+
+// Can THIS session act on the protocol at all? Decided once, on the session's first run, and
+// frozen — see the gate in before_agent_start. null = not decided yet.
+let bannerAllowed: boolean | null = null;
+
+// The protocol names petbox MCP tools (mcpPetboxTool), so it only makes sense where those tools
+// are actually CALLABLE. A pi subagent does not have them: every child session measured carries
+// the strict native allowlist (`read, grep, find, ls, bash, edit, write, contact_supervisor`) and
+// no `mcp__petbox__*` in its declared catalog, and pi-subagents' own worker.md says so ("The
+// builtin worker uses a strict tool allowlist. It does not inherit ambient extension tools from
+// the parent session"). The banner used to arrive there anyway, instructing the child to run
+// memory_search/tasks_search it could not run — spec definition-truthfulness, bug
+// truthfulness-no-capability-claims-and-no-unreachable-tools.
+//
+// Capability, not agent class, decides: ask the session what it DECLARES. `getActiveTools()` is
+// the set the model can call without a hop, which is the honest predicate — `getAllTools()` also
+// lists tools registered but filtered out by an allowlist. A subagent configured with petbox MCP
+// tools in its own `tools:` list therefore still gets the banner, and so does any future subagent
+// extension that exposes them. This deliberately does NOT sniff pi-subagents (no PI_SUBAGENT_*
+// env, no name pattern): swapping the subagent extension must not change what the banner claims.
+function petboxToolsAreCallable(pi: ExtensionAPI): boolean {
+  return pi.getActiveTools().some((name) => name.startsWith(PETBOX_TOOL_PREFIX));
+}
 
 // Active-branch dialogue only: getBranch() walks root→leaf along the current branch (so
 // abandoned branches never leak in), and only user/assistant TEXT turns are kept — tool
@@ -251,6 +278,7 @@ export default function (pi: ExtensionAPI): void {
       mirror = null; // a fresh start always invalidates any previous session's cursor
       banner = null; // …and the previous project's banner (per-session, never per-process)
       nudgeSent = false;
+      bannerAllowed = null;
       let resolved: ResolvedProject | null = null;
       try {
         resolved = resolveProject(ctx.cwd);
@@ -303,6 +331,23 @@ export default function (pi: ExtensionAPI): void {
       const memo = banner;
       if (!memo) return; // unregistered cwd / no session yet — no banner by design
       const state = await memo;
+      // Gate, decided ONCE on the session's first run — not per run, deliberately. A per-run
+      // check would let a late MCP connection add the section to a live transcript, which is the
+      // same mid-conversation injection frozenBannerSection exists to prevent; a first-run
+      // decision makes the session's prompt shape final in both directions. The cost is the
+      // mirror image of the benefit: if the direct MCP tools really are missing on run one (a
+      // slow connect), this session runs without a banner — which is why the abstention is
+      // traced to wire.log rather than silent.
+      if (bannerAllowed === null) {
+        bannerAllowed = petboxToolsAreCallable(pi);
+        if (!bannerAllowed) {
+          wireLog(
+            "pi",
+            `no petbox MCP tool (${PETBOX_TOOL_PREFIX}*) is declared in this session — banner and nudge withheld for the whole session`,
+          );
+        }
+      }
+      if (!bannerAllowed) return;
       // Set when there IS a banner; otherwise leave the transcript alone. NOTHING is deleted:
       // a `null` text means the build failed for a project that IS wired, and pushing "no
       // section" would carve a hole in the prompt now and pour the whole banner back into it

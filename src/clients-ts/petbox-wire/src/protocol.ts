@@ -95,13 +95,28 @@ Spawn as \`${workerName}\`. Delegation rule and cost rationale: Orchestrator not
 Orchestrator notes (from definition): ${notes}`;
   }
 
-  // No spawn_subagents: memory protocol still applies; do not force orchestrator-spawn mandate.
+  // No spawn_subagents — which, BY CONSTRUCTION, means a harness the kit does not model: all
+  // five HARNESS_IDS declare spawn_subagents (harness-capabilities.ts), so an unknown harness is
+  // the only way into this branch. It therefore renders NO capability claim at all, in either
+  // direction. Spec definition-truthfulness ("the artifact does not prescribe the impossible")
+  // cuts both ways — inventing a NEGATIVE cell for a harness the kit cannot see is inventing just
+  // as much as promising a positive one, and harness-capabilities.ts's own header forbids both
+  // ("EVERY cell is a factual claim about a harness… Do not invent"). Silence is the honest
+  // render here: the session's own tool surface already says what it can do.
+  //
+  // This used to end with "This harness does not declare spawn_subagents — do not assume subagent
+  // fan-out is available; work in the main session", which pi read while holding `subagent`,
+  // `subagent_supervisor` and `bg_wait` and cited as its reason to work solo (bug:
+  // truthfulness-no-capability-claims-and-no-unreachable-tools). If a KNOWN harness ever loses
+  // spawn_subagents, do NOT silently restore that line: decide deliberately, and add it with a
+  // test that pins WHICH harnesses get it.
+  //
+  // The self-intro stays. `· main` is an identity, not a capability claim, and it keeps the
+  // banner's shape uniform across harnesses — protocol.test.ts pins both facts.
   return `Your FIRST response MUST open with:
 \`🧠 PetBox memory active\`
 Then next line, your self-intro — exactly:
-\`<your model name> · main\` — + one sentence naming your working rules (search-before-rework, capture-as-you-go, respect the gates).
-
-This harness does not declare spawn_subagents — do not assume subagent fan-out is available; work in the main session.`;
+\`<your model name> · main\` — + one sentence naming your working rules (search-before-rework, capture-as-you-go, respect the gates).`;
 }
 
 // Build the memory-protocol block for a project. `tool` maps a bare verb to the agent's

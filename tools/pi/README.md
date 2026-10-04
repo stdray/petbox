@@ -64,7 +64,7 @@ projects, so the first pi run in a project asks.
    ```
 4. A `session_*` search over the same period shows the pi session being appended.
 
-## Banner stability (why the section is frozen)
+## Banner stability (why the section is frozen, and where it is withheld)
 
 pi replays the system prompt as an **append-only transcript of section patches**: it diffs the
 desired sections against the ones the current system message carries, and when any section
@@ -79,6 +79,13 @@ verbatim; only a transcript without one gets a freshly assembled banner. The Ses
 gets the kit's recall line as a one-shot message instead. Consequence, by design: a resumed
 session keeps the canon it started with, and a canon/definition edit reaches the model at its next
 session rather than by re-rendering the prompt mid-conversation.
+
+The section is also **withheld where the protocol cannot be acted on**: if the session declares no
+petbox MCP tool (`pi.getActiveTools()` has nothing under the kit's own tool prefix), neither the
+banner nor the nudge is injected — a pi subagent runs with a strict native tool allowlist and has
+no MCP tools at all, so the banner there was an instruction it could not follow. A subagent that
+does declare them (a custom agent listing them in `tools`) gets the banner normally. The decision
+is taken on the session's first run and traced to `~/.petbox/wire.log` when it abstains.
 
 Background: observation `pi-banner-reinjected-mid-conversation` (`$system` board `observations`),
 which recorded a 7.6 KB banner re-injected 157 messages into a live yobagent session.
