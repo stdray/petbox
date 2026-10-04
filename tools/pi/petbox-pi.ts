@@ -74,12 +74,28 @@ const PETBOX_TOOL_PREFIX = mcpPetboxTool("");
 
 // A MessageEntry whose role is "system" carries the structured prompt state; only the section
 // THIS file owns is read back out of it (frozenBannerSection).
+//
+// The value read back is WRAPPED in the section's own tag, because pi stores sections the way
+// buildSystemPromptSections built them (`<name>\n…\n</name>` for every section except
+// `preamble`), while the handler sees the inner text. Feeding the stored value straight back in
+// makes pi wrap it a SECOND time: the stored banner then grows one tag level per session_start,
+// the bytes differ from the previous system message, and pi re-appends the whole (now nested)
+// banner — the exact churn the freeze exists to prevent, reintroduced through the back door.
+// Found live, not by the driver: one session file carried three nesting levels after three
+// restarts (the driver's stub did not emulate the wrapping until it was fixed to).
+const BANNER_OPEN = `<${BANNER_SECTION}>`;
+const BANNER_CLOSE = `</${BANNER_SECTION}>`;
+function unwrapStoredSection(stored: string): string {
+  if (!stored.startsWith(BANNER_OPEN) || !stored.endsWith(BANNER_CLOSE)) return stored;
+  return stored.slice(BANNER_OPEN.length, stored.length - BANNER_CLOSE.length).replace(/^\n/, "").replace(/\n$/, "");
+}
+
 function sectionOf(entry: SessionEntry): string | null {
   if (entry.type !== "message") return null;
   const message = entry.message;
   if (message.role !== "system") return null;
   const section = message.sections?.[BANNER_SECTION];
-  return typeof section === "string" && section.length > 0 ? section : null;
+  return typeof section === "string" && section.length > 0 ? unwrapStoredSection(section) : null;
 }
 
 type MirrorState = {
@@ -96,9 +112,14 @@ type MirrorState = {
 type BannerState = {
   readonly text: string | null;
   readonly nudge: string;
+  // True when `text` came from the transcript itself rather than from this run's assembly. The
+  // capability gate needs the distinction: a session that cannot act on the protocol gets nothing
+  // NEW injected into it, but a banner the transcript already carries is left standing (dropping
+  // it would not be silence — pi turns "absent from the options" into a section DELETION).
+  readonly frozen: boolean;
 };
 
-const NO_BANNER: BannerState = { text: null, nudge: "" };
+const NO_BANNER: BannerState = { text: null, nudge: "", frozen: false };
 
 // Reset on session_start, cleared on session_shutdown — never persisted. Like `mirror`, one
 // slot per process: a /new (reason "new") or resume re-fires session_start, which invalidates
@@ -243,7 +264,7 @@ async function buildBanner(
       logSource: `petbox-pi[${resolved.project}]`,
     });
     const nudge = recallNudge(resolved.project, defResult.definition, source);
-    if (frozen !== null) return { text: frozen, nudge };
+    if (frozen !== null) return { text: frozen, nudge, frozen: true };
     const canon = await fetchCanonBlock(resolved, { timeoutMs: CANON_FETCH_BUDGET_MS });
     const protocol = buildProtocol(resolved.project, mcpPetboxTool, {
       harness: HARNESS,
@@ -265,10 +286,13 @@ async function buildBanner(
     // Broken-layer marker LEADS the banner (spec: broken-layer-fails-loudly) — loudness lives
     // in the text the model reads, "" on every healthy session.
     const defNote = defResult.note;
-    return { text: defNote ? `${defNote}\n${assembled.text}` : assembled.text, nudge };
+    return { text: defNote ? `${defNote}\n${assembled.text}` : assembled.text, nudge, frozen: false };
   } catch (e) {
     wireLog("pi", `banner build failed for ${resolved.project}: ${e instanceof Error ? e.message : String(e)}`);
-    return NO_BANNER;
+    // A resumed transcript keeps the banner it had: returning NO_BANNER here would not be "no
+    // banner", it would be a DELETION — the section is absent from the options, so pi's diff
+    // emits `petbox: null` and the model loses the protocol mid-conversation.
+    return frozen !== null ? { text: frozen, nudge: "", frozen: true } : NO_BANNER;
   }
 }
 
@@ -291,7 +315,7 @@ export default function (pi: ExtensionAPI): void {
         // session learns WHY there is no protocol instead of silently seeing none.
         if (e instanceof UnresolvedEnvRefError) {
           console.error(e.message);
-          banner = Promise.resolve({ text: `⚠ ${e.message}`, nudge: "" });
+          banner = Promise.resolve({ text: `⚠ ${e.message}`, nudge: "", frozen: false });
         }
         return;
       }
@@ -343,11 +367,18 @@ export default function (pi: ExtensionAPI): void {
         if (!bannerAllowed) {
           wireLog(
             "pi",
-            `no petbox MCP tool (${PETBOX_TOOL_PREFIX}*) is declared in this session — banner and nudge withheld for the whole session`,
+            `no petbox MCP tool (${PETBOX_TOOL_PREFIX}*) is declared in this session — the protocol is not injected here (a subagent's strict tool allowlist is the usual reason)`,
           );
         }
       }
-      if (!bannerAllowed) return;
+      if (!bannerAllowed) {
+        // Nothing NEW goes into a session that cannot act on the protocol. A banner the transcript
+        // ALREADY carries is a different case and is kept standing byte-for-byte: not setting it
+        // would not be silence — pi reads "absent from the options" as a section DELETION and drops
+        // it mid-conversation.
+        if (state.frozen && state.text !== null) event.systemPromptOptions.sections[BANNER_SECTION] = state.text;
+        return;
+      }
       // Set when there IS a banner; otherwise leave the transcript alone. NOTHING is deleted:
       // a `null` text means the build failed for a project that IS wired, and pushing "no
       // section" would carve a hole in the prompt now and pour the whole banner back into it

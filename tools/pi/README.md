@@ -74,7 +74,10 @@ Unchanged sections cost nothing; a changed one is re-injected in full.
 
 The banner must therefore be byte-stable for the life of a transcript. On `session_start` the
 extension first looks for a `petbox` section already present on the restored branch and reuses it
-verbatim; only a transcript without one gets a freshly assembled banner. The SessionStart reason
+verbatim — **unwrapping one tag level first**: pi stores a section the way
+`buildSystemPromptSections` built it (`<petbox>…</petbox>`), so feeding the stored value straight
+back in makes pi wrap it a second time, and the banner grows one tag level per restart until the
+grown text re-injects itself. Only a transcript without a section gets a freshly assembled banner. The SessionStart reason
 (`startup` / `new` / `resume` / `fork` / `reload`) never reaches the section — a resumed session
 gets the kit's recall line as a one-shot message instead. Consequence, by design: a resumed
 session keeps the canon it started with, and a canon/definition edit reaches the model at its next
