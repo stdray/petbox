@@ -248,13 +248,9 @@ function recallNudge(project: string, definition: AgentDefinition, source: strin
 // every degradation the model DOES see is loud in the banner text itself, not in an exception.
 //
 // `frozen` short-circuits the canon leg: the transcript already carries this session's banner,
-// so there is nothing to assemble (see frozenBannerSection for the whole argument).
-async function buildBanner(
-  resolved: ResolvedProject,
-  cwd: string,
-  source: string,
-  frozen: string | null,
-): Promise<BannerState> {
+// so there is nothing to assemble (see frozenBannerSection for the whole argument) — and it is
+// ALSO the nudge trigger, see below.
+async function buildBanner(resolved: ResolvedProject, cwd: string, frozen: string | null): Promise<BannerState> {
   try {
     const applyRoot = resolveApplyRoot(cwd).root;
     // Broken definition layer → note prepended below + Class-Б trace written by the kit;
@@ -263,7 +259,16 @@ async function buildBanner(
       root: applyRoot,
       logSource: `petbox-pi[${resolved.project}]`,
     });
-    const nudge = recallNudge(resolved.project, defResult.definition, source);
+    // The nudge fires on the STATE, not on pi's reason string. A restart that boots INTO an
+    // existing conversation is exactly when the kit wants this line, but pi does not reliably
+    // label it "resume": a session constructed without an explicit SessionStartEvent defaults to
+    // "startup" (agent-session.ts: `config.sessionStartEvent ?? {reason: "startup"}`), which is
+    // why two live restarts produced no nudge while the transcript demonstrably had history.
+    // `frozen !== null` says it precisely and mechanism-independently: this session's banner came
+    // from the TRANSCRIPT, so there was a conversation to recall. A fresh session (and therefore
+    // every subagent, which is spawned fresh) has no such banner and gets no nudge; the WORDING
+    // still comes from the kit, asked for the source it renders it under.
+    const nudge = frozen !== null ? recallNudge(resolved.project, defResult.definition, "resume") : "";
     if (frozen !== null) return { text: frozen, nudge, frozen: true };
     const canon = await fetchCanonBlock(resolved, { timeoutMs: CANON_FETCH_BUDGET_MS });
     const protocol = buildProtocol(resolved.project, mcpPetboxTool, {
@@ -322,8 +327,8 @@ export default function (pi: ExtensionAPI): void {
       if (!resolved) return; // cwd not a registered project — expected silence, not an error
       // Heavy work starts here and is NOT awaited: session readiness must not wait on the
       // canon fetch; before_agent_start awaits the memo on the first run instead.
-      // event.reason doubles as the nudge source — "resume" gets the kit's recall line.
-      banner = buildBanner(resolved, ctx.cwd, event.reason, frozenBannerSection(ctx));
+      // The transcript's own banner doubles as "this is a continuation" — the nudge trigger.
+      banner = buildBanner(resolved, ctx.cwd, frozenBannerSection(ctx));
       const sessionId = ctx.sessionManager.getSessionId();
       if (sessionId.length === 0) return;
       mirror = {
