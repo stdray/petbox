@@ -1,0 +1,22 @@
+{
+  "mcpServers": {
+    "petbox": {
+      "type": "http",
+      "url": "https://petbox.3po.su/mcp",
+      "headers": {
+        "X-Api-Key": "${PETBOX_API_KEY}"
+      },
+      "description": "PetBox task boards, methodology, memory and sessions. Core tools (tasks_search, tasks_node_get, tasks_upsert, tasks_delta, comments_upsert, tasks_methodology_guide, memory_search, memory_remember) are declared directly; for anything else run tool_search (e.g. \"memory_upsert\", \"log_query\") first.",
+      "toolExposure": {
+        "tasks_search": "direct",
+        "tasks_node_get": "direct",
+        "tasks_upsert": "direct",
+        "tasks_delta": "direct",
+        "comments_upsert": "direct",
+        "tasks_methodology_guide": "direct",
+        "memory_search": "direct",
+        "memory_remember": "direct"
+      }
+    }
+  }
+}

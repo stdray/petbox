@@ -42,6 +42,9 @@ tools/KqlBench/bench-results.jsonl
 # The probe's baseline/ IS tracked, unlike KqlBench's bench-results above: the raw transcripts
 # are the artifact M1 re-scores against, not incidental output of a local run.
 !tools/agent-behaviour-probe/
+# The pi harness adapter (tools/pi/) is tracked for the same reason: this repo holds its only
+# copy — it is hand-deployed into pi's own extension dir, which lives outside the repo.
+!tools/pi/
 .cake/
 
 # Python (agent/ deploy tool)
@@ -119,6 +122,10 @@ secrets.local.env
 .agents/
 .codex/
 .qwen/
+
+# pi (personal): the project's MCP wiring lives in .pi/ — `.pi/mcp.json` IS tracked (it is
+# portable: the key is a ${VAR} reference, nothing per-machine), a hand-made backup is not.
+.pi/mcp.backup.json
 
 # Playwright MCP artifacts
 .playwright-mcp/
