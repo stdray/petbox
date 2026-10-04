@@ -1,0 +1,25 @@
+model=mimo-v2.6-flash runs=3
+  [BROKEN] route=go schema=union
+           index=[0, 0] finish=['tool_calls'] xml_in_content=True
+           index=[0, 0] finish=['tool_calls'] xml_in_content=True
+           index=[0, 0] finish=['tool_calls'] xml_in_content=True
+  [OK    ] route=go schema=anyof
+           index=[0, 1] finish=['tool_calls'] xml_in_content=False
+           index=[0, 1] finish=['tool_calls'] xml_in_content=False
+           index=[0, 1] finish=['tool_calls'] xml_in_content=False
+  [OK    ] route=go schema=simple
+           index=[0, 1] finish=['tool_calls'] xml_in_content=False
+           index=[0, 1] finish=['tool_calls'] xml_in_content=False
+           index=[0, 1] finish=['tool_calls'] xml_in_content=False
+  [OK    ] route=or schema=union
+           index=[0, 1] finish=['tool_calls', 'tool_calls'] xml_in_content=False
+           index=[0, 1] finish=['tool_calls', 'tool_calls'] xml_in_content=False
+           index=[0, 1] finish=['tool_calls', 'tool_calls'] xml_in_content=False
+  [OK    ] route=or schema=anyof
+           index=[0, 1] finish=['tool_calls', 'tool_calls'] xml_in_content=False
+           index=[0, 1] finish=['tool_calls', 'tool_calls'] xml_in_content=False
+           index=[0, 1] finish=['tool_calls', 'tool_calls'] xml_in_content=False
+  [OK    ] route=or schema=simple
+           index=[0, 1] finish=['tool_calls', 'tool_calls'] xml_in_content=False
+           index=[0, 1] finish=['tool_calls', 'tool_calls'] xml_in_content=False
+           index=[0, 1] finish=['tool_calls', 'tool_calls'] xml_in_content=False

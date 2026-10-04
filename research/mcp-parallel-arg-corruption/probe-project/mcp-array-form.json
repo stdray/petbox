@@ -1,0 +1,11 @@
+{
+  "mcpServers": {
+    "probe-union": {
+      "command": "node",
+      "args": [
+        "<THIS_DIR>/../mcp-probe-union/server.js"
+      ],
+      "exposure": "direct"
+    }
+  }
+}
