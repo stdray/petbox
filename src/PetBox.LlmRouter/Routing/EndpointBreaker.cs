@@ -44,6 +44,13 @@ public sealed class EndpointBreaker
 	{
 		public int ConsecutiveFailures;
 		public DateTimeOffset? OpenUntil;
+
+		/// <summary>
+		/// Has anything already reported this opening? Reset every time the breaker opens, so the
+		/// caller can log the TRANSITION once and keep quiet for the rest of the cooldown — a busy
+		/// endpoint otherwise emits one Information event per skipped request for 30 s.
+		/// </summary>
+		public bool Announced;
 	}
 
 	/// <summary>Why a leg is being skipped.</summary>
@@ -56,7 +63,13 @@ public sealed class EndpointBreaker
 		Leg,
 	}
 
-	public readonly record struct Skip(SkipScope Scope, TimeSpan Remaining);
+	/// <param name="Scope">How wide the suppression is.</param>
+	/// <param name="Remaining">How much longer it lasts.</param>
+	/// <param name="FirstObservation">
+	/// True exactly once per opening: the first caller to see this cooldown. Later callers see
+	/// false, so the router can log the transition at Information and the repeats at Debug.
+	/// </param>
+	public readonly record struct Skip(SkipScope Scope, TimeSpan Remaining, bool FirstObservation);
 
 	public bool IsOpen(string endpoint, LlmCapability capability) => OpenReason(endpoint, capability) is not null;
 
@@ -67,8 +80,8 @@ public sealed class EndpointBreaker
 	/// </summary>
 	public Skip? OpenReason(string endpoint, LlmCapability capability)
 	{
-		if (Remaining(_endpoints, endpoint) is { } ep && ep > TimeSpan.Zero) return new Skip(SkipScope.Endpoint, ep);
-		if (Remaining(_legs, new LegKey(endpoint, capability)) is { } leg && leg > TimeSpan.Zero) return new Skip(SkipScope.Leg, leg);
+		if (Observe(_endpoints, endpoint, SkipScope.Endpoint) is { } ep) return ep;
+		if (Observe(_legs, new LegKey(endpoint, capability), SkipScope.Leg) is { } leg) return leg;
 		return null;
 	}
 
@@ -92,8 +105,22 @@ public sealed class EndpointBreaker
 	/// </summary>
 	public void RecordSuccess(string endpoint, LlmCapability capability)
 	{
-		_endpoints.TryRemove(endpoint, out _);
-		_legs.TryRemove(new LegKey(endpoint, capability), out _);
+		// Under the SAME lock Bump holds. Removing the entry without it lets a failure that already
+		// holds a reference update a state nobody can reach any more — the failure is then silently
+		// lost and the breaker under-counts.
+		Clear(_endpoints, endpoint);
+		Clear(_legs, new LegKey(endpoint, capability));
+	}
+
+	static void Clear<TKey>(ConcurrentDictionary<TKey, State> map, TKey key) where TKey : notnull
+	{
+		if (!map.TryGetValue(key, out var s)) return;
+		lock (s)
+		{
+			map.TryRemove(key, out _);
+			// A concurrent Bump may have re-added under the same key after our remove; if it did,
+			// it did so on a state whose count starts at 0, which is the intended reset either way.
+		}
 	}
 
 	void Bump<TKey>(ConcurrentDictionary<TKey, State> map, TKey key) where TKey : notnull
@@ -102,13 +129,32 @@ public sealed class EndpointBreaker
 		lock (s)
 		{
 			s.ConsecutiveFailures++;
-			if (s.ConsecutiveFailures >= FailureThreshold) s.OpenUntil = _time.GetUtcNow() + OpenDuration;
+			if (s.ConsecutiveFailures >= FailureThreshold)
+			{
+				s.OpenUntil = _time.GetUtcNow() + OpenDuration;
+				s.Announced = false; // a new opening is a new transition to report
+			}
 		}
 	}
 
-	TimeSpan? Remaining<TKey>(ConcurrentDictionary<TKey, State> map, TKey key) where TKey : notnull
+	// Returns null when this leg may be attempted, else the skip with its first-observation flag.
+	//
+	// NOTE ON WHAT THIS DOES NOT DO: once the cooldown elapses the state is NOT cleared here and NO
+	// single probe is reserved — every caller arriving after expiry is let through at once, and the
+	// first failure re-opens immediately because the consecutive-failure count is still at
+	// threshold. That is a COOLDOWN, not a single-probe half-open, and it is the behaviour this
+	// breaker had before failure classes existed; naming it accurately matters more than changing
+	// it here, because a real half-open needs a decision about what a concurrent stampede costs.
+	Skip? Observe<TKey>(ConcurrentDictionary<TKey, State> map, TKey key, SkipScope scope) where TKey : notnull
 	{
 		if (!map.TryGetValue(key, out var s) || s.OpenUntil is null) return null;
-		return s.OpenUntil.Value - _time.GetUtcNow();
+		var remaining = s.OpenUntil.Value - _time.GetUtcNow();
+		if (remaining <= TimeSpan.Zero) return null;
+		lock (s)
+		{
+			var first = !s.Announced;
+			s.Announced = true;
+			return new Skip(scope, remaining, first);
+		}
 	}
 }

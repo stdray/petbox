@@ -198,7 +198,12 @@ public sealed partial class OpenAiCompatibleClient : IOpenAiCompatibleClient
 				// importantly, from masking the real failure behind a generic "all providers failed" after
 				// burning an attempt that could never have served this input on that route.
 				var oversize = IsInputTooLarge(body);
-				var transient = !oversize && (rateLimited || code >= 500);
+				// 408 belongs with the transient set: it is the PROVIDER reporting that it ran out of
+				// time producing an answer, which is a failure of that leg (the host answered, so it
+				// is not Unreachable) and not a definitive refusal of the request. Leaving it out made
+				// repeated 408s never open a breaker at all.
+				var timedOut = code == 408;
+				var transient = !oversize && (rateLimited || timedOut || code >= 500);
 				throw new LlmUpstreamException(transient, $"HTTP {code}: {Truncate(body)}", rateLimited: rateLimited,
 					failureClass: !transient ? LlmFailureClass.None
 						: rateLimited ? LlmFailureClass.Throttled

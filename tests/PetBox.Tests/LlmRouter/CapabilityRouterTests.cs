@@ -251,7 +251,7 @@ public sealed class CapabilityRouterTests
 		upstream.EmbedBehaviour["https://p"] = () => [[1f]];        // would now succeed — but is skipped
 		await router.EmbedAsync("proj", new EmbedRequest(["x"]));
 
-		var entry = log.Entries.Should().ContainSingle(e => e.EventId == 307).Subject;
+		var entry = log.Entries.Should().ContainSingle(e => e.EventId == 308).Subject;
 		entry.Level.Should().Be(MsLogLevel.Information, "Debug is invisible in production — that is part of the bug");
 		entry.Message.Should().Contain("primary").And.Contain("Embed").And.Contain("42").And.Contain("throttled");
 	}

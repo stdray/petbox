@@ -11,8 +11,17 @@ namespace PetBox.LlmRouter.Http;
 //   * Throttled — the provider ANSWERED, with 429. The endpoint is alive; a quota is exhausted.
 //     OpenRouter's free tier is a per-endPOINT budget that a Chat 429 exhausts, so an endpoint-wide
 //     breaker on a 429 moves Embed and Rerank traffic for a problem that only Chat had.
-//   * ServerError — the provider answered 5xx. Also alive; the model or that request failed.
-//     Leg-scoped, same as Throttled.
+//   * ServerError — the provider answered 5xx, or 408 (it ran out of time producing an answer).
+//     Also alive; the model or that request failed. Leg-scoped, same as Throttled.
+//
+// THE HONEST LIMIT OF THIS SPLIT. Scope is inferred from the shape of the failure, not from the
+// provider's quota policy, and those are not the same thing. OpenRouter's free tier IS a shared
+// per-endPOINT budget (`free-models-per-min`), so a Chat 429 can genuinely be a budget that Embed
+// and Rerank would also be refused on. Leg-scoping does not pretend otherwise: those capabilities
+// keep trying, each hits its own 429, and each opens its OWN leg after the threshold — the bounded
+// cost is a few extra refusals inside the same window, against a 30 s blackout of unrelated traffic
+// if the breaker were endpoint-wide. When a provider publishes a quota scope, that scope is the
+// authority; this classification is the fallback for the ones that do not.
 //
 // Measured on production 2026-10-05: two Chat 429s on `openrouter` opened the endpoint-wide breaker,
 // and Embed + Rerank were served by the `home` fallback for 30 s with nothing in the log to explain

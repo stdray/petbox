@@ -143,17 +143,43 @@ public sealed class EndpointBreakerTests
 		var b = new EndpointBreaker(time) { FailureThreshold = 1, OpenDuration = TimeSpan.FromSeconds(30) };
 		b.RecordFailure("a", LlmCapability.Chat, LlmFailureClass.Throttled);
 
-		b.OpenReason("a", LlmCapability.Chat)!.Value.Scope.Should().Be(EndpointBreaker.SkipScope.Leg);
-		b.OpenReason("a", LlmCapability.Chat)!.Value.Remaining.Should().Be(TimeSpan.FromSeconds(30));
+		EndpointBreaker.Skip ReasonOf(string endpoint)
+		{
+			var reason = b.OpenReason(endpoint, LlmCapability.Chat);
+			reason.Should().NotBeNull($"{endpoint} is open at this point");
+			return reason!.Value; // justified by the assertion above — the value cannot be absent
+		}
+
+		ReasonOf("a").Scope.Should().Be(EndpointBreaker.SkipScope.Leg);
+		ReasonOf("a").Remaining.Should().Be(TimeSpan.FromSeconds(30));
 
 		b.RecordFailure("b", LlmCapability.Chat, LlmFailureClass.Unreachable);
-		b.OpenReason("b", LlmCapability.Chat)!.Value.Scope.Should().Be(EndpointBreaker.SkipScope.Endpoint);
+		ReasonOf("b").Scope.Should().Be(EndpointBreaker.SkipScope.Endpoint);
 
 		time.Advance(TimeSpan.FromSeconds(10));
-		b.OpenReason("a", LlmCapability.Chat)!.Value.Remaining.Should().Be(TimeSpan.FromSeconds(20));
+		ReasonOf("a").Remaining.Should().Be(TimeSpan.FromSeconds(20));
 
 		time.Advance(TimeSpan.FromSeconds(25));
 		b.OpenReason("a", LlmCapability.Chat).Should().BeNull("past the cooldown -> attemptable");
+	}
+
+	// The skip is logged ONCE per opening at Information and at Debug for the rest of the cooldown;
+	// without this flag a busy endpoint emits one Information line per skipped request for 30 s.
+	[Fact]
+	public void Only_the_first_observation_of_an_opening_is_flagged_as_such()
+	{
+		var b = new EndpointBreaker(new FakeTimeProvider()) { FailureThreshold = 1 };
+
+		b.RecordFailure("a", LlmCapability.Chat, LlmFailureClass.Throttled);
+
+		b.OpenReason("a", LlmCapability.Chat)!.Value.FirstObservation.Should().BeTrue("the transition itself");
+		b.OpenReason("a", LlmCapability.Chat)!.Value.FirstObservation.Should().BeFalse("and every later skip");
+		b.OpenReason("a", LlmCapability.Chat)!.Value.FirstObservation.Should().BeFalse();
+
+		// Re-opening after the cooldown announces itself again — otherwise the next real problem is
+		// invisible.
+		b.RecordFailure("a", LlmCapability.Chat, LlmFailureClass.Throttled);
+		b.OpenReason("a", LlmCapability.Chat)!.Value.FirstObservation.Should().BeTrue("a new opening is a new transition");
 	}
 
 	[Fact]

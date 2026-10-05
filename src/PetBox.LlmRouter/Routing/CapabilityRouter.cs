@@ -300,14 +300,20 @@ public sealed partial class CapabilityRouter : ILlmClient
 		// "this leg was skipped" from "this other one answered"). An endpoint-wide skip says the
 		// provider looks UNREACHABLE and takes every capability with it; a leg skip says the provider
 		// ANSWERED and only this capability is throttled or erroring.
+		// Information ONCE per opening, Debug for the rest of the cooldown. A busy endpoint otherwise
+		// emits one Information line per skipped request for the whole 30 s, which is how a routing
+		// event turns into noise nobody reads — the same reason the original line was invisible.
+		var repeat = !open.Value.FirstObservation;
 		if (open.Value.Scope == EndpointBreaker.SkipScope.Endpoint)
 		{
-			LogEndpointUnreachable(_log, capability, endpoint, seconds);
+			if (repeat) LogSkipRepeat(_log, capability, endpoint, seconds);
+			else LogEndpointUnreachable(_log, capability, endpoint, seconds);
 			failures.Add(new LegFailure(endpoint, "endpoint unreachable", null));
 		}
 		else
 		{
-			LogLegOpen(_log, capability, endpoint, seconds);
+			if (repeat) LogSkipRepeat(_log, capability, endpoint, seconds);
+			else LogLegOpen(_log, capability, endpoint, seconds);
 			failures.Add(new LegFailure(endpoint, "circuit open", null));
 		}
 		return true;
@@ -342,8 +348,14 @@ public sealed partial class CapabilityRouter : ILlmClient
 	[LoggerMessage(EventId = 301, Level = LogLevel.Information, Message = "llm {Capability}: endpoint '{Endpoint}' looks UNREACHABLE for another {OpenSeconds}s (all capabilities) — skipping this leg")]
 	static partial void LogEndpointUnreachable(ILogger logger, LlmCapability capability, string endpoint, int openSeconds);
 
-	[LoggerMessage(EventId = 307, Level = LogLevel.Information, Message = "llm {Capability}: endpoint '{Endpoint}' answered but this capability is throttled/erroring for another {OpenSeconds}s — skipping this leg")]
+	// 308, not 307: 307 is the response_format rejection in OpenAiCompatibleClient, and a query by
+	// EventId alone must not conflate "this leg is throttled" with "this endpoint refused to be
+	// told what shape to answer in".
+	[LoggerMessage(EventId = 308, Level = LogLevel.Information, Message = "llm {Capability}: endpoint '{Endpoint}' answered but this capability is throttled/erroring for another {OpenSeconds}s — skipping this leg")]
 	static partial void LogLegOpen(ILogger logger, LlmCapability capability, string endpoint, int openSeconds);
+
+	[LoggerMessage(EventId = 309, Level = LogLevel.Debug, Message = "llm {Capability}: endpoint '{Endpoint}' still skipped ({OpenSeconds}s left)")]
+	static partial void LogSkipRepeat(ILogger logger, LlmCapability capability, string endpoint, int openSeconds);
 
 	[LoggerMessage(EventId = 302, Level = LogLevel.Information, Message = "llm {Capability} served by {Endpoint}/{Model} (attempt {Attempt})")]
 	static partial void LogServed(ILogger logger, LlmCapability capability, string endpoint, string model, int attempt);

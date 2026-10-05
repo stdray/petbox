@@ -102,6 +102,96 @@ public sealed class OpenAiCompatibleClientTests
 	static string Body(CapturingHandler handler) =>
 		handler.LastBody ?? throw new InvalidOperationException("no request body was captured");
 
+	// ---- failure CLASSIFICATION (work llmrouter-breaker-scope-per-capability) ----
+	//
+	// This is the only place a failure is classified, so it is the only place that can be wrong in a
+	// way no router test sees: every router test builds its own LlmUpstreamException and therefore
+	// trusts the mapping below rather than exercising it. Each row pins one branch of it.
+	//
+	// The class decides the BREAKER'S SCOPE, so each row is a statement about which capabilities a
+	// failure is allowed to take down with it.
+
+	static async Task<LlmUpstreamException> Failing(HttpStatusCode status, string body = """{"error":"x"}""")
+	{
+		var (client, http, _) = Build(body, status);
+		var act = async () => await client.ChatAsync(http, "https://o", null, "m", Messages, null, null, null, null, null, CancellationToken.None);
+		return (await act.Should().ThrowAsync<LlmUpstreamException>()).Which;
+	}
+
+	[Fact]
+	public async Task A_429_is_throttled_and_transient()
+	{
+		var ex = await Failing(HttpStatusCode.TooManyRequests);
+
+		ex.FailureClass.Should().Be(LlmFailureClass.Throttled, "the provider answered — only this leg's quota is spent");
+		ex.RateLimited.Should().BeTrue();
+		ex.Transient.Should().BeTrue();
+	}
+
+	[Theory]
+	[InlineData(HttpStatusCode.InternalServerError)]
+	[InlineData(HttpStatusCode.BadGateway)]
+	[InlineData(HttpStatusCode.ServiceUnavailable)]
+	[InlineData(HttpStatusCode.RequestTimeout)]
+	public async Task A_5xx_or_408_is_a_leg_scoped_server_error(HttpStatusCode status)
+	{
+		var ex = await Failing(status);
+
+		ex.FailureClass.Should().Be(LlmFailureClass.ServerError);
+		ex.Transient.Should().BeTrue("408 is the provider running out of time, not a refusal of the request");
+		ex.RateLimited.Should().BeFalse();
+	}
+
+	[Theory]
+	[InlineData(HttpStatusCode.BadRequest)]
+	[InlineData(HttpStatusCode.Unauthorized)]
+	[InlineData(HttpStatusCode.NotFound)]
+	public async Task A_4xx_is_definitive_and_opens_no_breaker(HttpStatusCode status)
+	{
+		var ex = await Failing(status);
+
+		ex.FailureClass.Should().Be(LlmFailureClass.None);
+		ex.Transient.Should().BeFalse();
+	}
+
+	// llama-server answers an oversized embed/rerank with HTTP 500 and wording that makes it a
+	// refusal by CONTENT. That must stay definitive, or a big-input call would trip a breaker on a
+	// route that is perfectly healthy.
+	[Fact]
+	public async Task An_oversize_refusal_stays_definitive_even_at_500()
+	{
+		var ex = await Failing(HttpStatusCode.InternalServerError,
+			"""{"error":"input is too large to process. increase the physical batch size"}""");
+
+		ex.FailureClass.Should().Be(LlmFailureClass.None);
+		ex.Transient.Should().BeFalse();
+	}
+
+	// A transport failure is the one class that is endpoint-wide: no answer came back, so the host
+	// is down for every capability pointed at it.
+	[Fact]
+	public async Task A_connection_failure_is_unreachable()
+	{
+		var http = new HttpClient(new ThrowingHandler(new HttpRequestException("no route to host")));
+		var client = new OpenAiCompatibleClient();
+
+		var act = async () => await client.ChatAsync(http, "https://o", null, "m", Messages, null, null, null, null, null, CancellationToken.None);
+		var ex = (await act.Should().ThrowAsync<LlmUpstreamException>()).Which;
+
+		ex.FailureClass.Should().Be(LlmFailureClass.Unreachable);
+		ex.Transient.Should().BeTrue();
+	}
+
+	// The default keeps every pre-existing construction point behaving as it did before classes
+	// existed — transient means endpoint-wide — so this is a compatibility contract, not a default.
+	[Fact]
+	public void An_unclassified_transient_defaults_to_endpoint_wide()
+	{
+		new LlmUpstreamException(true, "who knows").FailureClass.Should().Be(LlmFailureClass.Unreachable);
+		new LlmUpstreamException(false, "definitive").FailureClass.Should().Be(LlmFailureClass.None);
+		new LlmUpstreamException(true, "429", rateLimited: true).FailureClass.Should().Be(LlmFailureClass.Throttled);
+	}
+
 	[Fact]
 	public async Task NullResponseFormat_PayloadHasNoResponseFormatKey()
 	{
@@ -302,6 +392,14 @@ public sealed class OpenAiCompatibleClientTests
 				LastBody = await request.Content.ReadAsStringAsync(cancellationToken);
 			return new HttpResponseMessage(status) { Content = new StringContent(responseBody, Encoding.UTF8, "application/json") };
 		}
+	}
+
+	// Fails at the TRANSPORT layer, which is what a refused connection / DNS / TLS failure looks
+	// like to the client — the one branch that cannot be produced by returning an HTTP status.
+	sealed class ThrowingHandler(Exception error) : HttpMessageHandler
+	{
+		protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken) =>
+			Task.FromException<HttpResponseMessage>(error);
 	}
 
 	// Answers each successive request from a scripted (status, body) queue and records every
