@@ -163,11 +163,11 @@ public sealed partial class OpenAiCompatibleClient : IOpenAiCompatibleClient
 		}
 		catch (TaskCanceledException ex) when (!ct.IsCancellationRequested)
 		{
-			throw new LlmUpstreamException(true, "request timed out", ex);
+			throw new LlmUpstreamException(true, "request timed out", ex, failureClass: LlmFailureClass.Unreachable);
 		}
 		catch (HttpRequestException ex)
 		{
-			throw new LlmUpstreamException(true, $"connection failed: {ex.Message}", ex);
+			throw new LlmUpstreamException(true, $"connection failed: {ex.Message}", ex, failureClass: LlmFailureClass.Unreachable);
 		}
 
 		using (resp)
@@ -199,7 +199,10 @@ public sealed partial class OpenAiCompatibleClient : IOpenAiCompatibleClient
 				// burning an attempt that could never have served this input on that route.
 				var oversize = IsInputTooLarge(body);
 				var transient = !oversize && (rateLimited || code >= 500);
-				throw new LlmUpstreamException(transient, $"HTTP {code}: {Truncate(body)}", rateLimited: rateLimited);
+				throw new LlmUpstreamException(transient, $"HTTP {code}: {Truncate(body)}", rateLimited: rateLimited,
+					failureClass: !transient ? LlmFailureClass.None
+						: rateLimited ? LlmFailureClass.Throttled
+						: LlmFailureClass.ServerError);
 			}
 			try { return JsonDocument.Parse(body); }
 			catch (JsonException ex) { throw new LlmUpstreamException(false, $"invalid JSON from upstream: {ex.Message}"); }

@@ -116,12 +116,7 @@ public sealed partial class CapabilityRouter : ILlmClient
 				failures.Add(new LegFailure(route.Endpoint, "unknown endpoint", null));
 				continue;
 			}
-			if (_breaker.IsOpen(ep.Name))
-			{
-				LogCircuitOpen(_log, LlmCapability.Rerank, ep.Name);
-				failures.Add(new LegFailure(ep.Name, "circuit open", null));
-				continue;
-			}
+			if (SkipOpenLeg(LlmCapability.Rerank, ep.Name, failures)) continue;
 
 			attempt++;
 			try
@@ -139,7 +134,7 @@ public sealed partial class CapabilityRouter : ILlmClient
 					var hits = await _upstream.RerankAsync(http, ep.BaseUrl, apiKey, route.Model, request.Query, docs, null, ct);
 					foreach (var h in hits) merged.Add(new RerankHit(offset + h.Index, h.Score));
 				}
-				_breaker.RecordSuccess(ep.Name);
+				_breaker.RecordSuccess(ep.Name, LlmCapability.Rerank);
 				LogServed(_log, LlmCapability.Rerank, ep.Name, route.Model, attempt);
 				// One model scored the whole pool → the scores share one scale, so a global order and
 				// TopN across chunks are now meaningful. Stable '>' keeps earlier hits on score ties.
@@ -158,7 +153,7 @@ public sealed partial class CapabilityRouter : ILlmClient
 			catch (LlmUpstreamException ux)
 			{
 				failures.Add(new LegFailure(ep.Name, ux.Message, ux));
-				_breaker.RecordFailure(ep.Name);
+				_breaker.RecordFailure(ep.Name, LlmCapability.Rerank, ux.FailureClass);
 				// Whole-query fallback: the NEXT route replays ALL chunks from scratch. A 429 keeps its
 				// own classified event (event 306), exactly as RunChainAsync.
 				if (ux.RateLimited) LogRateLimited(_log, LlmCapability.Rerank, ep.Name, ux.Message);
@@ -201,7 +196,7 @@ public sealed partial class CapabilityRouter : ILlmClient
 			.Any(r =>
 			{
 				var ep = resolved.Registry.Endpoints.FirstOrDefault(e => e.Name == r.Endpoint);
-				return ep is not null && !_breaker.IsOpen(ep.Name);
+				return ep is not null && !_breaker.IsOpen(ep.Name, capability);
 			});
 	}
 
@@ -243,12 +238,7 @@ public sealed partial class CapabilityRouter : ILlmClient
 				failures.Add(new LegFailure(route.Endpoint, "unknown endpoint", null));
 				continue;
 			}
-			if (_breaker.IsOpen(ep.Name))
-			{
-				LogCircuitOpen(_log, cap, ep.Name);
-				failures.Add(new LegFailure(ep.Name, "circuit open", null));
-				continue;
-			}
+			if (SkipOpenLeg(cap, ep.Name, failures)) continue;
 
 			attempt++;
 			try
@@ -256,7 +246,7 @@ public sealed partial class CapabilityRouter : ILlmClient
 				var http = _clients.Get(ep);
 				var apiKey = resolved.ApiKeys.GetValueOrDefault(ep.Name);
 				var raw = await call(http, ep, apiKey, route);
-				_breaker.RecordSuccess(ep.Name);
+				_breaker.RecordSuccess(ep.Name, cap);
 				LogServed(_log, cap, ep.Name, route.Model, attempt);
 				return (raw, new ServedBy(ep.Name, route.Model, attempt, false), route);
 			}
@@ -271,7 +261,7 @@ public sealed partial class CapabilityRouter : ILlmClient
 			catch (LlmUpstreamException ux)
 			{
 				failures.Add(new LegFailure(ep.Name, ux.Message, ux));
-				_breaker.RecordFailure(ep.Name);
+				_breaker.RecordFailure(ep.Name, cap, ux.FailureClass);
 				// A 429 gets its OWN classified event (spec: search-degraded-provenance): the owner
 				// must be able to ask "were there rate-limit refusals?" of log_query, and a distinct
 				// EventId + the {Endpoint}/{Capability} it carries is what makes that answerable —
@@ -289,6 +279,39 @@ public sealed partial class CapabilityRouter : ILlmClient
 	// serves its exact tier. Priority then decides order among the matches.
 	static bool TierMatches(string? routeTier, string? requestTier) =>
 		routeTier is null || string.Equals(routeTier, requestTier, StringComparison.OrdinalIgnoreCase);
+
+	// Is this leg skipped because its breaker is open? Records the leg failure either way, so the
+	// exhaustion message a caller finally sees names EVERY leg that did not serve — including the
+	// ones we never even tried.
+	//
+	// Both events moved UP from Debug to Information as part of this change. The skip was not
+	// missing, it was INVISIBLE: Debug sits below the production minimum level, so on 2026-10-05 an
+	// Embed call served by the `home` fallback had no circuit-open line anywhere near it, and the
+	// only evidence was the absence of a failure next to an unexpected "served by" — which is how
+	// "this provider refused" looked like the explanation when the provider had never been called.
+	// A skip that CHANGES WHERE A CALL IS SERVED is a routing event and belongs where a routing
+	// event can be found.
+	bool SkipOpenLeg(LlmCapability capability, string endpoint, List<LegFailure> failures)
+	{
+		var open = _breaker.OpenReason(endpoint, capability);
+		if (open is null) return false;
+		var seconds = (int)open.Value.Remaining.TotalSeconds;
+		// Two different facts, logged as two different events (302 is "served", so a reader can tell
+		// "this leg was skipped" from "this other one answered"). An endpoint-wide skip says the
+		// provider looks UNREACHABLE and takes every capability with it; a leg skip says the provider
+		// ANSWERED and only this capability is throttled or erroring.
+		if (open.Value.Scope == EndpointBreaker.SkipScope.Endpoint)
+		{
+			LogEndpointUnreachable(_log, capability, endpoint, seconds);
+			failures.Add(new LegFailure(endpoint, "endpoint unreachable", null));
+		}
+		else
+		{
+			LogLegOpen(_log, capability, endpoint, seconds);
+			failures.Add(new LegFailure(endpoint, "circuit open", null));
+		}
+		return true;
+	}
 
 	// One leg's outcome when it did not serve the call: Reason is always a human-readable summary
 	// (used to build the exhaustion message even for skips that never threw), Error is the actual
@@ -316,8 +339,11 @@ public sealed partial class CapabilityRouter : ILlmClient
 	[LoggerMessage(EventId = 300, Level = LogLevel.Warning, Message = "llm {Capability}: route references unknown endpoint '{Endpoint}', skipping")]
 	static partial void LogUnknownEndpoint(ILogger logger, LlmCapability capability, string endpoint);
 
-	[LoggerMessage(EventId = 301, Level = LogLevel.Debug, Message = "llm {Capability}: endpoint '{Endpoint}' circuit open, skipping")]
-	static partial void LogCircuitOpen(ILogger logger, LlmCapability capability, string endpoint);
+	[LoggerMessage(EventId = 301, Level = LogLevel.Information, Message = "llm {Capability}: endpoint '{Endpoint}' looks UNREACHABLE for another {OpenSeconds}s (all capabilities) — skipping this leg")]
+	static partial void LogEndpointUnreachable(ILogger logger, LlmCapability capability, string endpoint, int openSeconds);
+
+	[LoggerMessage(EventId = 307, Level = LogLevel.Information, Message = "llm {Capability}: endpoint '{Endpoint}' answered but this capability is throttled/erroring for another {OpenSeconds}s — skipping this leg")]
+	static partial void LogLegOpen(ILogger logger, LlmCapability capability, string endpoint, int openSeconds);
 
 	[LoggerMessage(EventId = 302, Level = LogLevel.Information, Message = "llm {Capability} served by {Endpoint}/{Model} (attempt {Attempt})")]
 	static partial void LogServed(ILogger logger, LlmCapability capability, string endpoint, string model, int attempt);

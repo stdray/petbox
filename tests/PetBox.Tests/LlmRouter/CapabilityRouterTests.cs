@@ -1,9 +1,11 @@
+using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Time.Testing;
 using PetBox.LlmRouter.Contract;
 using PetBox.LlmRouter.Http;
 using PetBox.LlmRouter.Registry;
 using PetBox.LlmRouter.Routing;
+using MsLogLevel = Microsoft.Extensions.Logging.LogLevel;
 
 namespace PetBox.Tests.LlmRouter;
 
@@ -48,8 +50,28 @@ public sealed class CapabilityRouterTests
 				new LlmRoute(LlmCapability.Rerank, "secondary", "fallback-rr", 20),
 			]));
 
+	// Chat and Embed over the SAME two endpoints. That shared endpoint is what makes the
+	// per-endpoint breaker a cross-capability hazard: one capability's failures used to suppress
+	// the other (work llmrouter-breaker-scope-per-capability).
+	static ResolvedRegistryLevel ChatAndEmbed() => Level(
+		new LlmRegistry(
+			[new LlmEndpoint("primary", "https://p"), new LlmEndpoint("secondary", "https://s")],
+			[
+				new LlmRoute(LlmCapability.Chat, "primary", "chat-p", 10),
+				new LlmRoute(LlmCapability.Chat, "secondary", "chat-s", 20),
+				new LlmRoute(LlmCapability.Embed, "primary", "mp", 10),
+				new LlmRoute(LlmCapability.Embed, "secondary", "ms", 20),
+			]));
+
 	static CapabilityRouter Build(ILlmRegistryLevelResolver resolver, IOpenAiCompatibleClient upstream, EndpointBreaker breaker) =>
 		new(resolver, new CertPinningHttpClientProvider(), upstream, breaker, NullLogger<CapabilityRouter>.Instance);
+
+	// Same, with the router's logger captured — a skip that changes WHERE a call is served is a
+	// routing event and must be findable in the log at the production minimum level.
+	static CapabilityRouter Build(ILlmRegistryLevelResolver resolver, IOpenAiCompatibleClient upstream,
+		EndpointBreaker breaker, ILogger<CapabilityRouter> logger) =>
+		new(resolver, new CertPinningHttpClientProvider(), upstream, breaker, logger);
+
 
 	[Fact]
 	public async Task Falls_back_to_secondary_on_transient_failure()
@@ -132,7 +154,7 @@ public sealed class CapabilityRouterTests
 		// primary not registered -> would throw KeyNotFound if (wrongly) attempted.
 		upstream.EmbedBehaviour["https://s"] = () => [[1f]];
 		var breaker = new EndpointBreaker(new FakeTimeProvider()) { FailureThreshold = 1 };
-		breaker.RecordFailure("primary"); // open it (threshold 1)
+		breaker.RecordFailure("primary", LlmCapability.Embed); // open it (threshold 1)
 		var router = Build(new FakeResolver(TwoEmbed()), upstream, breaker);
 
 		var res = await router.EmbedAsync("proj", new EmbedRequest(["x"]));
@@ -140,6 +162,132 @@ public sealed class CapabilityRouterTests
 		res.ServedBy.Endpoint.Should().Be("secondary");
 		res.ServedBy.AttemptCount.Should().Be(1, "the open primary was skipped, not attempted");
 		upstream.EmbedCalls.Should().Equal("https://s");
+	}
+
+	// ---- breaker scope (work llmrouter-breaker-scope-per-capability) ----
+	//
+	// Production measurement that motivated the change: on 2026-10-05 two Chat 429s
+	// (OpenRouter `free-models-per-min`, a PER-ENDPOINT budget) tripped the breaker for `openrouter`
+	// and held it 30 s, and Embed + Rerank traffic was served by the `home` fallback in that window
+	// with nothing in the log to explain it. A provider rate limit must not decide where the next
+	// embedding comes from.
+
+	[Fact]
+	public async Task A_chat_breaker_does_not_divert_the_embed_chain()
+	{
+		var upstream = new FakeUpstream { ChatReply = "from secondary" };
+		// A 429 — the provider answered, only Chat's budget is spent.
+		upstream.ChatBehaviour["https://p"] = () => new LlmUpstreamException(true, "HTTP 429", rateLimited: true);
+		upstream.EmbedBehaviour["https://p"] = () => [[1f]];
+		upstream.EmbedBehaviour["https://s"] = () => throw new LlmUpstreamException(true, "secondary down");
+		var breaker = new EndpointBreaker(new FakeTimeProvider()) { FailureThreshold = 1 };
+		var router = Build(new FakeResolver(ChatAndEmbed()), upstream, breaker);
+
+		// Chat fails on the primary leg -> its breaker opens for Chat only.
+		var chat = await router.ChatAsync("proj", new ChatRequest([new ChatMessage("user", "hi")]));
+		chat.ServedBy.Endpoint.Should().Be("secondary");
+
+		// Embed on the SAME endpoints must still try the primary first.
+		var embed = await router.EmbedAsync("proj", new EmbedRequest(["x"]));
+
+		embed.ServedBy.Endpoint.Should().Be("primary", "a chat RATE LIMIT must not move embedding traffic");
+		embed.ServedBy.AttemptCount.Should().Be(1);
+	}
+
+	[Fact]
+	public async Task An_embed_breaker_does_not_divert_the_chat_chain()
+	{
+		var upstream = new FakeUpstream { ChatReply = "ok" };
+		upstream.EmbedBehaviour["https://p"] = () => throw new LlmUpstreamException(true, "HTTP 429", rateLimited: true);
+		upstream.EmbedBehaviour["https://s"] = () => [[1f]];
+		var breaker = new EndpointBreaker(new FakeTimeProvider()) { FailureThreshold = 1 };
+		var router = Build(new FakeResolver(ChatAndEmbed()), upstream, breaker);
+
+		await router.EmbedAsync("proj", new EmbedRequest(["x"]));
+		var chat = await router.ChatAsync("proj", new ChatRequest([new ChatMessage("user", "hi")]));
+
+		chat.ServedBy.Endpoint.Should().Be("primary", "an embed 429 must not move chat traffic");
+		chat.ServedBy.AttemptCount.Should().Be(1);
+	}
+
+	// llm-fast-down, preserved end to end. An UNREACHABLE host must still be skipped for every
+	// capability — that is the feature the breaker exists for: a sleeping `home` costs one
+	// connect-timeout, not one per call. The scoping change must not have narrowed this away.
+	[Fact]
+	public async Task An_unreachable_endpoint_is_still_skipped_for_every_capability()
+	{
+		var upstream = new FakeUpstream { ChatReply = "ok" };
+		upstream.EmbedBehaviour["https://p"] = () => throw new LlmUpstreamException(true, "connection failed: refused");
+		upstream.ChatBehaviour["https://p"] = () => new LlmUpstreamException(true, "connection failed: refused");
+		upstream.EmbedBehaviour["https://s"] = () => [[1f]];
+		upstream.ChatBehaviour["https://s"] = () => (Exception?)null;
+		var breaker = new EndpointBreaker(new FakeTimeProvider()) { FailureThreshold = 1 };
+		var router = Build(new FakeResolver(ChatAndEmbed()), upstream, breaker);
+
+		// Embed trips the endpoint-wide breaker on the connect failure...
+		var embed = await router.EmbedAsync("proj", new EmbedRequest(["x"]));
+		embed.ServedBy.Endpoint.Should().Be("secondary");
+
+		// ...and chat on the SAME endpoint must then be skipped too, not pay another connect.
+		var chat = await router.ChatAsync("proj", new ChatRequest([new ChatMessage("user", "hi")]));
+
+		chat.ServedBy.Endpoint.Should().Be("secondary");
+		chat.ServedBy.AttemptCount.Should().Be(1, "the asleep host was skipped, not attempted");
+	}
+
+	// The two skip kinds are different facts and must not be logged as one event: "the host is
+	// unreachable" and "this capability is out of quota" lead to different operator actions.
+	[Fact]
+	public async Task Throttled_and_unreachable_skips_are_logged_as_different_events()
+	{
+		var upstream = new FakeUpstream();
+		upstream.EmbedBehaviour["https://p"] = () => throw new LlmUpstreamException(true, "HTTP 429", rateLimited: true);
+		upstream.EmbedBehaviour["https://s"] = () => [[1f]];
+		var breaker = new EndpointBreaker(new FakeTimeProvider()) { FailureThreshold = 1, OpenDuration = TimeSpan.FromSeconds(42) };
+		var log = new CapturingLogger<CapabilityRouter>();
+		var router = Build(new FakeResolver(TwoEmbed()), upstream, breaker, log);
+
+		await router.EmbedAsync("proj", new EmbedRequest(["x"]));   // primary 429s, secondary serves
+		upstream.EmbedBehaviour["https://p"] = () => [[1f]];        // would now succeed — but is skipped
+		await router.EmbedAsync("proj", new EmbedRequest(["x"]));
+
+		var entry = log.Entries.Should().ContainSingle(e => e.EventId == 307).Subject;
+		entry.Level.Should().Be(MsLogLevel.Information, "Debug is invisible in production — that is part of the bug");
+		entry.Message.Should().Contain("primary").And.Contain("Embed").And.Contain("42").And.Contain("throttled");
+	}
+
+	[Fact]
+	public async Task An_unreachable_skip_is_logged_as_endpoint_wide()
+	{
+		var upstream = new FakeUpstream();
+		upstream.EmbedBehaviour["https://p"] = () => throw new LlmUpstreamException(true, "connection failed: refused");
+		upstream.EmbedBehaviour["https://s"] = () => [[1f]];
+		var breaker = new EndpointBreaker(new FakeTimeProvider()) { FailureThreshold = 1, OpenDuration = TimeSpan.FromSeconds(30) };
+		var log = new CapturingLogger<CapabilityRouter>();
+		var router = Build(new FakeResolver(TwoEmbed()), upstream, breaker, log);
+
+		await router.EmbedAsync("proj", new EmbedRequest(["x"]));   // primary unreachable, secondary serves
+		await router.EmbedAsync("proj", new EmbedRequest(["x"]));   // primary now skipped endpoint-wide
+
+		var entry = log.Entries.Should().ContainSingle(e => e.EventId == 301).Subject;
+		entry.Message.Should().Contain("UNREACHABLE").And.Contain("all capabilities").And.Contain("primary");
+	}
+
+	[Fact]
+	public async Task The_exhaustion_message_still_names_a_skipped_open_leg()
+	{
+		var upstream = new FakeUpstream(); // every embed throws below
+		upstream.EmbedBehaviour["https://p"] = () => throw new LlmUpstreamException(true, "down");
+		upstream.EmbedBehaviour["https://s"] = () => throw new LlmUpstreamException(true, "down");
+		var breaker = new EndpointBreaker(new FakeTimeProvider()) { FailureThreshold = 1, OpenDuration = TimeSpan.FromSeconds(30) };
+		var router = Build(new FakeResolver(TwoEmbed()), upstream, breaker);
+
+		// The first call fails on both legs (that is the point — it is what trips both breakers).
+		await Assert.ThrowsAsync<LlmRouterException>(() => router.EmbedAsync("proj", new EmbedRequest(["x"])));
+
+		var act = async () => await router.EmbedAsync("proj", new EmbedRequest(["x"]));
+		var ex = (await act.Should().ThrowAsync<LlmRouterException>()).Which;
+		ex.Message.Should().Contain("endpoint unreachable", "a skipped leg is still reported to the caller");
 	}
 
 	// ---- embed-space identity (llm-embed-space-id): the vector-index key is decoupled from the
@@ -471,12 +619,30 @@ public sealed class CapabilityRouterTests
 			return Task.FromResult(RerankBehaviour.TryGetValue(baseUrl, out var f) ? f(documents) : RerankReply);
 		}
 
+		// Per-endpoint chat failure (keyed by baseUrl), so "primary is down, secondary answers" is
+		// expressible — the shape that trips one leg's breaker without failing the whole chain.
+		public Dictionary<string, Func<Exception?>> ChatBehaviour { get; } = new(StringComparer.Ordinal);
+
 		public Task<string> ChatAsync(HttpClient http, string baseUrl, string? apiKey, string model, IReadOnlyList<ChatMessage> messages, double? temperature, int? maxTokens, LlmThinking? thinking, LlmReasoningEffort? reasoning, LlmResponseFormat? responseFormat, CancellationToken ct)
 		{
 			ChatThinking.Add(thinking);
 			ChatReasoning.Add(reasoning);
 			ChatResponseFormats.Add(responseFormat);
+			if (ChatBehaviour.TryGetValue(baseUrl, out var fail) && fail() is { } err)
+				return Task.FromException<string>(err);
 			return Task.FromResult(ChatReply);
 		}
+	}
+
+	sealed record LogEntry(MsLogLevel Level, int EventId, string Message);
+
+	sealed class CapturingLogger<T> : ILogger<T>
+	{
+		public List<LogEntry> Entries { get; } = [];
+		public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
+		public bool IsEnabled(MsLogLevel logLevel) => true;
+		public void Log<TState>(MsLogLevel logLevel, EventId eventId, TState state, Exception? exception,
+			Func<TState, Exception?, string> formatter) =>
+			Entries.Add(new LogEntry(logLevel, eventId.Id, formatter(state, exception)));
 	}
 }
