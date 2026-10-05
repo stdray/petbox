@@ -10,6 +10,12 @@ public sealed class LlmRegistryJsonTests
 {
 	static readonly JsonSerializerOptions Json = new(JsonSerializerDefaults.Web);
 
+	// AGENTS.md: never silence the typechecker — a null-forgiving `!` on a Deserialize is an
+	// assertion about the SUT in disguise. This throws with the reason instead.
+	static LlmRegistry Parse(string json) =>
+		JsonSerializer.Deserialize<LlmRegistry>(json, Json)
+		?? throw new InvalidOperationException("the payload is not a registry: " + json);
+
 	[Fact]
 	public void Route_thinking_roundtrips_and_defaults_to_null()
 	{
@@ -178,7 +184,7 @@ public sealed class LlmRegistryJsonTests
 			 "routes":[{"capability":"chat","endpoint":"openrouter","model":"m","reasoning":"none"}]}
 			""";
 
-		var parsed = JsonSerializer.Deserialize<LlmRegistry>(json, Json)!;
+		var parsed = Parse(json);
 
 		parsed.Routes[0].Reasoning.Should().Be(LlmReasoningEffort.None);
 	}

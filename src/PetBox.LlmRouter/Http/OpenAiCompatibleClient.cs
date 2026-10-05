@@ -94,7 +94,12 @@ public sealed partial class OpenAiCompatibleClient : IOpenAiCompatibleClient
 		// carries Reasoning, and neither provider is documented to reject the other's field (unlike
 		// response_format below, which IS worth a defensive retry). Enum -> wire is the LOWER-CASE
 		// member name, which is what OpenRouter's effort vocabulary uses ("xhigh", not "XHigh").
-		if (reasoning is { } re)
+		// IsDefined is not paranoia about the wire: `Enum.TryParse("99")` SUCCEEDS and yields an
+		// undefined member, so a value that reached the registry by any parse-based path would
+		// otherwise go upstream as `effort: "99"` — a stored setting that turns into an upstream 400
+		// instead of being rejected where it was written. An undefined value is treated as absent
+		// (provider default), never as a number on the wire.
+		if (reasoning is { } re && Enum.IsDefined(re))
 			payload["reasoning"] = new { effort = re.ToString().ToLowerInvariant() };
 		if (responseFormat is not null) payload["response_format"] = ToWireFormat(responseFormat);
 

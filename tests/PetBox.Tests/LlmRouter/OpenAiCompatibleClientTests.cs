@@ -43,7 +43,7 @@ public sealed class OpenAiCompatibleClientTests
 
 		await client.ChatAsync(http, "https://o", null, "m", Messages, null, null, null, null, null, CancellationToken.None);
 
-		using var doc = JsonDocument.Parse(handler.LastBody!);
+		using var doc = JsonDocument.Parse(Body(handler));
 		doc.RootElement.TryGetProperty("reasoning", out _).Should().BeFalse();
 		doc.RootElement.TryGetProperty("thinking", out _).Should().BeFalse(
 			"the two switches are independent; setting neither sends neither");
@@ -63,8 +63,24 @@ public sealed class OpenAiCompatibleClientTests
 
 		await client.ChatAsync(http, "https://o", null, "m", Messages, null, null, null, effort, null, CancellationToken.None);
 
-		using var doc = JsonDocument.Parse(handler.LastBody!);
+		using var doc = JsonDocument.Parse(Body(handler));
 		doc.RootElement.GetProperty("reasoning").GetProperty("effort").GetString().Should().Be(wire);
+	}
+
+	// Review finding (work llmrouter-reasoning-param-passthrough): `Enum.TryParse("99")`
+	// SUCCEEDS and yields an undefined member. Without this guard that value renders as
+	// `effort: "99"` and turns a saved setting into an upstream 400 at call time; with it, the
+	// undefined value is treated as absent, which is what "not a setting I understand" means.
+	[Fact]
+	public async Task An_undefined_reasoning_value_is_not_sent_upstream()
+	{
+		var (client, http, handler) = Build();
+
+		await client.ChatAsync(http, "https://o", null, "m", Messages, null, null, null,
+			(LlmReasoningEffort)99, null, CancellationToken.None);
+
+		using var doc = JsonDocument.Parse(Body(handler));
+		doc.RootElement.TryGetProperty("reasoning", out _).Should().BeFalse();
 	}
 
 	[Fact]
@@ -75,10 +91,16 @@ public sealed class OpenAiCompatibleClientTests
 		await client.ChatAsync(http, "https://o", null, "m", Messages, null, null,
 			LlmThinking.Enabled, LlmReasoningEffort.None, null, CancellationToken.None);
 
-		using var doc = JsonDocument.Parse(handler.LastBody!);
+		using var doc = JsonDocument.Parse(Body(handler));
 		doc.RootElement.GetProperty("thinking").GetProperty("type").GetString().Should().Be("enabled");
 		doc.RootElement.GetProperty("reasoning").GetProperty("effort").GetString().Should().Be("none");
 	}
+
+	// AGENTS.md: never silence the typechecker. CapturingHandler.LastBody is null until a request
+	// actually lands, so the old `handler.LastBody!` was an assertion about the SUT wearing a
+	// non-null-forgiving operator. This throws with the reason instead.
+	static string Body(CapturingHandler handler) =>
+		handler.LastBody ?? throw new InvalidOperationException("no request body was captured");
 
 	[Fact]
 	public async Task NullResponseFormat_PayloadHasNoResponseFormatKey()
@@ -87,7 +109,7 @@ public sealed class OpenAiCompatibleClientTests
 
 		await client.ChatAsync(http, "https://d", null, "m", Messages, null, null, null, null, null, CancellationToken.None);
 
-		using var doc = JsonDocument.Parse(handler.LastBody!);
+		using var doc = JsonDocument.Parse(Body(handler));
 		doc.RootElement.TryGetProperty("response_format", out _).Should().BeFalse();
 	}
 
@@ -99,7 +121,7 @@ public sealed class OpenAiCompatibleClientTests
 		await client.ChatAsync(http, "https://d", null, "m", Messages, null, null, null, null,
 			LlmResponseFormat.JsonObject.Instance, CancellationToken.None);
 
-		using var doc = JsonDocument.Parse(handler.LastBody!);
+		using var doc = JsonDocument.Parse(Body(handler));
 		var rf = doc.RootElement.GetProperty("response_format");
 		rf.GetProperty("type").GetString().Should().Be("json_object");
 	}
@@ -113,7 +135,7 @@ public sealed class OpenAiCompatibleClientTests
 		await client.ChatAsync(http, "https://d", null, "m", Messages, null, null, null, null,
 			new LlmResponseFormat.JsonSchema("facts_envelope", schema), CancellationToken.None);
 
-		using var doc = JsonDocument.Parse(handler.LastBody!);
+		using var doc = JsonDocument.Parse(Body(handler));
 		var rf = doc.RootElement.GetProperty("response_format");
 		rf.GetProperty("type").GetString().Should().Be("json_schema");
 		var js = rf.GetProperty("json_schema");

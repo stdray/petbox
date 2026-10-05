@@ -140,7 +140,10 @@ public sealed class IndexModel : PageModel
 			string.IsNullOrWhiteSpace(tier) ? null : tier.Trim(),
 			Enum.TryParse<LlmThinking>(thinking, ignoreCase: true, out var th) ? th : null,
 			null,
-			Enum.TryParse<LlmReasoningEffort>(reasoning, ignoreCase: true, out var re) ? re : null);
+			// IsDefined for the same reason as in the resolver: TryParse alone accepts "99" as an
+			// undefined member, and the UI would then store a value no reader can honour. An empty
+			// field means "provider default" and is the only accepted "unset".
+			Enum.TryParse<LlmReasoningEffort>(reasoning, ignoreCase: true, out var re) && Enum.IsDefined(re) ? re : null);
 
 		var routes = view.Routes.ToList();
 		if (string.IsNullOrWhiteSpace(routeId))

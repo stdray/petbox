@@ -223,7 +223,11 @@ public sealed partial class LlmRegistryLevelResolver : ILlmRegistryLevelResolver
 			LlmReasoningEffort? reasoning = null;
 			if (row.Reasoning is not null)
 			{
-				if (!Enum.TryParse<LlmReasoningEffort>(row.Reasoning, ignoreCase: true, out var parsed))
+				// IsDefined, not just TryParse: TryParse("99") SUCCEEDS and hands back an undefined
+				// member, which would then be rendered as effort "99" upstream — an invalid setting
+				// that behaves as a 400 at call time instead of being rejected where it was read.
+				if (!Enum.TryParse<LlmReasoningEffort>(row.Reasoning, ignoreCase: true, out var parsed)
+					|| !Enum.IsDefined(parsed))
 				{
 					LogUnparsableRoute(_log, row.Id, "Reasoning", row.Reasoning, level.ToString());
 					continue;
