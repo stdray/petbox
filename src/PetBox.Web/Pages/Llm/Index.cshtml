@@ -179,6 +179,14 @@
 									<option value="enabled" selected="@(r.Thinking == PetBox.LlmRouter.Contract.LlmThinking.Enabled)">enabled</option>
 									<option value="disabled" selected="@(r.Thinking == PetBox.LlmRouter.Contract.LlmThinking.Disabled)">disabled</option>
 								</select></label>
+							<label class="form-control"><span class="label-text">Reasoning</span>
+								<select class="select select-bordered select-sm" name="reasoning">
+									<option value="" selected="@(r.Reasoning is null)">(provider default)</option>
+									@foreach (var effort in Enum.GetValues<PetBox.LlmRouter.Contract.LlmReasoningEffort>())
+									{
+										<option value="@effort" selected="@(r.Reasoning == effort)">@effort</option>
+									}
+								</select></label>
 							<div><button type="submit" class="btn btn-sm btn-primary" data-testid="llm-route-save">Save</button></div>
 						</form>
 						<form method="post" asp-page-handler="DeleteRoute" onsubmit="return confirm('Delete this route?')">
@@ -230,6 +238,14 @@
 								<option value="">(provider default)</option>
 								<option value="enabled">enabled</option>
 								<option value="disabled">disabled</option>
+							</select></label>
+						<label class="form-control"><span class="label-text">Reasoning</span>
+							<select class="select select-bordered select-sm" name="reasoning">
+								<option value="">(provider default)</option>
+								@foreach (var effort in Enum.GetValues<PetBox.LlmRouter.Contract.LlmReasoningEffort>())
+								{
+									<option value="@effort">@effort</option>
+								}
 							</select></label>
 						<div><button type="submit" class="btn btn-sm btn-primary" data-testid="llm-route-add-save">Add</button></div>
 					</form>

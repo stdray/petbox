@@ -123,7 +123,7 @@ public sealed class IndexModel : PageModel
 	// or replaced by someone else, and silently re-creating it is how a deleted route comes back.
 	public async Task<IActionResult> OnPostSaveRouteAsync(
 		LlmCapability capability, string endpoint, string model, int priority, string? tier,
-		string? thinking, string? routeId, long version = 0, CancellationToken ct = default)
+		string? thinking, string? reasoning, string? routeId, long version = 0, CancellationToken ct = default)
 	{
 		if (!_features.IsEnabled(Feature.LlmRouter)) return NotFound();
 		if (!await ProjectExistsAsync(ct)) { ProjectNotFound = true; return Page(); }
@@ -138,7 +138,9 @@ public sealed class IndexModel : PageModel
 			capability, endpoint.Trim(), model.Trim(),
 			priority <= 0 ? 100 : priority,
 			string.IsNullOrWhiteSpace(tier) ? null : tier.Trim(),
-			Enum.TryParse<LlmThinking>(thinking, ignoreCase: true, out var th) ? th : null);
+			Enum.TryParse<LlmThinking>(thinking, ignoreCase: true, out var th) ? th : null,
+			null,
+			Enum.TryParse<LlmReasoningEffort>(reasoning, ignoreCase: true, out var re) ? re : null);
 
 		var routes = view.Routes.ToList();
 		if (string.IsNullOrWhiteSpace(routeId))

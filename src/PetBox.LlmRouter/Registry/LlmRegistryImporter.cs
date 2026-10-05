@@ -204,6 +204,7 @@ public sealed partial class LlmRegistryImporter
 				Tier = r.Tier,
 				Thinking = r.Thinking?.ToString(),
 				EmbedSpaceId = r.EmbedSpaceId,
+				Reasoning = r.Reasoning?.ToString(),
 				UpdatedAt = now,
 				UpdatedBy = null,
 			});

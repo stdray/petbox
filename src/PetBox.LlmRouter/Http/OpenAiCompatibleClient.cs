@@ -75,7 +75,8 @@ public sealed partial class OpenAiCompatibleClient : IOpenAiCompatibleClient
 	public async Task<string> ChatAsync(
 		HttpClient http, string baseUrl, string? apiKey, string model,
 		IReadOnlyList<ChatMessage> messages, double? temperature, int? maxTokens,
-		LlmThinking? thinking, LlmResponseFormat? responseFormat, CancellationToken ct)
+		LlmThinking? thinking, LlmReasoningEffort? reasoning, LlmResponseFormat? responseFormat,
+		CancellationToken ct)
 	{
 		var payload = new Dictionary<string, object>
 		{
@@ -87,6 +88,14 @@ public sealed partial class OpenAiCompatibleClient : IOpenAiCompatibleClient
 		// DeepSeek-dialect reasoning switch; absent = provider default (llm-route-reasoning-mode).
 		if (thinking is { } th)
 			payload["thinking"] = new { type = th == LlmThinking.Enabled ? "enabled" : "disabled" };
+		// OpenRouter-dialect reasoning control, and a DIFFERENT dialect from the line above: this is
+		// the only one that model actually reads. Both are rendered when both are set, because the
+		// two live on different providers — a DeepSeek route carries Thinking, an OpenRouter route
+		// carries Reasoning, and neither provider is documented to reject the other's field (unlike
+		// response_format below, which IS worth a defensive retry). Enum -> wire is the LOWER-CASE
+		// member name, which is what OpenRouter's effort vocabulary uses ("xhigh", not "XHigh").
+		if (reasoning is { } re)
+			payload["reasoning"] = new { effort = re.ToString().ToLowerInvariant() };
 		if (responseFormat is not null) payload["response_format"] = ToWireFormat(responseFormat);
 
 		var url = Url(baseUrl, "/v1/chat/completions");

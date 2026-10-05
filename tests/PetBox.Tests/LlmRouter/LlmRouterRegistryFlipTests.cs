@@ -204,7 +204,7 @@ public sealed class LlmRouterRegistryFlipTests : IDisposable
 			string query, IReadOnlyList<string> documents, int? topN, CancellationToken ct) => throw new NotSupportedException();
 
 		public Task<string> ChatAsync(HttpClient http, string baseUrl, string? apiKey, string model,
-			IReadOnlyList<ChatMessage> messages, double? temperature, int? maxTokens, LlmThinking? thinking,
+			IReadOnlyList<ChatMessage> messages, double? temperature, int? maxTokens, LlmThinking? thinking, LlmReasoningEffort? reasoning,
 			LlmResponseFormat? responseFormat, CancellationToken ct) => throw new NotSupportedException();
 	}
 

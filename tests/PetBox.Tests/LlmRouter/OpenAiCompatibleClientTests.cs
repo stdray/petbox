@@ -29,12 +29,63 @@ public sealed class OpenAiCompatibleClientTests
 		return (new OpenAiCompatibleClient(), http, handler);
 	}
 
+	// work llmrouter-reasoning-param-passthrough — the WIRE contract of `reasoning`.
+	//
+	// The whole point of the field is that `reasoning` and `thinking` are different dialects, so
+	// these tests pin three things: a route that sets NEITHER sends neither (byte-for-byte today's
+	// payload — a caller who never opted in must not change shape), each is rendered in its own
+	// dialect when set, and the enum renders LOWER-CASE, because OpenRouter's effort vocabulary is
+	// "none|minimal|low|medium|high|xhigh|max" and "XHigh" would be an unrecognized value.
+	[Fact]
+	public async Task NullReasoning_PayloadHasNoReasoningKey()
+	{
+		var (client, http, handler) = Build();
+
+		await client.ChatAsync(http, "https://o", null, "m", Messages, null, null, null, null, null, CancellationToken.None);
+
+		using var doc = JsonDocument.Parse(handler.LastBody!);
+		doc.RootElement.TryGetProperty("reasoning", out _).Should().BeFalse();
+		doc.RootElement.TryGetProperty("thinking", out _).Should().BeFalse(
+			"the two switches are independent; setting neither sends neither");
+	}
+
+	[Theory]
+	[InlineData(LlmReasoningEffort.None, "none")]
+	[InlineData(LlmReasoningEffort.Minimal, "minimal")]
+	[InlineData(LlmReasoningEffort.Low, "low")]
+	[InlineData(LlmReasoningEffort.Medium, "medium")]
+	[InlineData(LlmReasoningEffort.High, "high")]
+	[InlineData(LlmReasoningEffort.XHigh, "xhigh")]
+	[InlineData(LlmReasoningEffort.Max, "max")]
+	public async Task Reasoning_RendersTheOpenRouterEffortVocabulary(LlmReasoningEffort effort, string wire)
+	{
+		var (client, http, handler) = Build();
+
+		await client.ChatAsync(http, "https://o", null, "m", Messages, null, null, null, effort, null, CancellationToken.None);
+
+		using var doc = JsonDocument.Parse(handler.LastBody!);
+		doc.RootElement.GetProperty("reasoning").GetProperty("effort").GetString().Should().Be(wire);
+	}
+
+	[Fact]
+	public async Task Thinking_And_Reasoning_RenderInTheirOwnDialects()
+	{
+		var (client, http, handler) = Build();
+
+		await client.ChatAsync(http, "https://o", null, "m", Messages, null, null,
+			LlmThinking.Enabled, LlmReasoningEffort.None, null, CancellationToken.None);
+
+		using var doc = JsonDocument.Parse(handler.LastBody!);
+		doc.RootElement.GetProperty("thinking").GetProperty("type").GetString().Should().Be("enabled");
+		doc.RootElement.GetProperty("reasoning").GetProperty("effort").GetString().Should().Be("none");
+	}
+
 	[Fact]
 	public async Task NullResponseFormat_PayloadHasNoResponseFormatKey()
 	{
 		var (client, http, handler) = Build();
 
-		await client.ChatAsync(http, "https://d", null, "m", Messages, null, null, null, null, CancellationToken.None);
+		await client.ChatAsync(http, "https://d", null, "m", Messages, null, null, null, null, null, CancellationToken.None);
 
 		using var doc = JsonDocument.Parse(handler.LastBody!);
 		doc.RootElement.TryGetProperty("response_format", out _).Should().BeFalse();
@@ -45,7 +96,7 @@ public sealed class OpenAiCompatibleClientTests
 	{
 		var (client, http, handler) = Build();
 
-		await client.ChatAsync(http, "https://d", null, "m", Messages, null, null, null,
+		await client.ChatAsync(http, "https://d", null, "m", Messages, null, null, null, null,
 			LlmResponseFormat.JsonObject.Instance, CancellationToken.None);
 
 		using var doc = JsonDocument.Parse(handler.LastBody!);
@@ -59,7 +110,7 @@ public sealed class OpenAiCompatibleClientTests
 		var (client, http, handler) = Build();
 		var schema = new { type = "object", properties = new { facts = new { type = "array" } } };
 
-		await client.ChatAsync(http, "https://d", null, "m", Messages, null, null, null,
+		await client.ChatAsync(http, "https://d", null, "m", Messages, null, null, null, null,
 			new LlmResponseFormat.JsonSchema("facts_envelope", schema), CancellationToken.None);
 
 		using var doc = JsonDocument.Parse(handler.LastBody!);
@@ -83,7 +134,7 @@ public sealed class OpenAiCompatibleClientTests
 		var log = new CapturingLogger<OpenAiCompatibleClient>();
 		var client = new OpenAiCompatibleClient(log);
 
-		var text = await client.ChatAsync(http, "https://deepseek.example", null, "deepseek-v4-pro", Messages, null, null, null,
+		var text = await client.ChatAsync(http, "https://deepseek.example", null, "deepseek-v4-pro", Messages, null, null, null, null,
 			LlmResponseFormat.JsonObject.Instance, CancellationToken.None);
 
 		text.Should().Be("recovered");
@@ -110,7 +161,7 @@ public sealed class OpenAiCompatibleClientTests
 		var http = new HttpClient(handler);
 		var client = new OpenAiCompatibleClient(); // no logger
 
-		var text = await client.ChatAsync(http, "https://d", null, "m", Messages, null, null, null,
+		var text = await client.ChatAsync(http, "https://d", null, "m", Messages, null, null, null, null,
 			LlmResponseFormat.JsonObject.Instance, CancellationToken.None);
 
 		text.Should().Be("recovered");
@@ -125,7 +176,7 @@ public sealed class OpenAiCompatibleClientTests
 		var log = new CapturingLogger<OpenAiCompatibleClient>();
 		var client = new OpenAiCompatibleClient(log);
 
-		var act = async () => await client.ChatAsync(http, "https://d", null, "m", Messages, null, null, null,
+		var act = async () => await client.ChatAsync(http, "https://d", null, "m", Messages, null, null, null, null,
 			LlmResponseFormat.JsonObject.Instance, CancellationToken.None);
 
 		var ex = (await act.Should().ThrowAsync<LlmUpstreamException>()).Which;

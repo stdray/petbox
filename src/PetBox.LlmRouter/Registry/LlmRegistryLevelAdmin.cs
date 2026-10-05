@@ -64,7 +64,8 @@ public sealed class LlmRegistryLevelAdmin : ILlmRegistryLevelAdmin
 				r.Priority,
 				r.Tier,
 				r.Thinking is null ? null : Enum.Parse<LlmThinking>(r.Thinking, ignoreCase: true),
-				r.EmbedSpaceId)))
+				r.EmbedSpaceId,
+				r.Reasoning is null ? null : Enum.Parse<LlmReasoningEffort>(r.Reasoning, ignoreCase: true))))
 			.ToList();
 
 		return new LlmLevelSnapshot(endpoints, routes);
@@ -196,6 +197,7 @@ public sealed class LlmRegistryLevelAdmin : ILlmRegistryLevelAdmin
 			Tier = r.Route.Tier,
 			Thinking = r.Route.Thinking?.ToString(),
 			EmbedSpaceId = r.Route.EmbedSpaceId,
+			Reasoning = r.Route.Reasoning?.ToString(),
 			UpdatedAt = now,
 			UpdatedBy = updatedBy,
 		}).ToList();
@@ -291,7 +293,7 @@ public sealed class LlmRegistryLevelAdmin : ILlmRegistryLevelAdmin
 	}
 
 	static string RouteContentKey(LlmRouteRow r) =>
-		string.Join('', r.Capability, r.Endpoint, r.Model, r.Priority, r.Tier ?? "", r.Thinking ?? "", r.EmbedSpaceId ?? "");
+		string.Join('', r.Capability, r.Endpoint, r.Model, r.Priority, r.Tier ?? "", r.Thinking ?? "", r.EmbedSpaceId ?? "", r.Reasoning ?? "");
 
 	// 0 = this level has never been written (it "declares nothing yet").
 	static async Task<long> VersionAsync(PetBoxDb db, string scope, string scopeKey, CancellationToken ct) =>

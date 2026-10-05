@@ -168,7 +168,7 @@ public sealed class LlmAdminPageTests : IDisposable
 		var reg = new FakeEditor { Endpoints = [new LlmEndpoint("deepseek", "https://d")] };
 		var page = Page(reg);
 
-		var result = await page.OnPostSaveRouteAsync(LlmCapability.Chat, "deepseek", "deepseek-chat", 50, tier: null, thinking: null, routeId: null);
+		var result = await page.OnPostSaveRouteAsync(LlmCapability.Chat, "deepseek", "deepseek-chat", 50, tier: null, thinking: null, reasoning: null, routeId: null);
 
 		result.Should().BeOfType<RedirectToPageResult>();
 		reg.Routes.Should().ContainSingle(r =>
@@ -186,7 +186,7 @@ public sealed class LlmAdminPageTests : IDisposable
 		};
 		var page = Page(reg);
 
-		await page.OnPostSaveRouteAsync(LlmCapability.Chat, "cloud", "new-model", 10, tier: "fast", thinking: "disabled", routeId: "r1");
+		await page.OnPostSaveRouteAsync(LlmCapability.Chat, "cloud", "new-model", 10, tier: "fast", thinking: "disabled", reasoning: null, routeId: "r1");
 
 		reg.Routes.Should().ContainSingle();
 		reg.Routes[0].Id.Should().Be("r1", "an edit keeps the row's identity");
@@ -214,7 +214,7 @@ public sealed class LlmAdminPageTests : IDisposable
 		var page = Page(reg);
 
 		// This admin's form still carries the baseline (3) from before the other admin's save landed.
-		var result = await page.OnPostSaveRouteAsync(LlmCapability.Chat, "home", "my-stale-edit", 100, null, null, routeId: "r1", version: 3);
+		var result = await page.OnPostSaveRouteAsync(LlmCapability.Chat, "home", "my-stale-edit", 100, null, null, null, routeId: "r1", version: 3);
 
 		result.Should().BeOfType<PageResult>();
 		page.Error.Should().Contain("changed by someone else");
@@ -240,7 +240,7 @@ public sealed class LlmAdminPageTests : IDisposable
 		var page = Page(reg);
 
 		// The form was rendered when "id-b" was at index 1; it is now at index 0.
-		await page.OnPostSaveRouteAsync(LlmCapability.Embed, "home", "b-model-v2", 200, null, null, routeId: "id-b");
+		await page.OnPostSaveRouteAsync(LlmCapability.Embed, "home", "b-model-v2", 200, null, null, null, routeId: "id-b");
 
 		reg.Routes.Single(r => r.Id == "id-b").Route.Model.Should().Be("b-model-v2");
 		reg.Routes.Single(r => r.Id == "id-a").Route.Model.Should().Be("a-model", "the neighbouring row must be untouched");
@@ -252,7 +252,7 @@ public sealed class LlmAdminPageTests : IDisposable
 		var reg = new FakeEditor { Endpoints = [new LlmEndpoint("home", "https://h")] };
 		var page = Page(reg);
 
-		var result = await page.OnPostSaveRouteAsync(LlmCapability.Chat, "home", "m", 100, null, null, routeId: "gone");
+		var result = await page.OnPostSaveRouteAsync(LlmCapability.Chat, "home", "m", 100, null, null, null, routeId: "gone");
 
 		result.Should().BeOfType<PageResult>();
 		page.Error.Should().Contain("no longer exists");
@@ -265,7 +265,7 @@ public sealed class LlmAdminPageTests : IDisposable
 		var reg = new FakeEditor();
 		var page = Page(reg);
 
-		var result = await page.OnPostSaveRouteAsync(LlmCapability.Chat, "  ", "m", 100, null, null, null);
+		var result = await page.OnPostSaveRouteAsync(LlmCapability.Chat, "  ", "m", 100, null, null, null, null);
 
 		result.Should().BeOfType<PageResult>();
 		page.Error.Should().NotBeNullOrEmpty();
@@ -278,7 +278,7 @@ public sealed class LlmAdminPageTests : IDisposable
 		var reg = new FakeEditor { ThrowOnSave = new ValidationException([new ValidationFailure("Routes", "unknown endpoint 'ghost'")]) };
 		var page = Page(reg);
 
-		var result = await page.OnPostSaveRouteAsync(LlmCapability.Chat, "ghost", "m", 100, null, null, null);
+		var result = await page.OnPostSaveRouteAsync(LlmCapability.Chat, "ghost", "m", 100, null, null, null, null);
 
 		result.Should().BeOfType<PageResult>();
 		page.Error.Should().Contain("unknown endpoint");
@@ -354,7 +354,7 @@ public sealed class LlmAdminPageTests : IDisposable
 		var result = what switch
 		{
 			"endpoint" => await page.OnPostSaveAsync("home", "https://evil", null, 2000, 60000, null),
-			"route" => await page.OnPostSaveRouteAsync(LlmCapability.Chat, "home", "m", 100, null, null, "id-a"),
+			"route" => await page.OnPostSaveRouteAsync(LlmCapability.Chat, "home", "m", 100, null, null, null, "id-a"),
 			"delete-route" => await page.OnPostDeleteRouteAsync("id-a"),
 			_ => await page.OnPostDeleteAsync("home"),
 		};

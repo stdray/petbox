@@ -354,6 +354,41 @@ public sealed class CapabilityRouterTests
 		upstream.ChatThinking.Should().Equal((LlmThinking?)null);
 	}
 
+	// work llmrouter-reasoning-param-passthrough: the router must carry the route's reasoning
+	// control all the way to the upstream call, exactly as it does for thinking — a field that
+	// stops at the registry fixes nothing.
+	[Fact]
+	public async Task Chat_passes_route_reasoning_to_upstream()
+	{
+		var reg = Level(
+			new LlmRegistry(
+				[new LlmEndpoint("openrouter", "https://o")],
+				[new LlmRoute(LlmCapability.Chat, "openrouter", "ling-free", 10, Reasoning: LlmReasoningEffort.None)]));
+		var upstream = new FakeUpstream { ChatReply = "ok" };
+		var router = Build(new FakeResolver(reg), upstream, new EndpointBreaker(new FakeTimeProvider()));
+
+		var res = await router.ChatAsync("proj", new ChatRequest([new ChatMessage("user", "hi")]));
+
+		res.Text.Should().Be("ok");
+		upstream.ChatReasoning.Should().Equal(LlmReasoningEffort.None);
+		upstream.ChatThinking.Should().Equal((LlmThinking?)null); // reasoning does not imply thinking
+	}
+
+	[Fact]
+	public async Task Chat_without_reasoning_passes_null()
+	{
+		var reg = Level(
+			new LlmRegistry(
+				[new LlmEndpoint("openrouter", "https://o")],
+				[new LlmRoute(LlmCapability.Chat, "openrouter", "m", 10)]));
+		var upstream = new FakeUpstream { ChatReply = "ok" };
+		var router = Build(new FakeResolver(reg), upstream, new EndpointBreaker(new FakeTimeProvider()));
+
+		await router.ChatAsync("proj", new ChatRequest([new ChatMessage("user", "hi")]));
+
+		upstream.ChatReasoning.Should().Equal((LlmReasoningEffort?)null);
+	}
+
 	[Fact]
 	public async Task Chat_passes_request_response_format_to_upstream()
 	{
@@ -415,6 +450,7 @@ public sealed class CapabilityRouterTests
 		public List<string> EmbedCalls { get; } = [];
 		public string ChatReply { get; init; } = "";
 		public List<LlmThinking?> ChatThinking { get; } = [];
+		public List<LlmReasoningEffort?> ChatReasoning { get; } = [];
 		public List<LlmResponseFormat?> ChatResponseFormats { get; } = [];
 		public IReadOnlyList<RerankHit> RerankReply { get; init; } = [];
 		// Per-endpoint rerank behaviour (keyed by baseUrl) — a func of the chunk's documents so a
@@ -435,9 +471,10 @@ public sealed class CapabilityRouterTests
 			return Task.FromResult(RerankBehaviour.TryGetValue(baseUrl, out var f) ? f(documents) : RerankReply);
 		}
 
-		public Task<string> ChatAsync(HttpClient http, string baseUrl, string? apiKey, string model, IReadOnlyList<ChatMessage> messages, double? temperature, int? maxTokens, LlmThinking? thinking, LlmResponseFormat? responseFormat, CancellationToken ct)
+		public Task<string> ChatAsync(HttpClient http, string baseUrl, string? apiKey, string model, IReadOnlyList<ChatMessage> messages, double? temperature, int? maxTokens, LlmThinking? thinking, LlmReasoningEffort? reasoning, LlmResponseFormat? responseFormat, CancellationToken ct)
 		{
 			ChatThinking.Add(thinking);
+			ChatReasoning.Add(reasoning);
 			ChatResponseFormats.Add(responseFormat);
 			return Task.FromResult(ChatReply);
 		}

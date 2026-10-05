@@ -43,7 +43,7 @@ namespace PetBox.Web.Mcp;
 public static class LlmRouterTools
 {
 	// Web defaults: camelCase PROPERTY names, case-insensitive property matching. Enum VALUES are a
-	// separate axis — LlmCapability/LlmThinking carry a JsonStringEnumConverter with no naming
+	// separate axis — LlmCapability/LlmThinking/LlmReasoningEffort carry a JsonStringEnumConverter with no naming
 	// policy, so they WRITE the declared member name ("Embed" / "Disabled") and READ any casing
 	// (Enum.TryParse with ignoreCase). That asymmetry is why llm_config_get's Capitalized output
 	// feeds back into llm_config_upsert unchanged; LlmRegistryJsonTests pins both directions.
@@ -117,14 +117,20 @@ public static class LlmRouterTools
 		    concurrent edit a conflict instead of a silent overwrite.
 		`config` is a JSON object:
 		  { "endpoints": [ { "name", "baseUrl", "certThumbprint"?, "connectTimeoutMs"?, "requestTimeoutMs"? } ]?,  // omit = keep existing, [] = clear
-		    "routes":    [ { "capability": "embed|rerank|chat", "endpoint", "model", "priority"?, "tier"?, "thinking": "enabled|disabled"?, "embedSpaceId"? } ]?,  // omit = keep existing, [] = clear
+		    "routes":    [ { "capability": "embed|rerank|chat", "endpoint", "model", "priority"?, "tier"?, "thinking": "enabled|disabled"?, "reasoning": "none|minimal|low|medium|high|xhigh|max"?, "embedSpaceId"? } ]?,  // omit = keep existing, [] = clear
 		    // embedSpaceId (embed routes only): the canonical vector-index key. Omit/null = use model.
 		    // Give two embed routes the SAME embedSpaceId to make their vectors share one index space.
 		    "apiKeys":   { "<endpointName>": "<apiKey>" }?  // write-only, stored encrypted; an endpoint absent here keeps its stored key }
-		`capability` and `thinking` are CASE-INSENSITIVE on input: "embed" and "Embed" both parse, as
+		`capability`, `thinking` and `reasoning` are CASE-INSENSITIVE on input: "embed" and "Embed" both parse, as
 		do "disabled" and "Disabled". llm_config_get emits them Capitalized ("Embed" / "Disabled"),
 		so its output can be edited and fed straight back — read-modify-write is the intended and
 		safe cycle, and it does not need case conversion in between.
+		`thinking` and `reasoning` are DIFFERENT provider dialects for the same wish, on CHAT routes:
+		`thinking` is DeepSeek's `thinking:{type:enabled|disabled}`, `reasoning` is OpenRouter's
+		`reasoning:{effort:...}`. OMITTING either means "provider default" — which for most reasoning
+		models is ON, not off. Set `reasoning:"none"` on an OpenRouter chat route whose reasoning
+		eats a small `maxTokens`: reasoning tokens are billed against the same budget, so a
+		reasoning model can spend all of it thinking and answer with an EMPTY string.
 		The MERGED registry (kept parts + sent parts) is validated as a whole before anything is
 		written — an unknown endpoint in a route, a bad URL, etc. is an error and nothing changes.
 		Returns { ok, endpoints, routes, version, level } — `version` is the new baseline for your

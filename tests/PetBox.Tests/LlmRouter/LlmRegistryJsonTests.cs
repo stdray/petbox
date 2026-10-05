@@ -149,4 +149,64 @@ public sealed class LlmRegistryJsonTests
 
 		parsed.Routes[0].EmbedSpaceId.Should().BeNull();
 	}
+
+	// work llmrouter-reasoning-param-passthrough: `reasoning` is the OpenRouter dialect for the
+	// same wish `thinking` expresses in the DeepSeek dialect. Same three obligations as thinking —
+	// round-trip, lowercase parse, and null when absent — because the MCP surface's read-modify-write
+	// cycle is the only way an operator sets it.
+	[Fact]
+	public void Route_reasoning_roundtrips_and_defaults_to_null()
+	{
+		var reg = new LlmRegistry(
+			[new LlmEndpoint("openrouter", "https://o")],
+			[
+				new LlmRoute(LlmCapability.Chat, "openrouter", "inclusionai/ling-3.0-flash-sante:free", 10, Reasoning: LlmReasoningEffort.None),
+				new LlmRoute(LlmCapability.Chat, "openrouter", "openrouter/free", 20),
+			]);
+
+		var parsed = JsonSerializer.Deserialize<LlmRegistry>(JsonSerializer.Serialize(reg, Json), Json)!;
+
+		parsed.Routes[0].Reasoning.Should().Be(LlmReasoningEffort.None);
+		parsed.Routes[1].Reasoning.Should().BeNull("an absent field means 'provider default', which is NOT 'off'");
+	}
+
+	[Fact]
+	public void Route_reasoning_parses_lowercase_wire_form()
+	{
+		const string json = """
+			{"endpoints":[{"name":"openrouter","baseUrl":"https://o"}],
+			 "routes":[{"capability":"chat","endpoint":"openrouter","model":"m","reasoning":"none"}]}
+			""";
+
+		var parsed = JsonSerializer.Deserialize<LlmRegistry>(json, Json)!;
+
+		parsed.Routes[0].Reasoning.Should().Be(LlmReasoningEffort.None);
+	}
+
+	[Fact]
+	public void Route_reasoning_serializes_as_the_declared_member_name()
+	{
+		var reg = new LlmRegistry(
+			[new LlmEndpoint("openrouter", "https://o")],
+			[new LlmRoute(LlmCapability.Chat, "openrouter", "m", 10, Reasoning: LlmReasoningEffort.XHigh)]);
+
+		var wire = JsonSerializer.Serialize(reg, Json);
+
+		wire.Should().Contain("\"reasoning\":\"XHigh\"");
+	}
+
+	// The two switches are INDEPENDENT axes, not one. A route may carry either, both, or neither —
+	// they are different provider dialects and each provider understands its own.
+	[Fact]
+	public void Route_carries_thinking_and_reasoning_independently()
+	{
+		var both = new LlmRoute(LlmCapability.Chat, "e", "m", 10,
+			Thinking: LlmThinking.Disabled, Reasoning: LlmReasoningEffort.None);
+		var neither = new LlmRoute(LlmCapability.Chat, "e", "m", 10);
+
+		both.Thinking.Should().Be(LlmThinking.Disabled);
+		both.Reasoning.Should().Be(LlmReasoningEffort.None);
+		neither.Thinking.Should().BeNull();
+		neither.Reasoning.Should().BeNull();
+	}
 }

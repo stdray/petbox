@@ -105,6 +105,58 @@ public sealed class LlmRegistryEditorTests : IDisposable
 		resolved.Registry.Routes.Should().ContainSingle().Which.Model.Should().Be("new-model");
 	}
 
+	// work llmrouter-reasoning-param-passthrough: the new column must survive the WHOLE path —
+	// llm_config_upsert JSON -> core.db row -> the resolver CapabilityRouter reads. A field that
+	// exists on the record but not in the row silently degrades to "provider default", i.e. reasoning
+	// ON, which is the exact failure this card exists to fix — so it is read back through the
+	// resolver, not merely asserted on the input record.
+	[Fact]
+	public async Task McpUpsert_roundtrips_route_reasoning_through_the_runtime_resolver()
+	{
+		var config = Json("""
+			{"endpoints":[{"name":"openrouter","baseUrl":"https://openrouter.ai/api"}],
+			 "routes":[{"capability":"chat","endpoint":"openrouter","model":"inclusionai/ling-3.0-flash-sante:free","priority":10,"reasoning":"none"},
+			           {"capability":"chat","endpoint":"openrouter","model":"openrouter/free","priority":20}]}
+			""");
+
+		var set = await LlmRouterTools.ConfigUpsertAsync(Http("llm:admin", Proj), Flags(), _editor, Proj, config);
+		set.Ok.Should().BeTrue();
+
+		var got = await LlmRouterTools.ConfigGetAsync(Http("llm:admin", Proj), Flags(), _editor, Proj);
+		got.Routes.Single(r => r.Model!.StartsWith("inclusionai")).Reasoning.Should().Be(LlmReasoningEffort.None);
+		got.Routes.Single(r => r.Model == "openrouter/free").Reasoning.Should().BeNull();
+
+		var resolved = await _resolver.ResolveAsync(Proj);
+		resolved.Registry.Routes.Single(r => r.Model!.StartsWith("inclusionai")).Reasoning
+			.Should().Be(LlmReasoningEffort.None, "the RUNTIME must see it — that is the only read that matters");
+		resolved.Registry.Routes.Single(r => r.Model == "openrouter/free").Reasoning.Should().BeNull();
+
+		_db.LlmRoutes.Single(r => r.Scope == nameof(Scope.Workspace) && r.ScopeKey == Ws && r.Model!.StartsWith("inclusionai"))
+			.Reasoning.Should().Be(nameof(LlmReasoningEffort.None), "stored as the enum member name");
+	}
+
+	// The dedup key the admin surface compares rows by must include the new field, or flipping a
+	// route's reasoning control would read as "nothing changed" and the write would be a silent
+	// no-op reported as success.
+	[Fact]
+	public async Task Changing_only_reasoning_is_not_treated_as_an_unchanged_level()
+	{
+		var first = await LlmRouterTools.ConfigUpsertAsync(Http("llm:admin", Proj), Flags(), _editor, Proj,
+			Json("""
+				{"endpoints":[{"name":"openrouter","baseUrl":"https://openrouter.ai/api"}],
+				 "routes":[{"capability":"chat","endpoint":"openrouter","model":"m","priority":10}]}
+				"""));
+
+		await LlmRouterTools.ConfigUpsertAsync(Http("llm:admin", Proj), Flags(), _editor, Proj,
+			Json("""
+				{"endpoints":[{"name":"openrouter","baseUrl":"https://openrouter.ai/api"}],
+				 "routes":[{"capability":"chat","endpoint":"openrouter","model":"m","priority":10,"reasoning":"none"}]}
+				"""),
+			version: first.Version);
+
+		(await _resolver.ResolveAsync(Proj)).Registry.Routes.Single().Reasoning.Should().Be(LlmReasoningEffort.None);
+	}
+
 	// ---- write semantics: an omitted part is KEPT, not wiped (work llm-config-upsert-full-replace-no-cas) ----
 
 	// THE CARD. An upsert that names only `routes` used to leave the level with ZERO endpoints — and
@@ -422,7 +474,7 @@ public sealed class LlmRegistryEditorTests : IDisposable
 		// llm-admin-page-no-cas — a page submit always quotes back the level's current version).
 		var currentVersion = (await _editor.GetDeclaredAsync(Proj)).Version;
 		var page = new IndexModel(_editor, Flags(), new ProjectDirectory(_db.Factory())) { WorkspaceKey = Ws, ProjectKey = Proj };
-		await page.OnPostSaveRouteAsync(LlmCapability.Chat, "home", "chat-model-v2", 50, null, null, editedId, currentVersion);
+		await page.OnPostSaveRouteAsync(LlmCapability.Chat, "home", "chat-model-v2", 50, null, null, null, editedId, currentVersion);
 
 		var after = await _editor.ViewAsync(Proj);
 		after.Routes.Single(r => r.Id == editedId).Route.Model.Should().Be("chat-model-v2");
@@ -477,7 +529,7 @@ public sealed class LlmRegistryEditorTests : IDisposable
 		var view = await _editor.ViewAsync(Proj);
 		var page = new IndexModel(_editor, Flags(), new ProjectDirectory(_db.Factory())) { WorkspaceKey = Ws, ProjectKey = Proj };
 
-		await page.OnPostSaveRouteAsync(LlmCapability.Chat, "home", "hijacked", 1, null, null, view.Routes[0].Id);
+		await page.OnPostSaveRouteAsync(LlmCapability.Chat, "home", "hijacked", 1, null, null, null, view.Routes[0].Id);
 
 		page.Error.Should().Contain("inherited");
 		_db.LlmRoutes.Count(r => r.Scope == nameof(Scope.Workspace) && r.ScopeKey == Ws)

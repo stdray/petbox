@@ -216,7 +216,22 @@ public sealed partial class LlmRegistryLevelResolver : ILlmRegistryLevelResolver
 				thinking = parsed;
 			}
 
-			routes.Add(new LlmRoute(capability, row.Endpoint, row.Model, row.Priority, row.Tier, thinking, row.EmbedSpaceId));
+			// Same contract as Thinking: an UNPARSABLE stored value drops the route rather than
+			// silently serving it with the switch off — a route whose reasoning the operator
+			// believes is disabled but which reasons anyway is exactly the silent-degradation case
+			// worth a warning and a missing route.
+			LlmReasoningEffort? reasoning = null;
+			if (row.Reasoning is not null)
+			{
+				if (!Enum.TryParse<LlmReasoningEffort>(row.Reasoning, ignoreCase: true, out var parsed))
+				{
+					LogUnparsableRoute(_log, row.Id, "Reasoning", row.Reasoning, level.ToString());
+					continue;
+				}
+				reasoning = parsed;
+			}
+
+			routes.Add(new LlmRoute(capability, row.Endpoint, row.Model, row.Priority, row.Tier, thinking, row.EmbedSpaceId, reasoning));
 		}
 
 		return routes;

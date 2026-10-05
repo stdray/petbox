@@ -72,6 +72,12 @@ public sealed record LlmRouteRow
 	[Column, Nullable] public string? Tier { get; init; }
 	[Column, Nullable] public string? Thinking { get; init; }
 
+	// CHAT-ONLY OpenRouter-dialect reasoning control (LlmRoute.Reasoning / LlmReasoningEffort):
+	// "None" | "Minimal" | … | "Max", stored as the enum member name. NULL = send no reasoning
+	// field, i.e. the provider default (which for most reasoning models is ON — "unset" is not
+	// "off"). Separate from Thinking, which is the DeepSeek dialect. Added by M056.
+	[Column, Nullable] public string? Reasoning { get; init; }
+
 	// EMBED-ONLY canonical vector-index key, decoupled from the provider Model (see LlmRoute.EmbedSpaceId).
 	// NULL = use Model (the pre-existing behaviour; existing vectors keyed by the home model name stay
 	// valid). Added by M046; older rows read back NULL, which is exactly the backward-compatible default.
