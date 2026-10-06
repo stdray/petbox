@@ -601,3 +601,36 @@ test("SessionStart banner renders the kit base when no layer directory exists (a
     rmSync(root, { recursive: true, force: true });
   }
 });
+
+// --- banner-greeting-idempotent-and-no-nudge-on-reload. The greeting rides in EVERY request,
+// and a weak local model obeyed it on every TURN: session 01a11072 opened 6 of its 6 completed
+// turns with `🧠 PetBox memory active` (user messages [5,44,85,90,104,112], banner replies
+// [6,46,87,91,105,113]). "Your FIRST response MUST open with" reads as a per-turn instruction,
+// and "is this my first response" is not a fact the model can check mid-run — so the fix is the
+// clause that asks about the VISIBLE history, which it can. Pin it on both branches that render
+// the greeting; dropping the greeting instead of gating it is a different decision (ideas board).
+test("the memory banner is gated by a history self-check in EVERY branch that renders it", () => {
+  for (const [harness, label] of [
+    ["claude-code", "orchestrator"],
+    ["pi", "main"],
+  ] as const) {
+    const text = buildProtocol(project, mcpPetboxTool, { harness });
+    assert.match(text, /🧠 PetBox memory active/, `${label}: the greeting itself must stay`);
+    assert.match(
+      text,
+      /if any earlier reply of yours in this conversation already contains/,
+      `${label}: greeting needs the history self-check the model can actually answer:\n${text}`,
+    );
+    assert.match(
+      text,
+      /must NOT open with it/,
+      `${label}: and an explicit prohibition, not a soft hint:\n${text}`,
+    );
+    // The self-intro shape is pinned elsewhere (· main / · orchestrator); assert only that the
+    // gating clause sits INSIDE the protocol block, i.e. it reaches the model with the banner.
+    assert.ok(
+      text.indexOf("Exactly once per session") > 0,
+      `${label}: gate must be part of the rendered protocol, not a comment`,
+    );
+  }
+});

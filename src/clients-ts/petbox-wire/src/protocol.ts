@@ -85,10 +85,19 @@ function buildSelfIntro(allowSpawn: boolean, definition: AgentDefinition, harnes
       harness === "opencode"
         ? " On opencode, `subagent` defaults to FOREGROUND — pass `background: true` or it blocks you for the child's whole run; the result still arrives on its own as a `synthetic` message."
         : "";
-    return `Your FIRST response MUST open with:
+    // The greeting is an idempotent SIGNATURE, not a salutation: measured live on session
+    // 01a11072 (7 user messages, 40 assistant replies) the model repeated it on the FIRST
+    // REPLY OF EVERY TURN — 6 of 6 completed turns — because the request carried
+    // "Your FIRST response MUST open with" on every single call and a weak model reads it
+    // as a per-turn instruction. The self-check clause below is what makes it decidable:
+    // "an earlier reply of mine already contains that line" is answerable from the visible
+    // history, unlike "is this my first response", which the model cannot know mid-run.
+    // Card: banner-greeting-idempotent-and-no-nudge-on-reload.
+    return `Your FIRST reply of this session MUST open with:
 \`🧠 PetBox memory active\`
 Then next line, your self-intro — exactly:
 \`<your model name> · orchestrator\` — + one sentence naming your working rules (search-before-rework, capture-as-you-go, respect the gates).
+Exactly once per session: if any earlier reply of yours in this conversation already contains \`🧠 PetBox memory active\`, this reply must NOT open with it — no banner, no greeting, not on a later turn, not after a resume.
 
 Spawn as \`${workerName}\`. Delegation rule and cost rationale: Orchestrator notes, point 2.${backgroundNote}
 
@@ -113,10 +122,17 @@ Orchestrator notes (from definition): ${notes}`;
   //
   // The self-intro stays. `· main` is an identity, not a capability claim, and it keeps the
   // banner's shape uniform across harnesses — protocol.test.ts pins both facts.
-  return `Your FIRST response MUST open with:
+  // The self-intro stays. `· main` is an identity, not a capability claim, and it keeps the
+  // banner's shape uniform across harnesses — protocol.test.ts pins both facts. The greeting
+  // ITSELF is gated the same way as the orchestrator branch above (see the measured defect and
+  // the card there): an instruction that reads "first response" on every request gets obeyed on
+  // every request, so the clause that makes it decidable is the one that says what to do when
+  // the line is already in the history.
+  return `Your FIRST reply of this session MUST open with:
 \`🧠 PetBox memory active\`
 Then next line, your self-intro — exactly:
-\`<your model name> · main\` — + one sentence naming your working rules (search-before-rework, capture-as-you-go, respect the gates).`;
+\`<your model name> · main\` — + one sentence naming your working rules (search-before-rework, capture-as-you-go, respect the gates).
+Exactly once per session: if any earlier reply of yours in this conversation already contains \`🧠 PetBox memory active\`, this reply must NOT open with it — no banner, no greeting, not on a later turn, not after a resume.`;
 }
 
 // Build the memory-protocol block for a project. `tool` maps a bare verb to the agent's

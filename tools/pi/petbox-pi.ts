@@ -306,7 +306,15 @@ export default function (pi: ExtensionAPI): void {
     try {
       mirror = null; // a fresh start always invalidates any previous session's cursor
       banner = null; // …and the previous project's banner (per-session, never per-process)
-      nudgeSent = false;
+      // `reload` re-emits session_start WITHOUT resuming anything: pi's `reload()` sends
+      // session_shutdown + session_start in the SAME process (agent-session.js:2970, the
+      // `/reload` command) — no restart, no lost context. Unconditionally clearing the flag
+      // here handed a "Session resume —" line to a conversation that was never interrupted,
+      // and the model then treats a reload as a real resume (measured: session 01a11072
+      // collected 2 nudges over 7 user messages). Every OTHER reason (startup/resume/new/fork)
+      // is a genuine continuation of the same conversation and still arms it. Card:
+      // banner-greeting-idempotent-and-no-nudge-on-reload.
+      if (event.reason !== "reload") nudgeSent = false;
       bannerAllowed = null;
       let resolved: ResolvedProject | null = null;
       try {
