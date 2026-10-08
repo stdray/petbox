@@ -15,7 +15,10 @@
         "comments_upsert": "direct",
         "tasks_methodology_guide": "direct",
         "memory_search": "direct",
-        "memory_remember": "direct"
+        "memory_remember": "direct",
+        "memory_store_list": "direct",
+        "memory_get": "direct",
+        "memory_upsert": "direct"
       }
     }
   }

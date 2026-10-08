@@ -1,0 +1,93 @@
+{
+  "subagents": {
+    "agentOverrides": {
+      "bonsai": {
+        "model": "llama-cpp/Ternary-Bonsai-2-27B-PQ2_0",
+        "tools": [
+          "read",
+          "grep",
+          "find",
+          "ls",
+          "bash",
+          "powershell",
+          "edit",
+          "write",
+          "mcp:petbox/tasks_search",
+          "mcp:petbox/tasks_node_get",
+          "mcp:petbox/tasks_upsert",
+          "mcp:petbox/tasks_delta",
+          "mcp:petbox/comments_upsert",
+          "mcp:petbox/tasks_methodology_guide",
+          "mcp:petbox/memory_search",
+          "mcp:petbox/memory_remember",
+          "mcp:petbox/memory_store_list",
+          "mcp:petbox/memory_get",
+          "mcp:petbox/memory_upsert"
+        ]
+      },
+      "worker": {
+        "model": "opencode-go/space-bunny-free",
+        "tools": [
+          "read",
+          "grep",
+          "find",
+          "ls",
+          "bash",
+          "powershell",
+          "edit",
+          "write",
+          "contact_supervisor",
+          "mcp:petbox/tasks_search",
+          "mcp:petbox/tasks_node_get",
+          "mcp:petbox/tasks_upsert",
+          "mcp:petbox/tasks_delta",
+          "mcp:petbox/comments_upsert",
+          "mcp:petbox/tasks_methodology_guide",
+          "mcp:petbox/memory_search",
+          "mcp:petbox/memory_remember",
+          "mcp:petbox/memory_store_list",
+          "mcp:petbox/memory_get",
+          "mcp:petbox/memory_upsert"
+        ]
+      },
+      "oracle": {
+        "model": "opencode-go/kimi-k3",
+        "tools": [
+          "read",
+          "grep",
+          "find",
+          "ls",
+          "bash",
+          "powershell",
+          "mcp:petbox/tasks_search",
+          "mcp:petbox/tasks_node_get",
+          "mcp:petbox/tasks_upsert",
+          "mcp:petbox/tasks_delta",
+          "mcp:petbox/comments_upsert",
+          "mcp:petbox/tasks_methodology_guide",
+          "mcp:petbox/memory_search",
+          "mcp:petbox/memory_remember",
+          "mcp:petbox/memory_store_list",
+          "mcp:petbox/memory_get",
+          "mcp:petbox/memory_upsert"
+        ]
+      },
+      "reviewer": {
+        "model": "openrouter/openai/gpt-6-luna",
+        "tools": [
+          "read",
+          "grep",
+          "find",
+          "ls",
+          "watchdog_diff",
+          "contact_supervisor",
+          "mcp:petbox/tasks_search",
+          "mcp:petbox/tasks_node_get",
+          "mcp:petbox/tasks_methodology_guide",
+          "mcp:petbox/memory_search",
+          "mcp:petbox/memory_get"
+        ]
+      }
+    }
+  }
+}
