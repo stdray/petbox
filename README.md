@@ -2,116 +2,140 @@
 
 # PetBox
 
-PetBox is a server that helps AI coding agents remember things and organize their work.
+PetBox is one server with two jobs.
+
+1. It helps AI coding agents remember things and organize their work.
+2. It is a small backend for your own projects: settings, logs and databases.
 
 An AI agent forgets everything when a chat ends. It does not know what it decided last week.
-It cannot tell which tasks are open. PetBox fixes this. It gives the agent a notebook, a task
-board and a set of tools, all in one service. I built it for my own projects, and I build PetBox
-using PetBox: its plan and tasks live on its own boards.
+PetBox gives it a notebook, a task board and a set of tools. A pet project also needs a place for
+its settings, its logs and its data. PetBox provides these too, so you do not run three services.
 
-It is a "modular monolith". That means one program made of clearly separated modules. You can
-switch each module on or off with a setting. A module that is off costs nothing.
+I built it for my own projects, and I build PetBox using PetBox. Its plan and tasks live on its
+own boards.
 
-## How the agent remembers
-
-### Sessions
-
-**Problem:** an agent works for hours, and the chat is lost afterward.
-**Solution:** the agent saves a transcript of each work session. A background job then writes a
-short summary of it, called a digest. Later, the agent can search old sessions to find why it
-made a decision.
-
-### Memory
-
-**Problem:** keyword search misses a note when you use different words. Meaning-based search
-misses exact names and error codes.
-**Solution:** PetBox runs both searches and merges the two result lists. The merge method is
-Reciprocal Rank Fusion (RRF): an item that ranks high in both lists wins. A language model can
-then reorder the top results.
-
-- Keyword search uses SQLite FTS5. Meaning-based search uses embeddings, which turn text into numbers.
-- The merge code is in `src/PetBox.Core/Search/HybridMerge.cs`.
-
-### History and duplicates
-
-**Problem:** agents change their notes, and sometimes an old note was right.
-**Solution:** PetBox never overwrites a note. It saves each change as a new revision and marks
-one revision as current. You can always see the old versions.
-
-**Problem:** agents save the same fact many times in different words.
-**Solution:** before saving a fact, PetBox compares it with the existing facts. It checks the
-exact text first. Then it checks the meaning. If the new fact is too close to an old one, PetBox
-does not save it again.
-
-### Observations
-
-**Problem:** an agent sees something broken, but it is not part of the current task. The finding
-is easy to lose.
-**Solution:** each project has a special board called observations. The agent writes the finding
-there. If another agent reports the same problem, PetBox does not add a copy. It counts how often
-the problem occurs. A person can later turn an observation into a real task. When the task is
-done, the observation closes. If the problem comes back, it opens again.
-
-## How the agent stays working
-
-### The LLM router
-
-**Problem:** the agent calls language models from several providers. A provider can be down or
-can limit how many requests you send.
-**Solution:** the router sends each request to the first provider that works. If that one fails,
-it tries the next. A "circuit breaker" stops requests to a failing provider for a short time.
-
-The breaker looks at the type of failure.
-
-- If the server is unreachable, the router skips the whole provider.
-- If the provider says "too many requests", the router skips only that one kind of request.
-
-We added this rule after a real incident. A limit on chat requests had silently pushed
-embedding requests to a backup server.
-
-### Tools for agents (MCP)
-
-**Problem:** PetBox has more than 100 tools. If you show all of them, the agent gets confused.
-Some tools can change data, so not every agent should use them.
-**Solution:** MCP is a standard way for an agent to call tools. Each API key gets a list of
-permissions, called scopes. For example, the scope `tasks:write` allows changing tasks.
-
-- **Discovery.** The tool list shows only the tools that the key may use. Without `tasks:write`, the agent does not see `tasks_upsert`.
-- **Honest answers.** The tool `whoami` lists all modules, all scopes and all tool names. The agent can tell "my key may not use this" from "this tool does not exist". The tool `tool_describe` explains any tool by name.
-- **Safety.** Hiding a tool is not the protection. If a key calls a tool without the scope, PetBox refuses the call. Every tool declares its scope once, and a test fails the build if one is missing.
-- **Test keys.** A "sandbox key" works only in test projects. PetBox rejects it anywhere else, so a test run cannot touch real data.
-
-### Task boards
-
-**Problem:** tasks need rules, or they get lost. Teams differ in what those rules are.
-**Solution:** each board follows a methodology that you define. A methodology is a set of
-statuses and allowed moves. Mine is: idea, then spec, then work, then intake for new requests.
-The engine blocks moves that break the rules. Details are in [doc/methodology.md](doc/methodology.md).
-
-## What else is inside
-
-PetBox also holds a settings service, a log collector with a query language (KQL), a separate
-SQLite database for each project, a health and CI dashboard, and deploy tracking.
-
-| Module | Job |
-|---|---|
-| `PetBox.Core` | login, data models, migrations, search |
-| `PetBox.Web` | the web app and the MCP endpoint |
-| `PetBox.Tasks`, `PetBox.Tasks.Engine` | task boards and methodology rules |
-| `PetBox.Memory` | notes and memory search |
-| `PetBox.Sessions` | transcripts and digests |
-| `PetBox.LlmRouter` | the language model router |
-| `PetBox.Config`, `PetBox.Log.Core`, `PetBox.Data` | settings, logs, project databases |
-| `PetBox.Dashboard`, `PetBox.Deploy` | health checks, deploy tracking |
-
-Client libraries for .NET, TypeScript and Python are in `src/clients-net`, `src/clients-ts` and
-`src/clients-py`.
+It is a "modular monolith": one program made of clearly separated modules. Each module has a
+switch in the settings. A module that is off costs nothing.
 
 ## Stack
 
-- Backend: .NET 10, SQLite with linq2db, FluentMigrator, OpenTelemetry.
-- Frontend: Razor Pages rendered on the server, htmx, Alpine.js, Tailwind with daisyUI, TypeScript built by bun.
-- Delivery: Docker, Cake with GitVersion, GitHub Actions, Playwright for browser tests.
+- **Languages:** C# on .NET 10, TypeScript, Python (client only).
+- **Web:** ASP.NET Core with Razor Pages rendered on the server. In the browser: htmx and Alpine.js. Styles: Tailwind and daisyUI. bun builds the frontend.
+- **Databases:** SQLite everywhere, accessed with linq2db. FluentMigrator changes the schema.
+- **Search:** SQLite FTS5 for words, with Snowball stemming. Embeddings for meaning. A language model can rerank.
+- **Logs and queries:** Kusto.Language parses KQL, and PetBox runs it on SQLite. OpenTelemetry and Seq formats come in. OpenTelemetry also traces PetBox itself.
+- **Agents:** the Model Context Protocol (MCP) server, and a router for language models.
+- **Delivery:** Docker, Cake with GitVersion, GitHub Actions, Playwright for browser tests.
+
+DuckDB is in the repository, but only for tests and a benchmark tool. It does not run in production.
+
+## Modules
+
+### Config
+
+**Problem:** the same setting has different values in different places.
+**Solution:** you attach a value to a set of tags, for example `project:shop`, then
+`service:api`, then `env:prod`. A request brings its own tags. PetBox picks the value whose tags
+are all present in the request. The value with the most matching tags wins. Two equal winners
+give an error, not a guess, so the answer is always the same.
+
+- A default value has few tags. A production override has more tags, so it wins.
+- The .NET client plugs into `IConfiguration` and polls for changes.
+
+### Log
+
+**Problem:** small projects need logs, traces and metrics, but not a big logging platform.
+**Solution:** PetBox accepts logs from Seq clients (the CLEF format) and from OpenTelemetry
+(logs, traces and metrics). Each project has its own store. You query it with KQL, a query language
+from Azure Data Explorer.
+
+- PetBox parses KQL with the official Kusto.Language library, then turns it into SQL for SQLite.
+- Supported: `where`, `take`, `sort`, `top`, `project`, `extend`, `summarize`, `count`, `distinct`, `join`, `lookup`, `mv-expand` and `parse`.
+- Not supported: `union`, `search`, `render`, `make-series` and many others. Unsupported operators give a clear error.
+- The same language works on three tables: events, spans and metric points.
+- There is live tail, retention cleanup and shareable results.
+
+### Data
+
+**Problem:** a small project needs a database, but not a database server.
+**Solution:** each project gets its own SQLite files. You send parameterized SQL over REST, and
+PetBox runs it. It can also change the schema through versioned migrations.
+
+- The client builds the SQL, so the server does not need to know your model classes.
+- You can reuse the same query against a local database. See "Client packages".
+
+### Tasks
+
+**Problem:** tasks get lost without rules, and teams have different rules.
+**Solution:** each board follows a methodology that you define: statuses and allowed moves. Mine
+is idea, then spec, then work, with an intake board for new requests. The engine blocks moves that
+break the rules. See [doc/methodology.md](doc/methodology.md).
+
+**Observations.** An agent often sees a bug that is not part of its task. Each project has a
+special board for such findings. If another agent reports the same bug, PetBox adds no copy. It
+counts the repeats. A person can turn an observation into a task. When the task is done, the
+observation closes. If the bug returns, it opens again.
+
+### Memory
+
+**Problem:** search by words misses a note written with other words. Search by meaning misses
+exact names and error codes.
+**Solution:** PetBox runs both searches and merges the lists with Reciprocal Rank Fusion (RRF).
+An item that ranks high in both lists wins. A language model can then reorder the top results.
+The merge code is in `src/PetBox.Core/Search/HybridMerge.cs`.
+
+- **History.** PetBox never overwrites a note. Each change is a new revision, and one revision is current.
+- **Duplicates.** Before saving a fact, PetBox compares it with old facts, first by text, then by meaning. A near copy is not saved.
+
+### Sessions
+
+**Problem:** an agent works for hours, and the chat is lost.
+**Solution:** the agent saves a transcript of each session. A background job writes a short
+summary, called a digest. Later the agent can search old sessions to find why it chose something.
+
+### LLM router
+
+**Problem:** a provider of language models can be down, or can limit your requests.
+**Solution:** the router sends each request to the first provider that works, and falls back to
+the next one on failure. A circuit breaker stops requests to a failing provider for a short time.
+It looks at the type of failure. An unreachable server is skipped for all request types. A "too
+many requests" answer is skipped only for that request type. We added this after a chat limit
+silently moved embedding requests to a backup server.
+
+### MCP
+
+**Problem:** PetBox has more than 100 tools. Showing all of them confuses an agent, and not every
+agent should change data.
+**Solution:** MCP is a standard way for an agent to call tools. Each API key has a list of
+permissions called scopes. For example, `tasks:write` allows changing tasks.
+
+- **Discovery.** The tool list shows only tools the key may use. Without `tasks:write`, the agent does not see `tasks_upsert`.
+- **Honest answers.** `whoami` lists all modules, scopes and tool names. The agent can tell "my key may not use this" from "this tool does not exist". `tool_describe` explains any tool.
+- **Safety.** Hiding is not protection. A call without the scope is refused. Each tool declares its scope once, and a test fails the build if one is missing.
+- **Test keys.** A sandbox key works only in test projects. PetBox rejects it elsewhere.
+
+### Dashboard and Deploy
+
+- **Dashboard.** It checks the health of your services and polls CI, so you see status in one place.
+- **Deploy.** It tracks deployments, so you can see what was deployed and when.
+
+## Client packages
+
+| Package | Registry | What it does |
+|---|---|---|
+| `PetBox.Client` | NuGet | Authenticated HTTP client. Sends raw SQL to the Data module. |
+| `PetBox.Client.Config` | NuGet | Loads resolved settings into `IConfiguration`, with ETag-aware polling. |
+| `PetBox.Client.Data.Linq2Db` | NuGet | Write queries in LINQ with linq2db. |
+| `@stdray-npm/petbox-client` | npm | TypeScript client for Config and Data. |
+| `petbox-client` | PyPI | Python client for Config and Data. |
+| `petbox-wire` | npm | One `npx` command that wires a project to PetBox: hooks, MCP settings and skills for Claude Code, opencode and Factory Droid. |
+
+How the LINQ package works:
+
+- You build a normal linq2db `IQueryable`. A SQLite connection is enough, and no connection opens.
+- The package extracts the parameterized SQL and sends it through `PetBox.Client`.
+- Rows come back as your own class. The server never sees your query objects.
+- The same `IQueryable` also runs on a local SQLite file with ordinary linq2db. So one query works on the remote database and on a local copy.
 
 ## Build and run
 
@@ -127,7 +151,7 @@ The container listens on port 8080 and stores data in `/app/data`. More targets 
 
 ## How I keep quality high
 
-- **One gate.** The `Test` target builds the code, checks formatting, lints the frontend and runs more than 4,000 tests. CI runs the same target. A green local run means a green pipeline.
-- **Rules as tests.** Tests check the architecture itself. Modules may not reach into each other. Database connections cannot be injected, because they are not thread-safe. Tenants cannot read each other's data. See `tests/PetBox.Tests/Architecture`.
-- **Safe deploys.** Pushing the `deploy` tag runs the tests, builds the image, deploys over SSH and checks health. A code-quality scan can block the deploy.
-- **Process.** Every change starts from a task card and happens in its own git worktree. The rules are in [AGENTS.md](AGENTS.md).
+- **One gate.** The `Test` target builds the code, checks formatting, lints the frontend and runs more than 4,000 tests. CI runs the same target.
+- **Rules as tests.** Tests check the architecture. Modules may not reach into each other. Database connections cannot be injected, because they are not thread-safe. Tenants cannot read each other's data. See `tests/PetBox.Tests/Architecture`.
+- **Safe deploys.** The `deploy` tag runs the tests, builds the image, deploys over SSH and checks health. A code-quality scan can block the deploy.
+- **Process.** Every change starts from a task card and happens in its own git worktree. See [AGENTS.md](AGENTS.md).
