@@ -22,12 +22,12 @@ switch in the settings. A module that is off costs nothing.
 - **Languages:** C# on .NET 10, TypeScript, Python (client only).
 - **Web:** ASP.NET Core with Razor Pages rendered on the server. In the browser: htmx and Alpine.js. Styles: Tailwind and daisyUI. bun builds the frontend.
 - **Databases:** SQLite everywhere, accessed with linq2db. FluentMigrator changes the schema.
-- **Search:** SQLite FTS5 for words, with Snowball stemming. Embeddings for meaning. A language model can rerank.
+- **Search:** SQLite FTS5 for words, DuckDB for session search, with Snowball stemming. Embeddings for meaning. A language model can rerank.
 - **Logs and queries:** Kusto.Language parses KQL, and PetBox runs it on SQLite. OpenTelemetry and Seq formats come in. OpenTelemetry also traces PetBox itself.
 - **Agents:** the Model Context Protocol (MCP) server, and a router for language models.
 - **Delivery:** Docker, Cake with GitVersion, GitHub Actions, Playwright for browser tests.
 
-DuckDB is in the repository, but only for tests and a benchmark tool. It does not run in production.
+DuckDB runs in production in one place: the session search index (see Sessions). The log module also has a DuckDB dialect for KQL, but no setting turns it on.
 
 ## Modules
 
@@ -54,6 +54,7 @@ from Azure Data Explorer.
 - Not supported: `union`, `search`, `render`, `make-series` and many others. Unsupported operators give a clear error.
 - The same language works on three tables: events, spans and metric points.
 - There is live tail, retention cleanup and shareable results.
+- Logs are stored in SQLite. The KQL translator also has a DuckDB dialect, tested next to SQLite. The server does not use it, and no setting selects it.
 
 ### Data
 
@@ -92,6 +93,13 @@ The merge code is in `src/PetBox.Core/Search/HybridMerge.cs`.
 **Problem:** an agent works for hours, and the chat is lost.
 **Solution:** the agent saves a transcript of each session. A background job writes a short
 summary, called a digest. Later the agent can search old sessions to find why it chose something.
+
+Search has two steps. First it finds the right sessions by their digests. Then it looks inside them.
+
+- For each session found, PetBox builds a temporary in-memory DuckDB index. It has full-text search with Russian stemming and BM25 ranking. Message embeddings are compared by cosine.
+- The two result lists are merged with RRF. If one list fails, the other still answers.
+- The index is built on demand and dropped after about ten minutes idle. Settings are under `Search:Episodic`.
+- Code: `src/PetBox.Sessions/Episodic/DuckDbSessionEpisodicIndex.cs`.
 
 ### LLM router
 
