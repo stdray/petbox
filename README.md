@@ -2,153 +2,132 @@
 
 # PetBox
 
-A self-hosted **module monolith** (.NET 10) that gives AI coding agents durable infrastructure.
+PetBox is a server that helps AI coding agents remember things and organize their work.
 
-- **What it is:** session history, searchable long-term memory, task boards with a configurable
-  methodology, a resilient LLM router, and an MCP tool surface over all of it.
-- **Also included:** tag-based config, log ingestion with a KQL engine, per-project SQLite
-  databases, a health/CI dashboard and deploy tracking, each behind a feature toggle.
-- **Developed on itself:** its own plan, spec and work items live on PetBox boards, reached over MCP.
+An AI agent forgets everything when a chat ends. It does not know what it decided last week.
+It cannot tell which tasks are open. PetBox fixes this. It gives the agent a notebook, a task
+board and a set of tools, all in one service. I built it for my own projects, and I build PetBox
+using PetBox: its plan and tasks live on its own boards.
 
-Live instance: <https://petbox.3po.su>
+It is a "modular monolith". That means one program made of clearly separated modules. You can
+switch each module on or off with a setting. A module that is off costs nothing.
 
-## The agent side
+## How the agent remembers
 
-### Sessions and digests
+### Sessions
 
-- **What:** agents append working-session transcripts; episodic search finds past decisions.
-- **How:** a background job (`SessionDigestJob`) distills transcripts into digests.
+**Problem:** an agent works for hours, and the chat is lost afterward.
+**Solution:** the agent saves a transcript of each work session. A background job then writes a
+short summary of it, called a digest. Later, the agent can search old sessions to find why it
+made a decision.
 
-### Memory search
+### Memory
 
-- **What:** hybrid retrieval over memory entries.
-- **How:**
-  - lexical ranking from SQLite **FTS5**, semantic ranking from embeddings;
-  - the two are merged with **Reciprocal Rank Fusion** (`PetBox.Core/Search/HybridMerge.cs`);
-  - an optional LLM **reranker** reorders the result.
-- **Why this shape:** the RRF score is rank-based, so it is comparable across stores. Several
-  memory containers are merged globally instead of store by store.
+**Problem:** keyword search misses a note when you use different words. Meaning-based search
+misses exact names and error codes.
+**Solution:** PetBox runs both searches and merges the two result lists. The merge method is
+Reciprocal Rank Fusion (RRF): an item that ranks high in both lists wins. A language model can
+then reorder the top results.
 
-### Temporal memory and fact dedup
+- Keyword search uses SQLite FTS5. Meaning-based search uses embeddings, which turn text into numbers.
+- The merge code is in `src/PetBox.Core/Search/HybridMerge.cs`.
 
-- **Temporal:** an entry is never overwritten. Each key keeps a revision history, and a partial
-  unique index guarantees at most one *active* revision per key. Deletes are safe: history stays.
-- **Dedup:** auto-captured facts are compared with existing ones by normalized text, then by
-  embedding cosine similarity (default threshold 0.92), before being stored.
+### History and duplicates
+
+**Problem:** agents change their notes, and sometimes an old note was right.
+**Solution:** PetBox never overwrites a note. It saves each change as a new revision and marks
+one revision as current. You can always see the old versions.
+
+**Problem:** agents save the same fact many times in different words.
+**Solution:** before saving a fact, PetBox compares it with the existing facts. It checks the
+exact text first. Then it checks the meaning. If the new fact is too close to an old one, PetBox
+does not save it again.
 
 ### Observations
 
-- **What:** a built-in board per project for defect-like findings.
-- **How:**
-  - a create-time write is checked by normalized text, then by cosine similarity over
-    title+body (threshold 0.75);
-  - a hit bumps a recurrence count instead of adding a duplicate;
-  - a `seen` observation can be *promoted* to a work or idea node. When that work reaches a
-    terminal-OK status the observation flips to `fixed`; a later recurrence reopens it.
+**Problem:** an agent sees something broken, but it is not part of the current task. The finding
+is easy to lose.
+**Solution:** each project has a special board called observations. The agent writes the finding
+there. If another agent reports the same problem, PetBox does not add a copy. It counts how often
+the problem occurs. A person can later turn an observation into a real task. When the task is
+done, the observation closes. If the problem comes back, it opens again.
 
-### Resilient LLM router
+## How the agent stays working
 
-- **What:** chat / embed / rerank behind one facade (`PetBox.LlmRouter`), with an ordered
-  fallback chain per capability.
-- **How the breaker scopes failures, by class:**
-  - unreachable host: the whole endpoint opens, for every capability;
-  - 429 or 5xx: only that endpoint's leg opens, for that one capability.
-- **Why:** measured on production, a Chat rate limit was silently diverting Embed and Rerank
-  traffic. An opening is logged once per transition, not per skipped request.
+### The LLM router
 
-### MCP surface
+**Problem:** the agent calls language models from several providers. A provider can be down or
+can limit how many requests you send.
+**Solution:** the router sends each request to the first provider that works. If that one fails,
+it tries the next. A "circuit breaker" stops requests to a failing provider for a short time.
 
-100+ tools (`[McpServerTool]` methods under `src/PetBox.Web/Mcp`) for tasks, memory, sessions,
-comments, relations, config, logs, data, LLM and deploy. The agent is not handed all of them.
+The breaker looks at the type of failure.
 
-**Discovery**
-- `tools/list` shows a key only the tools whose scope it holds, decided per tool: without
-  `tasks:write`, `tasks_upsert` is not listed.
-- `whoami` returns every module, its scopes with a `granted` flag, and all of its tool names, so an
-  agent can tell "not available to this key" from "does not exist".
-- `tool_describe` describes any tool by name.
+- If the server is unreachable, the router skips the whole provider.
+- If the provider says "too many requests", the router skips only that one kind of request.
 
-**Scopes**
-- Each tool declares its required scope once. The call gate, `tools/list` and `whoami` all read
-  that single declaration.
-- API keys carry an enumerated scope set plus a project claim (possibly the wildcard `*`).
+We added this rule after a real incident. A limit on chat requests had silently pushed
+embedding requests to a backup server.
 
-**Safety**
-- Hiding is not the boundary: a call without the scope is refused regardless of visibility.
-- A test fails the build if a tool has no declaration.
-- Sandbox-only keys are rejected against projects that are not flagged as sandbox.
+### Tools for agents (MCP)
 
-### Methodology engine
+**Problem:** PetBox has more than 100 tools. If you show all of them, the agent gets confused.
+Some tools can change data, so not every agent should use them.
+**Solution:** MCP is a standard way for an agent to call tools. Each API key gets a list of
+permissions, called scopes. For example, the scope `tasks:write` allows changing tasks.
 
-- **What:** boards follow a user-defined methodology (here idea -> spec -> work -> intake).
-- **How:** status transitions and guards are enforced by the engine (`PetBox.Tasks.Engine`).
-- **More:** [doc/methodology.md](doc/methodology.md), [doc/methodology-engine.md](doc/methodology-engine.md).
+- **Discovery.** The tool list shows only the tools that the key may use. Without `tasks:write`, the agent does not see `tasks_upsert`.
+- **Honest answers.** The tool `whoami` lists all modules, all scopes and all tool names. The agent can tell "my key may not use this" from "this tool does not exist". The tool `tool_describe` explains any tool by name.
+- **Safety.** Hiding a tool is not the protection. If a key calls a tool without the scope, PetBox refuses the call. Every tool declares its scope once, and a test fails the build if one is missing.
+- **Test keys.** A "sandbox key" works only in test projects. PetBox rejects it anywhere else, so a test run cannot touch real data.
 
-## Modules
+### Task boards
 
-| Project | Responsibility |
+**Problem:** tasks need rules, or they get lost. Teams differ in what those rules are.
+**Solution:** each board follows a methodology that you define. A methodology is a set of
+statuses and allowed moves. Mine is: idea, then spec, then work, then intake for new requests.
+The engine blocks moves that break the rules. Details are in [doc/methodology.md](doc/methodology.md).
+
+## What else is inside
+
+PetBox also holds a settings service, a log collector with a query language (KQL), a separate
+SQLite database for each project, a health and CI dashboard, and deploy tracking.
+
+| Module | Job |
 |---|---|
-| `PetBox.Core` | auth, entity models, SQLite context and migrations, search (FTS, hybrid merge, rerank), feature toggles |
-| `PetBox.Web` | single entry point: Program.cs, Razor Pages, frontend assets, MCP endpoint |
-| `PetBox.Tasks` / `PetBox.Tasks.Engine` | task boards, methodology engine |
-| `PetBox.Memory` | temporal memory stores, hybrid search |
-| `PetBox.Sessions` | transcripts, digests, episodic search |
-| `PetBox.LlmRouter` (+ `.Contract`) | routed chat / embed / rerank |
-| `PetBox.Config` | tag-based configuration, deterministic resolve pipeline |
-| `PetBox.Log.Core` | Seq-compatible and OTLP ingestion, KQL query engine |
-| `PetBox.Data` | per-project SQLite databases, raw-SQL REST, schema migration |
-| `PetBox.Dashboard`, `PetBox.Deploy` | health and CI polling, deployment tracking |
+| `PetBox.Core` | login, data models, migrations, search |
+| `PetBox.Web` | the web app and the MCP endpoint |
+| `PetBox.Tasks`, `PetBox.Tasks.Engine` | task boards and methodology rules |
+| `PetBox.Memory` | notes and memory search |
+| `PetBox.Sessions` | transcripts and digests |
+| `PetBox.LlmRouter` | the language model router |
+| `PetBox.Config`, `PetBox.Log.Core`, `PetBox.Data` | settings, logs, project databases |
+| `PetBox.Dashboard`, `PetBox.Deploy` | health checks, deploy tracking |
 
-- Client SDKs (.NET, TypeScript, Python): `src/clients-net`, `src/clients-ts`, `src/clients-py`.
-- Every subsystem is gated by a `Features:<Name>` toggle; a disabled one costs nothing at runtime.
+Client libraries for .NET, TypeScript and Python are in `src/clients-net`, `src/clients-ts` and
+`src/clients-py`.
 
 ## Stack
 
-- **Backend:** .NET 10, SQLite via linq2db, FluentMigrator, Kusto.Language + KustoLoco (KQL), OpenTelemetry.
-- **Frontend:** Razor Pages (SSR), htmx 2, Alpine.js 3, Tailwind 3 + daisyUI 4, TypeScript bundled with bun.
-- **Delivery:** Docker (chiseled noble runtime), Cake + GitVersion, GitHub Actions, Playwright for E2E.
+- Backend: .NET 10, SQLite with linq2db, FluentMigrator, OpenTelemetry.
+- Frontend: Razor Pages rendered on the server, htmx, Alpine.js, Tailwind with daisyUI, TypeScript built by bun.
+- Delivery: Docker, Cake with GitVersion, GitHub Actions, Playwright for browser tests.
 
 ## Build and run
 
-Requirements: .NET SDK 10 (see `global.json`), bun, PowerShell or bash.
+You need the .NET 10 SDK (see `global.json`), bun, and PowerShell or bash.
 
 ```sh
 ./build.ps1 -Target Test        # or: ./build.sh --target=Test
-./build.ps1 -Target Dev         # bun watchers + `dotnet watch run` from src/PetBox.Web
-./build.ps1 -Target Verify      # Test + client SDK lint/typecheck/test
+./build.ps1 -Target Dev         # frontend watchers and `dotnet watch run`
+./build.ps1 -Target Verify      # Test, plus checks for the client libraries
 ```
 
-- Other targets in `build.cs`: `Docker`, `DockerSmoke`, `DockerPush`, per-SDK pack/publish.
-- The container exposes port 8080 and keeps its data under `/app/data`.
+The container listens on port 8080 and stores data in `/app/data`. More targets are in `build.cs`.
 
-## Engineering practices
+## How I keep quality high
 
-### One gate
-
-- The Cake `Test` target is the single definition of "green": build, formatting verification,
-  frontend lint and unit tests, then the .NET suite (4,000+ test cases).
-- CI runs the same target, so a green local run cannot be a red pipeline.
-
-### Architecture as tests
-
-- Module boundary tests for every subsystem.
-- No `DataConnection` is ever injectable (it is not thread-safe); the database is reachable only
-  from the service layer.
-- Cross-tenant authorization probes; a ratchet requiring a scope declaration on every MCP tool.
-- Where: `tests/PetBox.Tests/Architecture`.
-
-### CI/CD
-
-- Tests run on every push to `main`.
-- A `deploy` tag runs test, image publish to ghcr, SSH deploy and a post-deploy health check.
-- A `jb inspectcode` gate blocks the deploy at the tagged commit; SDKs publish from their own tags.
-
-### Process
-
-- Every change starts from a card on the PetBox boards, is made in a git worktree, and ends as a
-  pushed branch. Rules: [AGENTS.md](AGENTS.md).
-
-## Docs
-
-[AGENTS.md](AGENTS.md) (process and architecture contract), [doc/](doc) (methodology, UI
-conventions, settings taxonomy, agent wiring).
+- **One gate.** The `Test` target builds the code, checks formatting, lints the frontend and runs more than 4,000 tests. CI runs the same target. A green local run means a green pipeline.
+- **Rules as tests.** Tests check the architecture itself. Modules may not reach into each other. Database connections cannot be injected, because they are not thread-safe. Tenants cannot read each other's data. See `tests/PetBox.Tests/Architecture`.
+- **Safe deploys.** Pushing the `deploy` tag runs the tests, builds the image, deploys over SSH and checks health. A code-quality scan can block the deploy.
+- **Process.** Every change starts from a task card and happens in its own git worktree. The rules are in [AGENTS.md](AGENTS.md).
