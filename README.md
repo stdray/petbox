@@ -17,7 +17,7 @@ switch in the settings. A module that is off costs nothing.
 - **Languages:** C# on .NET 10, TypeScript, Python (client only).
 - **Web:** ASP.NET Core with Razor Pages rendered on the server. In the browser: htmx and Alpine.js. Styles: Tailwind and daisyUI. bun builds the frontend.
 - **Databases:** SQLite everywhere, accessed with linq2db. FluentMigrator changes the schema.
-- **Search:** SQLite FTS5 for words, with Snowball stemming. DuckDB for session search. Embeddings for meaning. A language model can rerank.
+- **Search:** SQLite FTS5 for words, with Snowball stemming of Russian and English tokens (`src/PetBox.Core/Search/TokenStemmer.cs`). DuckDB for session search. Embeddings for meaning. A language model can rerank.
 - **Logs and queries:** Kusto.Language parses KQL, and PetBox runs it on SQL. OpenTelemetry and Seq formats come in. OpenTelemetry also traces PetBox itself.
 - **Agents:** a Model Context Protocol (MCP) server, and a router for language models.
 - **Delivery:** Docker, Cake with GitVersion, GitHub Actions, Playwright for browser tests.
@@ -30,6 +30,7 @@ nothing tells it which work is open. PetBox gives the agent memory, a process an
 ## Methodology: the process is a graph, and it is data
 
 **Problem:** every team has its own process. Hard-coded statuses fit one team and annoy the rest.
+
 **Solution:** the process is a graph that you describe in a document. The server has no
 built-in process. It reads your document and enforces it.
 
@@ -49,6 +50,7 @@ requests. Details: [doc/methodology.md](doc/methodology.md) and
 ## Observations
 
 **Problem:** an agent often sees a bug that is not part of its task. The finding is easy to lose.
+
 **Solution:** each project has a special board for such findings. If another agent reports the
 same bug, PetBox adds no copy. It counts the repeats. A person can turn an observation into a
 task. When the task is done, the observation closes. If the bug returns, it opens again.
@@ -57,17 +59,19 @@ task. When the task is done, the observation closes. If the bug returns, it open
 
 **Problem:** search by words misses a note written with other words. Search by meaning misses
 exact names and error codes.
+
 **Solution:** PetBox runs both searches and merges the lists with Reciprocal Rank Fusion (RRF).
 An item that ranks high in both lists wins. A language model can then reorder the top results.
 The merge code is in `src/PetBox.Core/Search/HybridMerge.cs`.
 
 - **History.** PetBox never overwrites a note. Each change is a new revision, and one revision is current.
 - **Duplicates.** Before saving a fact, PetBox compares it with old facts, first by text, then by meaning. A near copy is not saved.
-- **Quality.** The search has an evaluation harness, so a change to ranking can be measured.
+- **Quality.** An evaluation harness scores retrieval on labeled queries, so a change to ranking can be measured (`src/PetBox.Core/Search/Eval/SearchEval.cs`, tests in `SearchEvalHarnessTests`).
 
 ## Sessions
 
 **Problem:** an agent works for hours, and the chat is lost.
+
 **Solution:** the agent saves a transcript of each session. A background job writes a short
 summary, called a digest. Later the agent can search old sessions to find why it chose something.
 
@@ -81,16 +85,18 @@ Search has two steps. First it finds the right sessions by their digests. Then i
 ## LLM router
 
 **Problem:** a provider of language models can be down, or can limit your requests.
+
 **Solution:** the router sends each request to the first provider that works, and falls back to
 the next one on failure. A circuit breaker stops requests to a failing provider for a short time.
 It looks at the type of failure. An unreachable server is skipped for all request types. A "too
-many requests" answer is skipped only for that request type. We added this after a chat limit
+many requests" answer is skipped only for that request type. I added this after a chat limit
 silently moved embedding requests to a backup server.
 
 ## MCP: tools for agents
 
 **Problem:** PetBox has more than 100 tools. Showing all of them confuses an agent, and not every
 agent should change data.
+
 **Solution:** MCP is a standard way for an agent to call tools. Each API key has a list of
 permissions called scopes. For example, `tasks:write` allows changing tasks.
 
@@ -102,12 +108,20 @@ permissions called scopes. For example, `tasks:write` allows changing tasks.
 ## Process gates
 
 **Problem:** agents write code fast, and they can skip steps.
-**Solution:** the rules are written down in [AGENTS.md](AGENTS.md) and checked by machines.
+
+**Solution:** some rules are checked by machines. Others are team conventions that I wrote down in [AGENTS.md](AGENTS.md).
+
+Checked by machines:
+
+- One `Test` target is the gate: build, formatting, frontend lint and more than 4,000 tests. CI runs the same target.
+- Architecture tests fail the build when a layer rule breaks.
+- A test fails the build if an MCP tool has no scope declaration.
+
+Conventions in AGENTS.md. The engine does not enforce them:
 
 - Every change starts from a task card and happens in its own git worktree.
-- Work ends as a pushed branch. An agent may move a card to Review, never to Done.
-- One `Test` target is the gate: build, formatting, frontend lint and more than 4,000 tests. CI runs the same target.
-- A card never closes without a written verdict.
+- Work ends as a pushed branch. An agent moves a card to Review, and the owner moves it to Done.
+- A card is closed with a written verdict. The server once enforced this, but I removed the check, because the web UI had no way to write a verdict.
 
 # Part B. A light backend for pet projects
 
@@ -117,6 +131,7 @@ PetBox provides all three in one process.
 ## Config
 
 **Problem:** the same setting has different values in different places.
+
 **Solution:** you attach a value to a set of tags, for example `project:shop`, then
 `service:api`, then `env:prod`. A request brings its own tags. PetBox picks the value whose tags
 are all present in the request. The value with the most matching tags wins. Two equal winners
@@ -128,6 +143,7 @@ give an error, not a guess, so the answer is always the same.
 ## Log
 
 **Problem:** small projects need logs, traces and metrics, but not a big logging platform.
+
 **Solution:** PetBox accepts logs from Seq clients (the CLEF format) and from OpenTelemetry
 (logs, traces and metrics). Each project has its own store. You query it with KQL, a query language
 from Azure Data Explorer.
@@ -140,12 +156,13 @@ from Azure Data Explorer.
 
 **Two SQL backends.** The translator is built for two databases, not one. It has a SQLite
 dialect and a DuckDB dialect. They differ in details such as JSON functions and array expansion,
-so each has its own set of SQL rules. Tests run the same queries on both and compare the results.
+so each has its own set of SQL rules. A smoke test (`KqlDuckDbSmokeTests`) loads the same data into both databases, runs queries covering each group of functions, and checks that the DuckDB result equals the SQLite result.
 In production, logs are stored in SQLite. The DuckDB dialect is ready, but no setting turns it on yet.
 
 ## Data
 
 **Problem:** a small project needs a database, but not a database server.
+
 **Solution:** each project gets its own SQLite files. You send parameterized SQL over REST, and
 PetBox runs it. It can also change the schema through versioned migrations.
 
@@ -154,8 +171,8 @@ PetBox runs it. It can also change the schema through versioned migrations.
 
 ## Dashboard and Deploy
 
-- **Dashboard.** It checks the health of your services and polls CI, so you see status in one place.
-- **Deploy.** It tracks deployments, so you can see what was deployed and when.
+- **Dashboard.** It calls the health URL of each service you list, on a timer. Services can also push their status. The status page marks a service as stale when its last report is too old.
+- **Deploy.** It keeps a list of nodes and the services that should run on them. Agents on the nodes poll for their work and send heartbeats. If a node is silent for 90 seconds, PetBox moves its movable services to an online node.
 
 ## Client packages
 
@@ -192,3 +209,13 @@ You need the .NET 10 SDK (see `global.json`), bun, and PowerShell or bash.
 ```
 
 The container listens on port 8080 and stores data in `/app/data`. More targets are in `build.cs`.
+
+# Status
+
+- One author. I build and maintain PetBox alone.
+- It runs in production for my own projects.
+- It is still in active development.
+
+# License
+
+MIT. See [LICENSE](LICENSE).
