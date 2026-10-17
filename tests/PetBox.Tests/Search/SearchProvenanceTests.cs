@@ -343,21 +343,21 @@ public sealed class SearchProvenanceTests : IDisposable
 
 	sealed class UnusedUpstream : IOpenAiCompatibleClient
 	{
-		public Task<IReadOnlyList<float[]>> EmbedAsync(HttpClient http, string baseUrl, string? apiKey, string model, IReadOnlyList<string> inputs, CancellationToken ct) =>
+		public Task<IReadOnlyList<float[]>> EmbedAsync(HttpClient http, string baseUrl, string? apiKey, string model, IReadOnlyList<string> inputs, CancellationToken ct, IReadOnlyDictionary<string, string>? headers = null) =>
 			throw new NotSupportedException("no route → the chain must never reach an endpoint");
-		public Task<IReadOnlyList<RerankHit>> RerankAsync(HttpClient http, string baseUrl, string? apiKey, string model, string query, IReadOnlyList<string> documents, int? topN, CancellationToken ct) =>
+		public Task<IReadOnlyList<RerankHit>> RerankAsync(HttpClient http, string baseUrl, string? apiKey, string model, string query, IReadOnlyList<string> documents, int? topN, CancellationToken ct, IReadOnlyDictionary<string, string>? headers = null) =>
 			throw new NotSupportedException();
-		public Task<string> ChatAsync(HttpClient http, string baseUrl, string? apiKey, string model, IReadOnlyList<ChatMessage> messages, double? temperature, int? maxTokens, LlmThinking? thinking, LlmReasoningEffort? reasoning, LlmResponseFormat? responseFormat, CancellationToken ct) =>
+		public Task<string> ChatAsync(HttpClient http, string baseUrl, string? apiKey, string model, IReadOnlyList<ChatMessage> messages, double? temperature, int? maxTokens, LlmThinking? thinking, LlmReasoningEffort? reasoning, LlmResponseFormat? responseFormat, CancellationToken ct, IReadOnlyDictionary<string, string>? headers = null) =>
 			throw new NotSupportedException();
 	}
 
 	sealed class RefusingUpstream : IOpenAiCompatibleClient
 	{
-		public Task<IReadOnlyList<float[]>> EmbedAsync(HttpClient http, string baseUrl, string? apiKey, string model, IReadOnlyList<string> inputs, CancellationToken ct) =>
+		public Task<IReadOnlyList<float[]>> EmbedAsync(HttpClient http, string baseUrl, string? apiKey, string model, IReadOnlyList<string> inputs, CancellationToken ct, IReadOnlyDictionary<string, string>? headers = null) =>
 			throw new LlmUpstreamException(true, "connection refused");
-		public Task<IReadOnlyList<RerankHit>> RerankAsync(HttpClient http, string baseUrl, string? apiKey, string model, string query, IReadOnlyList<string> documents, int? topN, CancellationToken ct) =>
+		public Task<IReadOnlyList<RerankHit>> RerankAsync(HttpClient http, string baseUrl, string? apiKey, string model, string query, IReadOnlyList<string> documents, int? topN, CancellationToken ct, IReadOnlyDictionary<string, string>? headers = null) =>
 			throw new NotSupportedException();
-		public Task<string> ChatAsync(HttpClient http, string baseUrl, string? apiKey, string model, IReadOnlyList<ChatMessage> messages, double? temperature, int? maxTokens, LlmThinking? thinking, LlmReasoningEffort? reasoning, LlmResponseFormat? responseFormat, CancellationToken ct) =>
+		public Task<string> ChatAsync(HttpClient http, string baseUrl, string? apiKey, string model, IReadOnlyList<ChatMessage> messages, double? temperature, int? maxTokens, LlmThinking? thinking, LlmReasoningEffort? reasoning, LlmResponseFormat? responseFormat, CancellationToken ct, IReadOnlyDictionary<string, string>? headers = null) =>
 			throw new NotSupportedException();
 	}
 
@@ -365,11 +365,11 @@ public sealed class SearchProvenanceTests : IDisposable
 	// classifies it as its own event/reason rather than the generic transient bucket.
 	sealed class RateLimitingUpstream : IOpenAiCompatibleClient
 	{
-		public Task<IReadOnlyList<float[]>> EmbedAsync(HttpClient http, string baseUrl, string? apiKey, string model, IReadOnlyList<string> inputs, CancellationToken ct) =>
+		public Task<IReadOnlyList<float[]>> EmbedAsync(HttpClient http, string baseUrl, string? apiKey, string model, IReadOnlyList<string> inputs, CancellationToken ct, IReadOnlyDictionary<string, string>? headers = null) =>
 			throw new LlmUpstreamException(true, "HTTP 429: rate limit exceeded", rateLimited: true);
-		public Task<IReadOnlyList<RerankHit>> RerankAsync(HttpClient http, string baseUrl, string? apiKey, string model, string query, IReadOnlyList<string> documents, int? topN, CancellationToken ct) =>
+		public Task<IReadOnlyList<RerankHit>> RerankAsync(HttpClient http, string baseUrl, string? apiKey, string model, string query, IReadOnlyList<string> documents, int? topN, CancellationToken ct, IReadOnlyDictionary<string, string>? headers = null) =>
 			throw new NotSupportedException();
-		public Task<string> ChatAsync(HttpClient http, string baseUrl, string? apiKey, string model, IReadOnlyList<ChatMessage> messages, double? temperature, int? maxTokens, LlmThinking? thinking, LlmReasoningEffort? reasoning, LlmResponseFormat? responseFormat, CancellationToken ct) =>
+		public Task<string> ChatAsync(HttpClient http, string baseUrl, string? apiKey, string model, IReadOnlyList<ChatMessage> messages, double? temperature, int? maxTokens, LlmThinking? thinking, LlmReasoningEffort? reasoning, LlmResponseFormat? responseFormat, CancellationToken ct, IReadOnlyDictionary<string, string>? headers = null) =>
 			throw new NotSupportedException();
 	}
 

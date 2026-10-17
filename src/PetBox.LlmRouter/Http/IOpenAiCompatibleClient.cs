@@ -12,15 +12,17 @@ public interface IOpenAiCompatibleClient
 {
 	Task<IReadOnlyList<float[]>> EmbedAsync(
 		HttpClient http, string baseUrl, string? apiKey, string model,
-		IReadOnlyList<string> inputs, CancellationToken ct);
+		IReadOnlyList<string> inputs, CancellationToken ct,
+		IReadOnlyDictionary<string, string>? headers = null);
 
 	Task<IReadOnlyList<RerankHit>> RerankAsync(
 		HttpClient http, string baseUrl, string? apiKey, string model,
-		string query, IReadOnlyList<string> documents, int? topN, CancellationToken ct);
+		string query, IReadOnlyList<string> documents, int? topN, CancellationToken ct,
+		IReadOnlyDictionary<string, string>? headers = null);
 
 	Task<string> ChatAsync(
 		HttpClient http, string baseUrl, string? apiKey, string model,
 		IReadOnlyList<ChatMessage> messages, double? temperature, int? maxTokens,
 		LlmThinking? thinking, LlmReasoningEffort? reasoning, LlmResponseFormat? responseFormat,
-		CancellationToken ct);
+		CancellationToken ct, IReadOnlyDictionary<string, string>? headers = null);
 }

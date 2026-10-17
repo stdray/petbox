@@ -135,6 +135,31 @@ public sealed class LlmRegistryEditorTests : IDisposable
 			.Reasoning.Should().Be(nameof(LlmReasoningEffort.None), "stored as the enum member name");
 	}
 
+	// work llm-router-opencode-go-endpoint-headers: INSERT -> SELECT round trip of the new
+	// llm_endpoints.Headers column, read back through the runtime resolver. A property that exists on
+	// the record but is lost on the way to the row would silently drop the header and the gateway
+	// would answer 400 MissingSessionID.
+	[Fact]
+	public async Task McpUpsert_roundtrips_endpoint_headers_through_the_runtime_resolver()
+	{
+		var config = Json("""
+			{"endpoints":[{"name":"opencode-go","baseUrl":"https://opencode.ai/zen/go","headers":{"x-opencode-session":"{uuid}"}},
+			              {"name":"plain","baseUrl":"https://plain"}],
+			 "routes":[{"capability":"chat","endpoint":"opencode-go","model":"m","priority":25},
+			           {"capability":"chat","endpoint":"plain","model":"m","priority":30}]}
+			""");
+
+		(await LlmRouterTools.ConfigUpsertAsync(Http("llm:admin", Proj), Flags(), _editor, Proj, config)).Ok.Should().BeTrue();
+
+		var resolved = await _resolver.ResolveAsync(Proj);
+		resolved.Registry.Endpoints.Single(e => e.Name == "opencode-go").Headers
+			.Should().BeEquivalentTo(new Dictionary<string, string> { ["x-opencode-session"] = "{uuid}" });
+		resolved.Registry.Endpoints.Single(e => e.Name == "plain").Headers.Should().BeNull();
+
+		_db.LlmEndpoints.Single(e => e.Scope == nameof(Scope.Workspace) && e.ScopeKey == Ws && e.Name == "plain")
+			.Headers.Should().BeNull("no headers is NULL, not an empty object");
+	}
+
 	// The dedup key the admin surface compares rows by must include the new field, or flipping a
 	// route's reasoning control would read as "nothing changed" and the write would be a silent
 	// no-op reported as success.

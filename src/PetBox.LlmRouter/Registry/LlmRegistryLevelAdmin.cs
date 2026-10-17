@@ -52,7 +52,8 @@ public sealed class LlmRegistryLevelAdmin : ILlmRegistryLevelAdmin
 
 		// Secret-free by construction: the cipher columns are simply not projected out.
 		var endpoints = endpointRows
-			.Select(e => new LlmEndpoint(e.Name, e.BaseUrl, e.CertThumbprint, e.ConnectTimeoutMs, e.RequestTimeoutMs))
+			.Select(e => new LlmEndpoint(e.Name, e.BaseUrl, e.CertThumbprint, e.ConnectTimeoutMs, e.RequestTimeoutMs,
+				LlmEndpointHeaders.Parse(e.Headers)))
 			.ToList();
 
 		// The row's Id travels with the route — it is the handle the admin surface edits/deletes by.
@@ -173,6 +174,7 @@ public sealed class LlmRegistryLevelAdmin : ILlmRegistryLevelAdmin
 				CertThumbprint = ep.CertThumbprint,
 				ConnectTimeoutMs = ep.ConnectTimeoutMs,
 				RequestTimeoutMs = ep.RequestTimeoutMs,
+				Headers = LlmEndpointHeaders.Serialize(ep.Headers),
 				KeyCipher = bundle?.Ciphertext,
 				KeyIv = bundle?.Iv,
 				KeyAuthTag = bundle?.AuthTag,
@@ -283,7 +285,7 @@ public sealed class LlmRegistryLevelAdmin : ILlmRegistryLevelAdmin
 	}
 
 	static string EndpointContentKey(LlmEndpointRow e) =>
-		string.Join('', e.Name, e.BaseUrl, e.CertThumbprint ?? "", e.ConnectTimeoutMs, e.RequestTimeoutMs);
+		string.Join('', e.Name, e.BaseUrl, e.CertThumbprint ?? "", e.ConnectTimeoutMs, e.RequestTimeoutMs, e.Headers ?? "");
 
 	static bool SameRouteContent(List<LlmRouteRow> a, List<LlmRouteRow> b)
 	{

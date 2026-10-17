@@ -93,7 +93,10 @@ public sealed class IndexModel : PageModel
 			name.Trim(), (baseAddress ?? string.Empty).Trim(),
 			string.IsNullOrWhiteSpace(certThumbprint) ? null : certThumbprint.Trim(),
 			connectTimeoutMs <= 0 ? 2000 : connectTimeoutMs,
-			requestTimeoutMs <= 0 ? 60000 : requestTimeoutMs);
+			requestTimeoutMs <= 0 ? 60000 : requestTimeoutMs,
+			// The form has no headers field (they are edited via llm_config_upsert); carry the stored
+			// ones over so saving an endpoint here never silently drops them.
+			view.Endpoints.FirstOrDefault(e => string.Equals(e.Name, name.Trim(), StringComparison.Ordinal))?.Headers);
 
 		// Replace-or-append by name.
 		var endpoints = view.Endpoints.Where(e => !string.Equals(e.Name, endpoint.Name, StringComparison.Ordinal)).ToList();

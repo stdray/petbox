@@ -28,6 +28,9 @@ public sealed record LlmEndpointRow
 	[Column, NotNull] public int ConnectTimeoutMs { get; init; }
 	[Column, NotNull] public int RequestTimeoutMs { get; init; }
 
+	// JSON object (name -> value) of extra request headers (LlmEndpoint.Headers); NULL = none.
+	[Column, Nullable] public string? Headers { get; init; }
+
 	[Column, Nullable] public string? KeyCipher { get; init; }
 	[Column, Nullable] public string? KeyIv { get; init; }
 	[Column, Nullable] public string? KeyAuthTag { get; init; }

@@ -25,10 +25,11 @@ public sealed partial class OpenAiCompatibleClient : IOpenAiCompatibleClient
 
 	public async Task<IReadOnlyList<float[]>> EmbedAsync(
 		HttpClient http, string baseUrl, string? apiKey, string model,
-		IReadOnlyList<string> inputs, CancellationToken ct)
+		IReadOnlyList<string> inputs, CancellationToken ct,
+		IReadOnlyDictionary<string, string>? headers = null)
 	{
 		using var doc = await PostAsync(http, Url(baseUrl, "/v1/embeddings"), apiKey,
-			new { model, input = inputs }, ct);
+			new { model, input = inputs }, ct, headers);
 
 		var data = doc.RootElement.GetProperty("data");
 		var n = data.GetArrayLength();
@@ -51,12 +52,13 @@ public sealed partial class OpenAiCompatibleClient : IOpenAiCompatibleClient
 
 	public async Task<IReadOnlyList<RerankHit>> RerankAsync(
 		HttpClient http, string baseUrl, string? apiKey, string model,
-		string query, IReadOnlyList<string> documents, int? topN, CancellationToken ct)
+		string query, IReadOnlyList<string> documents, int? topN, CancellationToken ct,
+		IReadOnlyDictionary<string, string>? headers = null)
 	{
 		object payload = topN is { } n
 			? new { model, query, documents, top_n = n }
 			: new { model, query, documents };
-		using var doc = await PostAsync(http, Url(baseUrl, "/v1/rerank"), apiKey, payload, ct);
+		using var doc = await PostAsync(http, Url(baseUrl, "/v1/rerank"), apiKey, payload, ct, headers);
 
 		if (!doc.RootElement.TryGetProperty("results", out var results))
 			throw new LlmUpstreamException(false, "rerank response missing 'results'");
@@ -76,7 +78,7 @@ public sealed partial class OpenAiCompatibleClient : IOpenAiCompatibleClient
 		HttpClient http, string baseUrl, string? apiKey, string model,
 		IReadOnlyList<ChatMessage> messages, double? temperature, int? maxTokens,
 		LlmThinking? thinking, LlmReasoningEffort? reasoning, LlmResponseFormat? responseFormat,
-		CancellationToken ct)
+		CancellationToken ct, IReadOnlyDictionary<string, string>? headers = null)
 	{
 		var payload = new Dictionary<string, object>
 		{
@@ -107,7 +109,7 @@ public sealed partial class OpenAiCompatibleClient : IOpenAiCompatibleClient
 		JsonDocument doc;
 		try
 		{
-			doc = await PostAsync(http, url, apiKey, payload, ct);
+			doc = await PostAsync(http, url, apiKey, payload, ct, headers);
 		}
 		catch (LlmUpstreamException ex) when (!ex.Transient && responseFormat is not null
 			&& ex.Message.Contains("response_format", StringComparison.OrdinalIgnoreCase))
@@ -128,7 +130,7 @@ public sealed partial class OpenAiCompatibleClient : IOpenAiCompatibleClient
 			// traffic.
 			if (_log is not null) LogResponseFormatRejected(_log, baseUrl, model, ex.Message);
 			payload.Remove("response_format");
-			doc = await PostAsync(http, url, apiKey, payload, ct);
+			doc = await PostAsync(http, url, apiKey, payload, ct, headers);
 		}
 		using (doc)
 		{
@@ -149,11 +151,18 @@ public sealed partial class OpenAiCompatibleClient : IOpenAiCompatibleClient
 	};
 
 	// POST JSON, mapping transport faults + HTTP status to transient/fatal LlmUpstreamException.
-	static async Task<JsonDocument> PostAsync(HttpClient http, string url, string? apiKey, object payload, CancellationToken ct)
+	static async Task<JsonDocument> PostAsync(HttpClient http, string url, string? apiKey, object payload, CancellationToken ct,
+		IReadOnlyDictionary<string, string>? headers = null)
 	{
 		using var req = new HttpRequestMessage(HttpMethod.Post, url);
 		if (!string.IsNullOrWhiteSpace(apiKey))
 			req.Headers.Authorization = new AuthenticationHeaderValue("Bearer", apiKey);
+		// Per-endpoint extra headers (LlmEndpoint.Headers). `{uuid}` is rendered fresh for EVERY HTTP
+		// request (a retry inside ChatAsync gets its own). TryAddWithoutValidation: a configured value
+		// is operator input and must not be rejected by header-syntax validation, nor logged.
+		if (headers is not null)
+			foreach (var (name, value) in headers)
+				req.Headers.TryAddWithoutValidation(name, RenderHeaderValue(value));
 		req.Content = new StringContent(JsonSerializer.Serialize(payload, Json), Encoding.UTF8, "application/json");
 
 		HttpResponseMessage resp;
@@ -213,6 +222,12 @@ public sealed partial class OpenAiCompatibleClient : IOpenAiCompatibleClient
 			catch (JsonException ex) { throw new LlmUpstreamException(false, $"invalid JSON from upstream: {ex.Message}"); }
 		}
 	}
+
+	// The only placeholder is `{uuid}` -> a new GUID ("D" format) per call.
+	static string RenderHeaderValue(string value) =>
+		value.Contains("{uuid}", StringComparison.Ordinal)
+			? value.Replace("{uuid}", Guid.NewGuid().ToString("D"), StringComparison.Ordinal)
+			: value;
 
 	static string Url(string baseUrl, string path) => baseUrl.TrimEnd('/') + path;
 

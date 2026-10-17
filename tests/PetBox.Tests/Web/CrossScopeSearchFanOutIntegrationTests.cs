@@ -165,19 +165,19 @@ public sealed class CrossScopeSearchFanOutIntegrationTests : IDisposable
 	sealed class StubUpstream : IOpenAiCompatibleClient
 	{
 		public async Task<IReadOnlyList<float[]>> EmbedAsync(HttpClient http, string baseUrl, string? apiKey, string model,
-			IReadOnlyList<string> inputs, CancellationToken ct)
+			IReadOnlyList<string> inputs, CancellationToken ct, IReadOnlyDictionary<string, string>? headers = null)
 		{
 			await Task.Delay(10, ct);
 			return inputs.Select(i => { var v = new float[1024]; v[Math.Abs(i.GetHashCode(StringComparison.Ordinal)) % 1024] = 1f; return v; }).ToList();
 		}
 
 		public Task<IReadOnlyList<RerankHit>> RerankAsync(HttpClient http, string baseUrl, string? apiKey, string model,
-			string query, IReadOnlyList<string> documents, int? topN, CancellationToken ct) =>
+			string query, IReadOnlyList<string> documents, int? topN, CancellationToken ct, IReadOnlyDictionary<string, string>? headers = null) =>
 			throw new NotSupportedException();
 
 		public Task<string> ChatAsync(HttpClient http, string baseUrl, string? apiKey, string model,
 			IReadOnlyList<ChatMessage> messages, double? temperature, int? maxTokens, LlmThinking? thinking, LlmReasoningEffort? reasoning,
-			LlmResponseFormat? responseFormat, CancellationToken ct) =>
+			LlmResponseFormat? responseFormat, CancellationToken ct, IReadOnlyDictionary<string, string>? headers = null) =>
 			throw new NotSupportedException();
 	}
 

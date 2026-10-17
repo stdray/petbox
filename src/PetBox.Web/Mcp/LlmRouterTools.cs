@@ -116,7 +116,8 @@ public static class LlmRouterTools
 		    and writes NOTHING — re-read with llm_config_get and resubmit. This is what makes a
 		    concurrent edit a conflict instead of a silent overwrite.
 		`config` is a JSON object:
-		  { "endpoints": [ { "name", "baseUrl", "certThumbprint"?, "connectTimeoutMs"?, "requestTimeoutMs"? } ]?,  // omit = keep existing, [] = clear
+		  { "endpoints": [ { "name", "baseUrl", "certThumbprint"?, "connectTimeoutMs"?, "requestTimeoutMs"?, "headers"?: { name: value } } ]?,  // headers: extra request headers per endpoint; value may hold {uuid} -> fresh GUID per request
+		    // omit = keep existing, [] = clear
 		    "routes":    [ { "capability": "embed|rerank|chat", "endpoint", "model", "priority"?, "tier"?, "thinking": "enabled|disabled"?, "reasoning": "none|minimal|low|medium|high|xhigh|max"?, "embedSpaceId"? } ]?,  // omit = keep existing, [] = clear
 		    // embedSpaceId (embed routes only): the canonical vector-index key. Omit/null = use model.
 		    // Give two embed routes the SAME embedSpaceId to make their vectors share one index space.

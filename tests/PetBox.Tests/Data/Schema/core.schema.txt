@@ -196,6 +196,7 @@ TABLE llm_endpoints
   COL BaseUrl TEXT NOT NULL
   COL CertThumbprint TEXT NULL
   COL ConnectTimeoutMs INTEGER NOT NULL
+  COL Headers TEXT NULL
   COL KeyAuthTag TEXT NULL
   COL KeyCipher TEXT NULL
   COL KeyIv TEXT NULL

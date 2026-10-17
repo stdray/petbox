@@ -55,7 +55,7 @@ public sealed partial class CapabilityRouter : ILlmClient
 	public async Task<EmbedResult> EmbedAsync(string projectKey, EmbedRequest request, CancellationToken ct = default)
 	{
 		var (vectors, served, route) = await RunChainAsync(projectKey, LlmCapability.Embed, request.Tier,
-			(http, ep, key, route) => _upstream.EmbedAsync(http, ep.BaseUrl, key, route.Model, request.Inputs, ct), ct);
+			(http, ep, key, route) => _upstream.EmbedAsync(http, ep.BaseUrl, key, route.Model, request.Inputs, ct, ep.Headers), ct);
 		var dim = vectors.Count > 0 ? vectors[0].Length : (int?)null;
 		// THE decoupling: the provider was called with route.Model (above), but the identity that keys
 		// the vector index is EmbedSpaceId when the route declares one — so a fallback provider whose
@@ -67,7 +67,7 @@ public sealed partial class CapabilityRouter : ILlmClient
 	public async Task<RerankResult> RerankAsync(string projectKey, RerankRequest request, CancellationToken ct = default)
 	{
 		var (hits, served, route) = await RunChainAsync(projectKey, LlmCapability.Rerank, request.Tier,
-			(http, ep, key, route) => _upstream.RerankAsync(http, ep.BaseUrl, key, route.Model, request.Query, request.Documents, request.TopN, ct), ct);
+			(http, ep, key, route) => _upstream.RerankAsync(http, ep.BaseUrl, key, route.Model, request.Query, request.Documents, request.TopN, ct, ep.Headers), ct);
 		// Rerank identity is the provider model, unchanged — EmbedSpaceId is embed-only.
 		return new RerankResult(hits, new ModelIdentity(route.Model), served);
 	}
@@ -131,7 +131,7 @@ public sealed partial class CapabilityRouter : ILlmClient
 				var merged = new List<RerankHit>(request.Documents.Count);
 				foreach (var (offset, docs) in chunks)
 				{
-					var hits = await _upstream.RerankAsync(http, ep.BaseUrl, apiKey, route.Model, request.Query, docs, null, ct);
+					var hits = await _upstream.RerankAsync(http, ep.BaseUrl, apiKey, route.Model, request.Query, docs, null, ct, ep.Headers);
 					foreach (var h in hits) merged.Add(new RerankHit(offset + h.Index, h.Score));
 				}
 				_breaker.RecordSuccess(ep.Name, LlmCapability.Rerank);
@@ -183,7 +183,7 @@ public sealed partial class CapabilityRouter : ILlmClient
 	public async Task<ChatResult> ChatAsync(string projectKey, ChatRequest request, CancellationToken ct = default)
 	{
 		var (text, served, route) = await RunChainAsync(projectKey, LlmCapability.Chat, request.Tier,
-			(http, ep, key, route) => _upstream.ChatAsync(http, ep.BaseUrl, key, route.Model, request.Messages, request.Temperature, request.MaxTokens, route.Thinking, route.Reasoning, request.ResponseFormat, ct), ct);
+			(http, ep, key, route) => _upstream.ChatAsync(http, ep.BaseUrl, key, route.Model, request.Messages, request.Temperature, request.MaxTokens, route.Thinking, route.Reasoning, request.ResponseFormat, ct, ep.Headers), ct);
 		// Chat identity is the provider model, unchanged — EmbedSpaceId is embed-only.
 		return new ChatResult(text, new ModelIdentity(route.Model), served);
 	}

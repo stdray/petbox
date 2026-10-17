@@ -194,18 +194,18 @@ public sealed class LlmRouterRegistryFlipTests : IDisposable
 		public List<UpstreamCall> Calls { get; } = [];
 
 		public Task<IReadOnlyList<float[]>> EmbedAsync(HttpClient http, string baseUrl, string? apiKey, string model,
-			IReadOnlyList<string> inputs, CancellationToken ct)
+			IReadOnlyList<string> inputs, CancellationToken ct, IReadOnlyDictionary<string, string>? headers = null)
 		{
 			Calls.Add(new UpstreamCall(baseUrl, apiKey, model));
 			return Task.FromResult<IReadOnlyList<float[]>>([[1f, 2f, 3f]]);
 		}
 
 		public Task<IReadOnlyList<RerankHit>> RerankAsync(HttpClient http, string baseUrl, string? apiKey, string model,
-			string query, IReadOnlyList<string> documents, int? topN, CancellationToken ct) => throw new NotSupportedException();
+			string query, IReadOnlyList<string> documents, int? topN, CancellationToken ct, IReadOnlyDictionary<string, string>? headers = null) => throw new NotSupportedException();
 
 		public Task<string> ChatAsync(HttpClient http, string baseUrl, string? apiKey, string model,
 			IReadOnlyList<ChatMessage> messages, double? temperature, int? maxTokens, LlmThinking? thinking, LlmReasoningEffort? reasoning,
-			LlmResponseFormat? responseFormat, CancellationToken ct) => throw new NotSupportedException();
+			LlmResponseFormat? responseFormat, CancellationToken ct, IReadOnlyDictionary<string, string>? headers = null) => throw new NotSupportedException();
 	}
 
 	sealed record LogEntry(MsLogLevel Level, int EventId, string Message);

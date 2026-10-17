@@ -170,6 +170,7 @@ public sealed partial class LlmRegistryImporter
 				CertThumbprint = ep.CertThumbprint,
 				ConnectTimeoutMs = ep.ConnectTimeoutMs,
 				RequestTimeoutMs = ep.RequestTimeoutMs,
+				Headers = LlmEndpointHeaders.Serialize(ep.Headers),
 				KeyCipher = hasKey ? secret!.Ciphertext : null,
 				KeyIv = hasKey ? secret!.Iv : null,
 				KeyAuthTag = hasKey ? secret!.AuthTag : null,

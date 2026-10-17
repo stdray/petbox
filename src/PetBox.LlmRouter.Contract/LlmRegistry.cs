@@ -56,12 +56,19 @@ public enum LlmReasoningEffort
 // CertThumbprint is the SHA-256 fingerprint to pin for a self-signed endpoint (null = trust
 // the public CA chain). ConnectTimeoutMs is kept short so an unreachable endpoint fails fast
 // instead of hanging (llm-fast-down).
+//
+// Headers are extra request headers sent on EVERY upstream call to this endpoint (chat, embed,
+// rerank), in addition to Authorization. A value may contain the placeholder `{uuid}`, rendered as
+// a fresh GUID per HTTP request — the opencode-go gateway rejects a request without
+// `x-opencode-session: <uuid>`. Values are plain config, not secrets, and are never logged.
+// Null/empty = no extra headers (today's behaviour).
 public sealed record LlmEndpoint(
 	string Name,
 	string BaseUrl,
 	string? CertThumbprint = null,
 	int ConnectTimeoutMs = 2000,
-	int RequestTimeoutMs = 60000);
+	int RequestTimeoutMs = 60000,
+	IReadOnlyDictionary<string, string>? Headers = null);
 
 // One link in a capability's ordered provider chain: which endpoint + upstream model serves
 // a (capability[, tier]) at what priority (lower = tried first). A route with a null Tier is

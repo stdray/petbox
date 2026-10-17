@@ -49,6 +49,52 @@ public sealed class OpenAiCompatibleClientTests
 			"the two switches are independent; setting neither sends neither");
 	}
 
+	// work llm-router-opencode-go-endpoint-headers: per-endpoint headers reach the wire on all three
+	// capabilities, `{uuid}` is rendered as a fresh GUID per HTTP request, and no headers = the old
+	// request exactly.
+	[Fact]
+	public async Task Headers_reach_the_wire_with_a_fresh_guid_per_request()
+	{
+		var (client, http, handler) = Build();
+		var headers = new Dictionary<string, string> { ["x-opencode-session"] = "{uuid}", ["x-static"] = "v1" };
+
+		await client.ChatAsync(http, "https://o", "k", "m", Messages, null, null, null, null, null, CancellationToken.None, headers);
+		await client.ChatAsync(http, "https://o", "k", "m", Messages, null, null, null, null, null, CancellationToken.None, headers);
+
+		handler.Requests.Should().HaveCount(2);
+		var sessions = handler.Requests.Select(r => r.GetValues("x-opencode-session").Single()).ToList();
+		sessions.Select(s => Guid.TryParse(s, out _)).Should().OnlyContain(ok => ok, "the placeholder must be rendered, not sent literally");
+		sessions[0].Should().NotBe(sessions[1], "a fresh GUID per HTTP request");
+		handler.Requests.Should().OnlyContain(r => r.GetValues("x-static").Single() == "v1");
+		handler.Requests.Should().OnlyContain(r => r.GetValues("Authorization").Single() == "Bearer k");
+	}
+
+	[Fact]
+	public async Task Headers_reach_embed_and_rerank_too()
+	{
+		var headers = new Dictionary<string, string> { ["x-opencode-session"] = "{uuid}" };
+
+		var (c1, h1, e) = Build("""{"data":[{"embedding":[1.0],"index":0}]}""");
+		await c1.EmbedAsync(h1, "https://o", null, "m", ["a"], CancellationToken.None, headers);
+		Guid.TryParse(e.Requests.Single().GetValues("x-opencode-session").Single(), out _).Should().BeTrue();
+
+		var (c2, h2, r) = Build("""{"results":[{"index":0,"relevance_score":0.5}]}""");
+		await c2.RerankAsync(h2, "https://o", null, "m", "q", ["a"], null, CancellationToken.None, headers);
+		Guid.TryParse(r.Requests.Single().GetValues("x-opencode-session").Single(), out _).Should().BeTrue();
+	}
+
+	[Fact]
+	public async Task No_headers_sends_only_the_standard_request()
+	{
+		var (client, http, handler) = Build();
+
+		await client.ChatAsync(http, "https://o", "k", "m", Messages, null, null, null, null, null, CancellationToken.None);
+
+		var req = handler.Requests.Single();
+		req.Contains("x-opencode-session").Should().BeFalse();
+		req.Select(h => h.Key).Should().BeEquivalentTo(["Authorization"]);
+	}
+
 	[Theory]
 	[InlineData(LlmReasoningEffort.None, "none")]
 	[InlineData(LlmReasoningEffort.Minimal, "minimal")]
@@ -385,9 +431,11 @@ public sealed class OpenAiCompatibleClientTests
 	sealed class CapturingHandler(string responseBody, HttpStatusCode status = HttpStatusCode.OK) : HttpMessageHandler
 	{
 		public string? LastBody { get; private set; }
+		public List<System.Net.Http.Headers.HttpRequestHeaders> Requests { get; } = [];
 
 		protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
 		{
+			Requests.Add(request.Headers);
 			if (request.Content is not null)
 				LastBody = await request.Content.ReadAsStringAsync(cancellationToken);
 			return new HttpResponseMessage(status) { Content = new StringContent(responseBody, Encoding.UTF8, "application/json") };

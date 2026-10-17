@@ -607,13 +607,13 @@ public sealed class CapabilityRouterTests
 		public Dictionary<string, Func<IReadOnlyList<string>, IReadOnlyList<RerankHit>>> RerankBehaviour { get; } = new(StringComparer.Ordinal);
 		public List<(string BaseUrl, int DocCount)> RerankCalls { get; } = [];
 
-		public Task<IReadOnlyList<float[]>> EmbedAsync(HttpClient http, string baseUrl, string? apiKey, string model, IReadOnlyList<string> inputs, CancellationToken ct)
+		public Task<IReadOnlyList<float[]>> EmbedAsync(HttpClient http, string baseUrl, string? apiKey, string model, IReadOnlyList<string> inputs, CancellationToken ct, IReadOnlyDictionary<string, string>? headers = null)
 		{
 			EmbedCalls.Add(baseUrl);
 			return Task.FromResult(EmbedBehaviour[baseUrl]());
 		}
 
-		public Task<IReadOnlyList<RerankHit>> RerankAsync(HttpClient http, string baseUrl, string? apiKey, string model, string query, IReadOnlyList<string> documents, int? topN, CancellationToken ct)
+		public Task<IReadOnlyList<RerankHit>> RerankAsync(HttpClient http, string baseUrl, string? apiKey, string model, string query, IReadOnlyList<string> documents, int? topN, CancellationToken ct, IReadOnlyDictionary<string, string>? headers = null)
 		{
 			RerankCalls.Add((baseUrl, documents.Count));
 			return Task.FromResult(RerankBehaviour.TryGetValue(baseUrl, out var f) ? f(documents) : RerankReply);
@@ -623,7 +623,7 @@ public sealed class CapabilityRouterTests
 		// expressible — the shape that trips one leg's breaker without failing the whole chain.
 		public Dictionary<string, Func<Exception?>> ChatBehaviour { get; } = new(StringComparer.Ordinal);
 
-		public Task<string> ChatAsync(HttpClient http, string baseUrl, string? apiKey, string model, IReadOnlyList<ChatMessage> messages, double? temperature, int? maxTokens, LlmThinking? thinking, LlmReasoningEffort? reasoning, LlmResponseFormat? responseFormat, CancellationToken ct)
+		public Task<string> ChatAsync(HttpClient http, string baseUrl, string? apiKey, string model, IReadOnlyList<ChatMessage> messages, double? temperature, int? maxTokens, LlmThinking? thinking, LlmReasoningEffort? reasoning, LlmResponseFormat? responseFormat, CancellationToken ct, IReadOnlyDictionary<string, string>? headers = null)
 		{
 			ChatThinking.Add(thinking);
 			ChatReasoning.Add(reasoning);

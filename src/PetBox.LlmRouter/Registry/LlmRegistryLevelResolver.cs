@@ -174,7 +174,8 @@ public sealed partial class LlmRegistryLevelResolver : ILlmRegistryLevelResolver
 				keys[row.Name] = plaintext;
 			}
 
-			endpoints.Add(new LlmEndpoint(row.Name, row.BaseUrl, row.CertThumbprint, row.ConnectTimeoutMs, row.RequestTimeoutMs));
+			endpoints.Add(new LlmEndpoint(row.Name, row.BaseUrl, row.CertThumbprint, row.ConnectTimeoutMs, row.RequestTimeoutMs,
+			LlmEndpointHeaders.Parse(row.Headers)));
 		}
 
 		return (endpoints, keys);
