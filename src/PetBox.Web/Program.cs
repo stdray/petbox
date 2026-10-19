@@ -39,6 +39,29 @@ if (args.Length >= 1 && args[0] == "--healthcheck")
 	Environment.Exit(Program.RunHealthCheck() ? 0 : 1);
 }
 
+// `--gen-mcp-openapi <path>`: write the committed, machine-readable description of the MCP surface
+// (spec typed-surface / contract-doc-in-git) and exit. It runs BEFORE the host on purpose — the tool
+// schemas come from the same assembly scan the live registration uses, so this needs no container, no
+// database and no migrations, and Cake's `Build` target can run it as an ordinary build step.
+if (args.Length >= 2 && args[0] == "--gen-mcp-openapi")
+{
+	// The tool schemas come from the SAME registrations the live server uses: the SDK decides
+	// "service parameter vs JSON argument" by probing the provider, so generating over the real
+	// container is what keeps the document identical to `tools/list`. No HOST is started — no
+	// listening socket, no database read, no migrations — only the DI registrations.
+	var documentBuilder = WebApplication.CreateBuilder([]);
+	ConfigureServices(documentBuilder);
+	// ASP0000 is about a SECOND copy of singletons living alongside the host's — there is no host here:
+	// the process writes one file and exits, and the container is built only so the schema generator can
+	// ask "is this parameter a service?". Suppressed narrowly rather than restructured.
+#pragma warning disable ASP0000
+	using var documentServices = documentBuilder.Services.BuildServiceProvider();
+#pragma warning restore ASP0000
+	McpOpenApiDocument.WriteFile(
+		args[1], typeof(Program).Assembly, McpOutputSchema.SerializerOptions(), documentServices);
+	return;
+}
+
 var builder = WebApplication.CreateBuilder(args);
 ConfigureServices(builder);
 var app = builder.Build();
@@ -496,34 +519,11 @@ public partial class Program
 		// MCP server. Tools are discovered via reflection from the Web assembly
 		// (Mcp/*Tools.cs). HTTP transport — agents reach petbox at /mcp with
 		// X-Api-Key just like the REST endpoints.
-		// Copy the SDK's default tool-serialization options (camelCase, null-ignore, MCP
-		// converters) and only relax the text encoder: the default escapes every non-ASCII
-		// char (Cyrillic -> \uXXXX), making tool-result JSON unreadable. This is the INNER of the
-		// two serializations a tool result goes through; the outer one — the JSON-RPC envelope the
-		// SDK writes — is relaxed at the top of this file (Mcp/McpWireEncoding.cs), and until it
-		// was, this line changed nothing a client could see: the envelope re-escaped everything.
-		// The encoder here is the MCP-wire one, not PetBoxJsonEncoder.Relaxed, so that a quote or a
-		// backtick inside a node body costs `\"` rather than " (which the envelope then spells
-		// \\u0022 — seven bytes for one character). Nothing this serializer produces is ever
-		// rendered as HTML; McpWireEncoding.cs carries the full consumer audit.
-		// UnmappedMemberHandling.Disallow: an argument member the target type does not declare is a
-		// REFUSAL, at EVERY depth — not a silent drop. These options are the ones the SDK binds tool
-		// ARGUMENTS with (McpOutputSchema passes them as SerializerOptions to McpServerTool.Create),
-		// so the guarantee is the TYPE's, not a schema walk's. Before this, the binder mapped what it
-		// recognized and dropped the rest: a typo two hops inside a full-document REPLACE verb
-		// (tasks_methodology_rules_upsert `definition`) bound the default and DELETED the real value,
-		// with no error — which is why McpUnknownParameterFilter (top level + one hop) had to exist,
-		// and why contracts were being flattened just to stay inside its reach.
-		// Deliberately still OPEN: an open `Dictionary<,>` member (tasks_upsert `nodes[].links`, keyed
-		// by relation kind) and a `JsonElement` parameter (llm_config_upsert `config`) — neither has
-		// a closed member set, so neither is affected. Measured, not assumed: Mcp/UnmappedMemberStrictnessTests.
-		// Side effect, wanted: the generated schemas gain `additionalProperties:false` on closed object
-		// nodes, so a strict client catches the same mistake before the call leaves.
-		var mcpJson = new System.Text.Json.JsonSerializerOptions(ModelContextProtocol.McpJsonUtilities.DefaultOptions)
-		{
-			Encoder = McpWireEncoding.Encoder,
-			UnmappedMemberHandling = System.Text.Json.Serialization.JsonUnmappedMemberHandling.Disallow,
-		};
+		// Tool-argument serializer options, shared with the contract-document generator so that the
+		// committed doc/api/PetBox.Mcp.json describes exactly the schemas the server binds. The rationale
+		// for the wire encoder and for UnmappedMemberHandling.Disallow lives there now
+		// (McpOutputSchema.SerializerOptions) — one copy, two consumers.
+		var mcpJson = McpOutputSchema.SerializerOptions();
 		builder.Services.AddMcpServer()
 			.WithHttpTransport(o => o.Stateless = true)
 			// Schema-honest registration: nullable record properties are NOT marked

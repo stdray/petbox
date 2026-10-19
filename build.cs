@@ -119,6 +119,25 @@ Task("Build")
 	{
 		var buildVersion = gitVersion.FullSemVer;
 		DotNetBuild(solution, CreateVersionedBuildSettings(buildVersion, gitVersion.ShortSha, gitVersion.CommitDate));
+
+		// spec typed-surface / contract-doc-in-git — the MCP half of the committed contract document,
+		// generated ON BUILD from the same assembly scan the live server registers tools with. Before
+		// this, `doc/api/` documented the REST half only: adding or re-typing any of the 99 MCP tools
+		// changed nothing in a diff. Output is deterministic (identical surface ⇒ identical bytes), so
+		// a clean tree stays clean and a real surface change is visible as a diff; CI deliberately has
+		// no drift gate on this — the spec leaf records that decision ("CI-enforcement сознательно
+		// отсутствует"). The path is ABSOLUTE on purpose: `dotnet run --project` gives the child the
+		// PROJECT directory as its working directory.
+		var mcpDocExit = StartProcess("dotnet", new ProcessSettings
+		{
+			Arguments = new ProcessArgumentBuilder()
+				.Append("run").Append("--project").Append($"{webDir}/PetBox.Web.csproj")
+				.Append("--no-build").Append("-c").Append(configuration)
+				.Append("--").Append("--gen-mcp-openapi")
+				.Append(System.IO.Path.GetFullPath("./doc/api/PetBox.Mcp.json")),
+		});
+		if (mcpDocExit != 0)
+			throw new CakeException($"MCP contract document generation failed (exit {mcpDocExit})");
 	});
 
 // `Test` IS the .NET gate — the single definition of "the code is OK", and the same thing

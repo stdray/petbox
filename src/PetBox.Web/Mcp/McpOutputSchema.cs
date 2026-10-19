@@ -472,12 +472,39 @@ static class McpOutputSchema
 				WithOpenOutputSchema(
 					WithRequiredMembers(WithDeclaredShapes(tool, method), method))));
 
-	// Mirror of ModelContextProtocol's WithToolsFromAssembly, plus SchemaCreateOptions.
-	public static IMcpServerBuilder WithSchemaHonestToolsFromAssembly(
-		this IMcpServerBuilder builder,
-		Assembly assembly,
-		JsonSerializerOptions serializerOptions,
-		AIJsonSchemaCreateOptions schemaOptions)
+	// The tool-argument serializer options, shared by the LIVE registration and by the contract-document
+	// generator (McpOpenApiDocument). One factory, so `doc/api/PetBox.Mcp.json` cannot describe a
+	// surface the server does not have — and a change here reaches both at once.
+	//
+	// The encoder here is the MCP-wire one, not PetBoxJsonEncoder.Relaxed, so that a quote or a
+	// backtick inside a node body costs `\"` rather than " (which the envelope then spells as
+	// \\u0022 — seven bytes for one character). Nothing this serializer produces is ever rendered as
+	// HTML; McpWireEncoding.cs carries the full consumer audit.
+	//
+	// UnmappedMemberHandling.Disallow: an argument member the target type does not declare is a
+	// REFUSAL, at EVERY depth — not a silent drop. These options are the ones the SDK binds tool
+	// ARGUMENTS with (McpOutputSchema passes them as SerializerOptions to McpServerTool.Create), so the
+	// guarantee is the TYPE's, not a schema walk's. Before this, the binder mapped what it recognized
+	// and dropped the rest: a typo two hops inside a full-document REPLACE verb
+	// (tasks_methodology_rules_upsert `definition`) bound the default and DELETED the real value, with
+	// no error — which is why McpUnknownParameterFilter (top level + one hop) had to exist, and why
+	// contracts were being flattened just to stay inside its reach. Deliberately still OPEN: an open
+	// `Dictionary<,>` member (tasks_upsert `nodes[].links`, keyed by relation kind) and a `JsonElement`
+	// parameter (llm_config_upsert `config`) — neither has a closed member set, so neither is affected.
+	// Measured, not assumed: Mcp/UnmappedMemberStrictnessTests.
+	// Side effect, wanted: the generated schemas gain `additionalProperties:false` on closed object
+	// nodes, so a strict client catches the same mistake before the call leaves.
+	public static JsonSerializerOptions SerializerOptions() =>
+		new(ModelContextProtocol.McpJsonUtilities.DefaultOptions)
+		{
+			Encoder = McpWireEncoding.Encoder,
+			UnmappedMemberHandling = System.Text.Json.Serialization.JsonUnmappedMemberHandling.Disallow,
+		};
+
+	// The ONE assembly scan behind both the live registration and the contract document. Sharing it is
+	// the point: a new way of declaring a tool must not mean one thing to the server and another to
+	// doc/api/.
+	internal static IEnumerable<(Type ToolType, MethodInfo Method)> ToolMethods(Assembly assembly)
 	{
 		foreach (var toolType in assembly.GetTypes())
 		{
@@ -487,25 +514,63 @@ static class McpOutputSchema
 				BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Static | BindingFlags.Instance))
 			{
 				if (method.GetCustomAttribute<McpServerToolAttribute>() is null) continue;
+				yield return (toolType, method);
+			}
+		}
+	}
 
-				var mi = method;
-				var tt = toolType;
-				builder.Services.AddSingleton((Func<IServiceProvider, McpServerTool>)(mi.IsStatic
-					? services => Shape(McpServerTool.Create(mi, options: new()
+	// A tool built ONLY to be described. The target factory is never invoked here (it exists to build a
+	// fresh instance per CALL, which the document does not make), so an instance tool with constructor
+	// dependencies is fine.
+	//
+	// `services` is NOT optional and NOT decoration: without a real provider the SDK cannot tell a
+	// SERVICE parameter (`IHttpContextAccessor`, `IOptions<McpServerOptions>`, …) from a JSON argument,
+	// so it emits them as request properties and recursively expands `HttpContext` — the first draft of
+	// this generator produced a 10 MB document whose `tasks_search` body advertised an `http` parameter
+	// no client can send. Passing the app's own registrations makes the schemas byte-identical to
+	// `tools/list`, which is the whole contract this file exists to publish.
+	internal static McpServerTool CreateForDocumentation(
+		MethodInfo method, JsonSerializerOptions serializerOptions, IServiceProvider services) =>
+		Shape(method.IsStatic
+			? McpServerTool.Create(method, options: new()
+			{
+				Services = services,
+				SerializerOptions = serializerOptions,
+				SchemaCreateOptions = NullableAware,
+			})
+			: McpServerTool.Create(method, _ => Activator.CreateInstance(method.DeclaringType!)!, new()
+			{
+				Services = services,
+				SerializerOptions = serializerOptions,
+				SchemaCreateOptions = NullableAware,
+			}), method);
+
+	// Mirror of ModelContextProtocol's WithToolsFromAssembly, plus SchemaCreateOptions.
+	public static IMcpServerBuilder WithSchemaHonestToolsFromAssembly(
+		this IMcpServerBuilder builder,
+		Assembly assembly,
+		JsonSerializerOptions serializerOptions,
+		AIJsonSchemaCreateOptions schemaOptions)
+	{
+		foreach (var (toolType, method) in ToolMethods(assembly))
+		{
+			var mi = method;
+			var tt = toolType;
+			builder.Services.AddSingleton((Func<IServiceProvider, McpServerTool>)(mi.IsStatic
+				? services => Shape(McpServerTool.Create(mi, options: new()
+				{
+					Services = services,
+					SerializerOptions = serializerOptions,
+					SchemaCreateOptions = schemaOptions,
+				}), mi)
+				: services => Shape(McpServerTool.Create(mi, r => r.Services is { } sp
+					? ActivatorUtilities.CreateInstance(sp, tt)
+					: Activator.CreateInstance(tt)!, new()
 					{
 						Services = services,
 						SerializerOptions = serializerOptions,
 						SchemaCreateOptions = schemaOptions,
-					}), mi)
-					: services => Shape(McpServerTool.Create(mi, r => r.Services is { } sp
-						? ActivatorUtilities.CreateInstance(sp, tt)
-						: Activator.CreateInstance(tt)!, new()
-						{
-							Services = services,
-							SerializerOptions = serializerOptions,
-							SchemaCreateOptions = schemaOptions,
-						}), mi)));
-			}
+					}), mi)));
 		}
 
 		return builder;
