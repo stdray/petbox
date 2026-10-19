@@ -32,7 +32,8 @@ from `src/common/default-agents.json`.
 | `extensions/petbox-pi.ts` | session mirror + memory banner + recall nudge (see below) |
 | `extensions/agent-rules.ts` | assembles `rules/amd-*.md` into the `agent_rules` prompt section for the main session |
 | `agents/*.md` | our five subagent roles: `worker`, `scout`, `oracle`, `reviewer`, `researcher` |
-| `rules/amd-*.md` | the operating rules, one topic per file |
+| `rules/amd-*.md` | the operating rules, one topic per file (always injected) |
+| `rules/pbx-*.md` | PetBox-specific rules — injected only when the session declares a petbox MCP tool |
 
 ## Rules: why skills and not `AGENTS.md`
 
@@ -41,7 +42,11 @@ loads context files at all — so one big `AGENTS.md` reaches either the main se
 children, never both. The rules are therefore one file per topic, consumed by two paths:
 
 - **main session** — `agent-rules.ts` reads `rules/amd-*.md` on every turn and sets them as the
-  `agent_rules` prompt section (cached on mtime, so an edit lands without a restart);
+  `agent_rules` prompt section (cached on mtime, so an edit lands without a restart). Files
+  named `pbx-*.md` go into a separate `petbox_rules` section that is added **only when the
+  session declares a petbox MCP tool** — PetBox prose must not reach a session that cannot
+  call the board. Same capability test and asymmetry as `petbox-pi.ts`'s banner: a positive
+  sticks, a negative is re-checked every run because MCP tools register asynchronously;
 - **children** — each role lists the files it needs in its `skills:` frontmatter, and
   `pi-subagents` preloads exactly those.
 

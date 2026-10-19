@@ -32,7 +32,7 @@ echo "pi config -> $target"
 for f in "$here"/agents/*.md; do
   install_file "$f" "$target/agents/$(basename "$f")"
 done
-for f in "$here"/rules/amd-*.md; do
+for f in "$here"/rules/amd-*.md "$here"/rules/pbx-*.md; do
   install_file "$f" "$target/skills/$(basename "$f")"
 done
 for f in "$here"/extensions/*.ts; do
