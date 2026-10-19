@@ -1,7 +1,7 @@
 ---
 name: oracle
 description: "The second pair of eyes — analysis and a recommendation, never the build. PetBox reserve tier."
-tools: read, grep, find, ls, bash, codemode
+tools: read, grep, find, ls, bash, powershell, codemode
 model: openrouter/openai/gpt-6.1-sol
 thinking: high
 allowed_subagents: scout

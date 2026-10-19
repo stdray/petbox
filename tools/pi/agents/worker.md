@@ -1,7 +1,7 @@
 ---
 name: worker
 description: "Scoped executor for ONE delegated task — PetBox worker tier."
-tools: read, grep, find, ls, bash, edit, write, codemode
+tools: read, grep, find, ls, bash, powershell, edit, write, codemode
 model: opencode-go/deepseek-v4.1-flash
 thinking: high
 allowed_subagents: scout
