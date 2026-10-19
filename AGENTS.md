@@ -354,6 +354,11 @@ Setup (one-time, per machine):
    page or via `apikey_create`.
 2. Claude Code (or any MCP-aware agent) picks up `.mcp.json` automatically; the key
    is never written into the file (it references `${PETBOX_API_KEY}`).
+3. To reach ANOTHER project's boards from an agent wired to this one, do NOT re-wire the
+   folder and do NOT lend a cross-project `*` key: mint a project-scoped key WITH an expiry
+   (the Connect page now has an *Expires in (hours)* field) and add a second `mcpServers`
+   entry with its own `PETBOX_<PROJECT>_API_KEY`. Recipe and gotchas:
+   [doc/agent-wiring.md](doc/agent-wiring.md) §9.
 
 Useful during dev: `log_query` with KQL like `events | where Level == "Error"` to see
 what errored; `tasks_search` / `memory_search` for the live plan and durable notes.

@@ -1017,3 +1017,88 @@ launch flags and sandbox rules differ:
   "commit/push only when asked" default that can override the repo's process contract in
   one-shot runs — phrase headless tasks with an explicit finish line ("доведи до Review:
   ветка + коммит + пуш"), which satisfies that rule.
+
+## 9. Reaching another project's boards with a temporary key
+
+The usual wiring binds ONE folder to ONE project: `petbox-wire` writes a single
+`mcpServers.petbox` entry carrying that project's key, and `ProjectConnect` mints a key
+scoped to that project. That is the right default, and it is also why "let an agent that
+lives in project A read — or append to — project B's boards for an evening" has no obvious
+route: re-wiring the folder would re-point it at B, and a standing `*` (cross-project) key
+is far wider than the task.
+
+The narrow route already works; it was simply never written down. Three steps.
+
+### 9.1 Mint a scoped, expiring key for project B
+
+Two equivalent doors:
+
+- **UI** — `…/ui/admin/ws/{ws}/projects/{project}/connect` → *Mint an access key*, fill
+  **Expires in (hours)**. Leave it empty (or `0`) for the historical non-expiring key.
+- **MCP** — `apikey_create { projectKey: "B", scopes: "tasks:read,tasks:write",
+  expiresInSeconds: 86400 }` (needs `admin:provision`, i.e. it runs on your own full key).
+
+`tasks:read` alone is enough to look; add `tasks:write` only if the agent must append. The
+key's project claim IS its default project (`McpProjectDefaultFilter`), so the agent never
+repeats `projectKey` in a call.
+
+Do **not** lend a `*` key for this. It authorizes every project on the instance, and the
+whole point of a project-scoped key is that the blast radius matches the task.
+
+### 9.2 Add a second MCP server entry
+
+`.mcp.json` in the agent's folder (Claude Code; the other harnesses use their own config
+file, same `mcpServers` shape):
+
+```json
+{
+  "mcpServers": {
+    "petbox": {
+      "type": "http",
+      "url": "https://petbox.3po.su/mcp",
+      "headers": { "X-Api-Key": "${PETBOX_A_API_KEY}" }
+    },
+    "petbox-b": {
+      "type": "http",
+      "url": "https://petbox.3po.su/mcp",
+      "headers": { "X-Api-Key": "${PETBOX_B_API_KEY}" }
+    }
+  }
+}
+```
+
+`ProjectConnect` already emits the per-project variable name — `PETBOX_<PROJECT>_API_KEY`,
+project sanitised to `A-Z0-9_` (`$system` → `PETBOX_SYSTEM_API_KEY`) — precisely so several
+projects can coexist on one machine; a single `PETBOX_API_KEY` cannot. Its own comment says
+so (`Pages/Admin/ProjectConnect.cshtml.cs`).
+
+**A later `petbox-wire apply` will not eat this entry.** `mergeMcpServer`
+(`src/clients-ts/petbox-wire/src/wire.ts`) reads the existing file and rewrites exactly one
+key, `mcpServers["petbox"]`; anything else it finds is preserved. The one thing it warns
+about is an entry *named* `petbox` with different content.
+
+### 9.3 Clean up
+
+`apikey_delete { key }` (or wait for the TTL). A key that was lent for an evening should not
+outlive it — and `apikey_list` shows `ExpiresAt`, so "when does this one die" is answerable
+without remembering the mint.
+
+### Why no REST is involved
+
+`/mcp` is **stateless** (`WithHttpTransport(o => o.Stateless = true)`), so there is no
+session, no `initialize` handshake, and no client SDK to install: a single
+`POST /mcp` with `X-Api-Key` and a JSON-RPC `tools/call` body is the entire exchange. Tasks
+have no REST face at all (`tasks_*` is MCP-only), so this is not a workaround — it is the
+only programmatic door, and it is one HTTP request wide. A `curl` shape, if you need one:
+
+```
+curl -s https://petbox.3po.su/mcp \
+  -H "X-Api-Key: $PETBOX_B_API_KEY" \
+  -H "Content-Type: application/json" \
+  -H "Accept: application/json, text/event-stream" \
+  -d '{"jsonrpc":"2.0","id":1,"method":"tools/call",
+       "params":{"name":"tasks_search","arguments":{"board":"work","bodyLen":0}}}'
+```
+
+The response is SSE-framed (`event: message` + a `data:` line), so a script parses the
+`data:` payload rather than the whole body.
