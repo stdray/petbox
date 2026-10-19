@@ -41,8 +41,11 @@ A pi context file cannot include another file, and a subagent in `prompt_mode: r
 loads context files at all — so one big `AGENTS.md` reaches either the main session or the
 children, never both. The rules are therefore one file per topic, consumed by two paths:
 
-- **main session** — `agent-rules.ts` reads `rules/amd-*.md` on every turn and sets them as the
-  `agent_rules` prompt section (cached on mtime, so an edit lands without a restart). Files
+- **main session** — `agent-rules.ts` reads `rules/amd-*.md` **once, on `session_start`**, and
+  serves that exact text for the rest of the session. Editing a rule takes effect at the next
+  pi start — the same contract a context file has. The freeze is not laziness: a section that
+  changes mid-transcript makes pi replay the prompt and the provider re-read the whole
+  conversation without its cache (`Cache miss: N tokens re-billed`). Files
   named `pbx-*.md` go into a separate `petbox_rules` section that is added **only when the
   session declares a petbox MCP tool** — PetBox prose must not reach a session that cannot
   call the board. Same capability test and asymmetry as `petbox-pi.ts`'s banner: a positive
@@ -57,6 +60,11 @@ skills catalog and need no `disable-model-invocation` flag. The trade-off is tha
 
 Per-role assignment is deliberate: `scout` and `reviewer` do not carry the destructive-action or
 delegation rules, because they have no tools to act on them.
+
+The PetBox gate is decided once per session too, from the MCP **config** (`getMcpServers()`, then
+the effective `mcp.json` files) rather than the live tool registry: MCP connects in the
+background, so a runtime check is false at the first prompt of every short run and would add the
+section later — another re-bill, and none at all in headless runs.
 
 ## `petbox-pi.ts`
 
