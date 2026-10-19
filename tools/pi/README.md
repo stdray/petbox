@@ -1,20 +1,59 @@
-# pi harness adapter (unofficial)
+# pi harness wiring (unofficial)
 
-The [pi](https://pi.dev) coding agent is wired to PetBox by a **hand-deployed extension**, not by
-`petbox-wire`. This directory is the source of truth for that extension; the copy pi actually
-loads lives in pi's extension directory, outside the repo, and is refreshed by copying the file:
+The [pi](https://pi.dev) coding agent is wired to PetBox by **hand-deployed files**, not by
+`petbox-wire`. This directory is the source of truth for all of them; the copies pi actually
+loads live in `~/.pi/agent/`, outside the repo, and are refreshed by `deploy.sh`:
 
 ```
-tools/pi/petbox-pi.ts  ──copy──▶  ~/.pi/agent/extensions/petbox-pi.ts     (user scope, all projects)
-                                   <project>/.pi/extensions/petbox-pi.ts  (project scope)
+tools/pi/extensions/petbox-pi.ts   ──▶  ~/.pi/agent/extensions/petbox-pi.ts
+tools/pi/extensions/agent-rules.ts ──▶  ~/.pi/agent/extensions/agent-rules.ts
+tools/pi/agents/*.md               ──▶  ~/.pi/agent/agents/*.md
+tools/pi/rules/amd-*.md            ──▶  ~/.pi/agent/skills/amd-*.md
 ```
+
+```sh
+./tools/pi/deploy.sh --dry-run   # what would change
+./tools/pi/deploy.sh             # install / refresh
+```
+
+Then restart pi: extensions load at startup, and `/reload` re-reads config but not new files.
 
 It is deliberately **not part of `petbox-wire`**: the kit owns the shared ladder (registry,
-transcript filters, protocol + canon rendering, budget), and this file only adapts pi's
-in-process session tree and prompt sections to it. Nothing in `petbox-wire apply` / `update`
-touches it, so an update never clobbers it and a deploy never overwrites a kit file.
+transcript filters, protocol + canon rendering, budget), and these files only adapt pi's
+in-process session tree, prompt sections and subagent roles to it. Nothing in `petbox-wire
+apply` / `update` touches them, so an update never clobbers them and a deploy never overwrites
+a kit file. pi is not a wire harness (owner decision 2026-10-20): roles here are free to differ
+from `src/common/default-agents.json`.
 
-What it does, once deployed:
+## Layout
+
+| Path | What it is |
+|---|---|
+| `extensions/petbox-pi.ts` | session mirror + memory banner + recall nudge (see below) |
+| `extensions/agent-rules.ts` | assembles `rules/amd-*.md` into the `agent_rules` prompt section for the main session |
+| `agents/*.md` | our five subagent roles: `worker`, `scout`, `oracle`, `reviewer`, `researcher` |
+| `rules/amd-*.md` | the operating rules, one topic per file |
+
+## Rules: why skills and not `AGENTS.md`
+
+A pi context file cannot include another file, and a subagent in `prompt_mode: replace` never
+loads context files at all — so one big `AGENTS.md` reaches either the main session or the
+children, never both. The rules are therefore one file per topic, consumed by two paths:
+
+- **main session** — `agent-rules.ts` reads `rules/amd-*.md` on every turn and sets them as the
+  `agent_rules` prompt section (cached on mtime, so an edit lands without a restart);
+- **children** — each role lists the files it needs in its `skills:` frontmatter, and
+  `pi-subagents` preloads exactly those.
+
+The files sit in a skills directory but are **flat `.md`**, which pi's skill discovery ignores
+(it only accepts directories containing `SKILL.md`), so they never pollute the main session's
+skills catalog and need no `disable-model-invocation` flag. The trade-off is that they are not
+`/skill:name`-invokable.
+
+Per-role assignment is deliberate: `scout` and `reviewer` do not carry the destructive-action or
+delegation rules, because they have no tools to act on them.
+
+## `petbox-pi.ts`
 
 - **Session mirror** — appends the active branch's dialogue (user/assistant text only) to the
   PetBox Sessions module: one incremental push per turn, a final best-effort push on shutdown.
@@ -27,17 +66,11 @@ What it does, once deployed:
 
 ## Install
 
-Prerequisites: `petbox-wire` has run on this machine at least once (the extension imports the
-stable kit mirror `~/.petbox/wire`), the project is registered in `~/.petbox/projects.json`, and
-its key is reachable as an env var (or via `~/.petbox/keys.json`).
+Prerequisites for `petbox-pi.ts`: `petbox-wire` has run on this machine at least once (the
+`extension imports the stable kit mirror `~/.petbox/wire`), the project is registered in
+`~/.petbox/projects.json`, and its key is reachable as an env var (or via `~/.petbox/keys.json`).
 
-```sh
-# 1. the extension (user scope; use <project>/.pi/extensions/ to scope it to one project)
-mkdir -p ~/.pi/agent/extensions
-cp tools/pi/petbox-pi.ts ~/.pi/agent/extensions/petbox-pi.ts
-
-# 2. project MCP config — copy this repo's .pi/mcp.json into the project you are wiring
-mkdir -p <project>/.pi
+What `petbox-pi.ts` does, once deployed:
 cp .pi/mcp.json <project>/.pi/mcp.json     # adjust the key env var if the project is not $system
 
 # 3. the key itself (never committed; .pi/mcp.json only references ${...})
@@ -117,6 +150,10 @@ file's loading mechanism and does not belong in the banner-stability change.
 
 | Path | Role |
 | --- | --- |
-| `tools/pi/petbox-pi.ts` | the extension (source of truth; copy to pi's extension dir) |
+| `tools/pi/extensions/petbox-pi.ts` | session mirror, memory banner, recall nudge |
+| `tools/pi/extensions/agent-rules.ts` | assembles `rules/amd-*.md` into the `agent_rules` prompt section |
+| `tools/pi/agents/*.md` | subagent roles (`worker`, `scout`, `oracle`, `reviewer`, `researcher`) |
+| `tools/pi/rules/amd-*.md` | operating rules, one topic per file |
+| `tools/pi/deploy.sh` | installs all of the above into `~/.pi/agent` |
 | `.pi/mcp.json` | pi MCP config for **this** project — the template for others |
-| `~/.petbox/wire/*` | the petbox-wire kit mirror it imports (installed by `petbox-wire`, not by us) |
+| `~/.petbox/wire/*` | the petbox-wire kit mirror `petbox-pi.ts` imports (installed by `petbox-wire`, not by us) |
