@@ -144,7 +144,25 @@ else
 												</div>
 											</div>
 
-											@* Only a cross-project key HAS a default project — a project-scoped one already
+											@* Expiry. A CLOSED list, not a free-typed number: the service's contract distinguishes three
+								states (leave unchanged / clear / set), and a blank text box cannot say which of "unchanged"
+								and "clear" the admin meant. "Unchanged" is the default so that saving a name never silently
+								disarms a temporary key. *@
+							<label class="form-control">
+								<span class="label-text text-xs opacity-70 mb-1">Expires</span>
+								<select name="expires" class="select select-bordered select-sm" data-testid="agent-key-edit-expires">
+									@foreach (var (value, label) in PetBox.Web.Auth.AgentKeyExpiryChoice.Options)
+									{
+										<option value="@value">@label</option>
+									}
+								</select>
+								<span class="text-xs opacity-50 mt-1" data-testid="agent-key-edit-expires-current">
+									Currently: @(k.ExpiresAt is null ? "never" : k.ExpiresAt.Value.ToString("yyyy-MM-dd HH:mm") + " UTC").
+									"Unchanged" keeps it.
+								</span>
+							</label>
+
+							@* Only a cross-project key HAS a default project — a project-scoped one already
 												defaults to its own claim, so the field would be a lie there (and the server
 												refuses it anyway). Clearing it is just submitting it empty. *@
 											@if (isCrossProject)

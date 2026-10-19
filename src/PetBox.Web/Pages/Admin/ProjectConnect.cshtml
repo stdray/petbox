@@ -59,6 +59,16 @@
 				<input type="text" name="name" required value="agent" class="input input-bordered input-sm font-mono" data-testid="connect-key-name" />
 			</label>
 
+			<label class="form-control max-w-sm mt-2">
+				<span class="label-text">Expires in (hours)</span>
+				<input type="number" name="expiresInHours" min="0" step="1" placeholder="empty = never expires"
+					   class="input input-bordered input-sm" data-testid="connect-expires-hours" />
+				<span class="text-xs opacity-60 mt-1">
+					For a temporary key — an agent lent this project for an evening, a one-off migration. It stops
+					authenticating when this elapses. Empty or 0 = non-expiring, exactly as before.
+				</span>
+			</label>
+
 			<div class="mt-3" data-testid="connect-scopes-group">
 				<div class="text-sm font-semibold mb-1">Scopes</div>
 				<div class="grid grid-cols-1 sm:grid-cols-2 gap-1">

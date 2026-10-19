@@ -114,7 +114,7 @@ public sealed class ProjectConnectModel : PageModel
 		return Page();
 	}
 
-	public async Task<IActionResult> OnPostMintAsync(string name, string[]? scopes)
+	public async Task<IActionResult> OnPostMintAsync(string name, string[]? scopes, int? expiresInHours = null)
 	{
 		Project = await _projects.GetAsync(ProjectKey);
 		if (Project is null) { ProjectNotFound = true; return Page(); }
@@ -138,9 +138,20 @@ public sealed class ProjectConnectModel : PageModel
 			return Page();
 		}
 
+		if (expiresInHours is < 0)
+		{
+			ErrorMessage = "Expiry must be zero or more hours (leave empty for a non-expiring key).";
+			return Page();
+		}
+
+		// A temporary key straight from the UI (work ui-key-expiry). Empty/0 keeps the historical
+		// behaviour — a key with no expiry — so this form does not change what an admin gets by
+		// ignoring the field.
+		var expiresAt = expiresInHours is { } hours and > 0 ? DateTime.UtcNow.AddHours(hours) : (DateTime?)null;
+
 		// Same two calls ProjectDetail's OnPostCreateKeyAsync makes — MintAsync owns the raw secret's
 		// generation and the project-existence check.
-		var minted = await _keys.MintAsync(new AgentKeyMint(name.Trim(), valid, ProjectKey), KeyIssuer.From(User));
+		var minted = await _keys.MintAsync(new AgentKeyMint(name.Trim(), valid, ProjectKey, expiresAt), KeyIssuer.From(User));
 		switch (minted)
 		{
 			case KeyMintResult.Minted m:

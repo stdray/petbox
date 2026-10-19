@@ -92,7 +92,7 @@ public sealed class AgentKeyEditFixture : IAsyncLifetime
 
 	public async Task<string> MintKeyAsync(
 		string projectKey, string name, string scopes = "config:read",
-		string? defaultProjectKey = null, DateTime? lastUsedAt = null)
+		string? defaultProjectKey = null, DateTime? lastUsedAt = null, DateTime? expiresAt = null)
 	{
 		var key = $"yb_key_{Guid.NewGuid():N}";
 		using var scope = Factory.Services.CreateScope();
@@ -106,6 +106,7 @@ public sealed class AgentKeyEditFixture : IAsyncLifetime
 			CreatedAt = DateTime.UtcNow,
 			DefaultProjectKey = defaultProjectKey,
 			LastUsedAt = lastUsedAt,
+			ExpiresAt = expiresAt,
 		});
 		return key;
 	}
@@ -182,7 +183,7 @@ public sealed class AgentKeyEditTests(AgentKeyEditFixture fx) : IClassFixture<Ag
 	// must therefore not be the antiforgery token, and must not be the rendered list either.
 	async Task<HttpResponseMessage> PostEditAsync(
 		string pageUrl, string authCookie, string key,
-		string name, IEnumerable<string> scopes, string? defaultProject = null)
+		string name, IEnumerable<string> scopes, string? defaultProject = null, string? expires = null)
 	{
 		var getReq = new HttpRequestMessage(HttpMethod.Get, pageUrl);
 		getReq.Headers.Add("Cookie", authCookie);
@@ -199,6 +200,8 @@ public sealed class AgentKeyEditTests(AgentKeyEditFixture fx) : IClassFixture<Ag
 		form.AddRange(scopes.Select(s => new KeyValuePair<string, string>("scopes", s)));
 		if (defaultProject is not null)
 			form.Add(new KeyValuePair<string, string>("defaultProject", defaultProject));
+		if (expires is not null)
+			form.Add(new KeyValuePair<string, string>("expires", expires));
 
 		var req = new HttpRequestMessage(HttpMethod.Post, $"{pageUrl}?handler=Edit")
 		{
@@ -263,6 +266,74 @@ public sealed class AgentKeyEditTests(AgentKeyEditFixture fx) : IClassFixture<Ag
 		var row = _fx.Row(key);
 		row.DefaultProjectKey.Should().BeNull("an empty field CLEARS the default project");
 		row.DefaultProjectKey.Should().NotBe("", "and it must be NULL — an empty string is a different, broken value");
+	}
+
+	// ---- the expiry editor (work ui-key-expiry) ----
+	//
+	// Three states, and the point of the closed list in the form is that they stay distinguishable:
+	// unchanged (the field is absent / empty), clear ("0"), set ("N" hours).
+
+	[Fact]
+	public async Task Sysadmin_sets_an_expiry_from_the_form()
+	{
+		var key = await _fx.MintKeyAsync("projea", "lend-me-an-evening");
+		_fx.Row(key).ExpiresAt.Should().BeNull("precondition: a freshly minted key does not expire");
+
+		var auth = await LoginAsync("admin");
+		var before = DateTime.UtcNow;
+		using var resp = await PostEditAsync(SysKeys, auth, key, "lend-me-an-evening", ["config:read"], expires: "1");
+
+		resp.StatusCode.Should().Be(HttpStatusCode.Redirect);
+		var expiresAt = _fx.Row(key).ExpiresAt;
+		expiresAt.Should().NotBeNull("the form's 1-hour choice must reach the stored row");
+		expiresAt!.Value.Should().BeAfter(before).And.BeBefore(before.AddHours(1.1));
+	}
+
+	// The footgun the three-state contract exists to avoid: an admin renaming a key must not
+	// silently disarm the TTL a colleague put on it.
+	[Fact]
+	public async Task Editing_a_name_does_not_touch_the_expiry()
+	{
+		var expiry = new DateTime(2027, 1, 2, 3, 4, 5, DateTimeKind.Utc);
+		var key = await _fx.MintKeyAsync("projea", "temp-key-before", expiresAt: expiry);
+
+		var auth = await LoginAsync("admin");
+		using var resp = await PostEditAsync(SysKeys, auth, key, "temp-key-after", ["config:read"]);
+
+		resp.StatusCode.Should().Be(HttpStatusCode.Redirect);
+		var row = _fx.Row(key);
+		row.Name.Should().Be("temp-key-after");
+		row.ExpiresAt.Should().Be(expiry, "a rename that never mentioned the expiry must leave it EXACTLY as it was");
+	}
+
+	[Fact]
+	public async Task Sysadmin_clears_an_expiry_and_the_key_becomes_permanent()
+	{
+		var key = await _fx.MintKeyAsync(
+			"projea", "make-permanent", expiresAt: DateTime.UtcNow.AddHours(2));
+		_fx.Row(key).ExpiresAt.Should().NotBeNull("precondition: it starts WITH an expiry");
+
+		var auth = await LoginAsync("admin");
+		using var resp = await PostEditAsync(SysKeys, auth, key, "make-permanent", ["config:read"], expires: "0");
+
+		resp.StatusCode.Should().Be(HttpStatusCode.Redirect);
+		_fx.Row(key).ExpiresAt.Should().BeNull("the 'never expires' choice CLEARS the expiry");
+	}
+
+	// A value outside the offered list is a REFUSAL, not a silent "unchanged": silently ignoring what
+	// the admin asked for is exactly the failure class the editor exists to close.
+	[Fact]
+	public async Task An_unknown_expiry_choice_is_refused_and_changes_nothing()
+	{
+		var key = await _fx.MintKeyAsync("projea", "crafted-post");
+
+		var auth = await LoginAsync("admin");
+		using var resp = await PostEditAsync(SysKeys, auth, key, "renamed-by-crafted-post", ["config:read"], expires: "forever");
+
+		resp.StatusCode.Should().Be(HttpStatusCode.Redirect, "PRG back to the page carrying the refusal");
+		var row = _fx.Row(key);
+		row.Name.Should().Be("crafted-post", "the whole edit is refused, not just the expiry field");
+		row.ExpiresAt.Should().BeNull();
 	}
 
 	// ---- the "last used" column (spec apikey-last-used) ----

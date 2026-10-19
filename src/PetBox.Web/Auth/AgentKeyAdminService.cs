@@ -29,7 +29,48 @@ public sealed record AgentKeyEdit(
 	string Key,
 	string Name,
 	IReadOnlyList<string> Scopes,
-	string? DefaultProject);
+	string? DefaultProject,
+	// Three states, not two — the same sentinel contract the apikey_update PATCH uses (AgentKeyPatch),
+	// so the form and the MCP verb cannot drift apart:
+	//   null  = leave the expiry ALONE (the admin edited the name; they did not ask to remove a TTL)
+	//   0     = clear it (the key stops expiring)
+	//   N > 0 = the key expires N seconds from now
+	// null is deliberately NOT "clear": the edit form always submits every other field, so making
+	// "omitted" mean "remove the TTL" would silently disarm a temporary key on any unrelated rename.
+	long? ExpiresInSeconds = null);
+
+// The admin FORM's expiry control: a closed list, not a free-typed number, precisely because the
+// record above distinguishes three states and a blank text box cannot say which of "unchanged" and
+// "clear" the admin picked. Values are HOURS (the UI's unit) except the "0" sentinel.
+public static class AgentKeyExpiryChoice
+{
+	public static readonly IReadOnlyList<(string Value, string Label)> Options =
+	[
+		("", "unchanged"),
+		("0", "never expires"),
+		("1", "1 hour"),
+		("24", "24 hours"),
+		("168", "7 days"),
+		("720", "30 days"),
+	];
+
+	// A hand-crafted POST is REFUSED rather than read as "unchanged" — silently ignoring what the
+	// caller asked for is the failure class this page exists to remove. An empty value IS the
+	// legitimate "unchanged" choice, so only a NON-empty unparseable one is an error.
+	public static bool TrySeconds(string? choice, out long? seconds, out string error)
+	{
+		seconds = null;
+		error = string.Empty;
+		if (string.IsNullOrWhiteSpace(choice)) return true;
+		if (!long.TryParse(choice, out var hours) || hours < 0)
+		{
+			error = $"Unknown expiry choice '{choice}' — expected one of the offered options.";
+			return false;
+		}
+		seconds = hours * 3600;
+		return true;
+	}
+}
 
 // What the PROVISIONING surface (the apikey_* MCP tools) asks for when it mints a key. Scopes are
 // already validated and canonicalized by the caller (ApiKeyScopes.Validate) — what is left here is
@@ -292,12 +333,20 @@ public sealed class AgentKeyAdminService(
 		// instead would leave a key defaulting to a project named "", which resolves to nothing on the
 		// next call: "" is not a value here, it is the absence of one.
 
+		// An expiry the caller did NOT name is carried over from the loaded row (`existing`), not
+		// cleared: this form always submits name/scopes/defaultProject, so "omitted" here means
+		// "the admin did not touch the expiry", never "remove the TTL".
+		var expiresAt = edit.ExpiresInSeconds is { } secs
+			? (secs == 0 ? (DateTime?)null : DateTime.UtcNow.AddSeconds(secs))
+			: existing.ExpiresAt;
+
 		// The write re-proves ownership in the statement. A forged POST from another workspace's admin
 		// matches zero rows and changes nothing — the rendered list was never the guard.
 		var affected = await Owned(db, db.ApiKeys.Where(k => k.Key == edit.Key), workspaceKey)
 			.Set(k => k.Name, name)
 			.Set(k => k.Scopes, string.Join(',', valid))
 			.Set(k => k.DefaultProjectKey, defaultProject)
+			.Set(k => k.ExpiresAt, expiresAt)
 			.UpdateAsync(ct);
 
 		return affected > 0 ? new KeyUpdateResult.Updated() : new KeyUpdateResult.NotFound();

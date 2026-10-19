@@ -61,9 +61,17 @@ public sealed class WorkspaceAgentKeysModel(AgentKeyAdminService keys) : PageMod
 	//
 	// 404 (not 403) for "not yours", for the same reason as revoke: either other answer would let a
 	// workspace admin probe for the existence of another tenant's keys.
-	public async Task<IActionResult> OnPostEditAsync(string key, string name, string[] scopes, string? defaultProject)
+	public async Task<IActionResult> OnPostEditAsync(string key, string name, string[] scopes, string? defaultProject, string? expires = null)
 	{
-		var edit = new AgentKeyEdit(key, name, scopes ?? [], defaultProject);
+		// Same closed-list expiry control as the sysadmin page (the editor is the SAME partial, so a
+		// page that ignored the field would silently drop what the admin picked).
+		if (!AgentKeyExpiryChoice.TrySeconds(expires, out var expiresInSeconds, out var expiryError))
+		{
+			this.NotifyError(expiryError);
+			return RedirectToPage(new { workspaceKey = WorkspaceKey });
+		}
+
+		var edit = new AgentKeyEdit(key, name, scopes ?? [], defaultProject, expiresInSeconds);
 		// THE THIRD ESCALATION PATH, and the comment right above already described the attack without
 		// noticing it applied here too: "would otherwise re-scope it to admin:provision". That was
 		// written about a FOREIGN key (the IDOR, closed by the workspace predicate) — but re-scoping
