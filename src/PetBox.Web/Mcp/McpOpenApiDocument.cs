@@ -33,7 +33,14 @@ static class McpOpenApiDocument
 		+ "generators, Swagger UI, contract diffs — can consume the surface. Authentication is an API key "
 		+ "in the X-Api-Key header; which key may call a tool is declared per operation in "
 		+ "x-required-scopes / x-scope-kind. Bodies follow the same null-omission and bodyLen contracts "
-		+ "the live server applies.";
+		+ "the live server applies. "
+		+ "KEY-INDEPENDENT, AND WHY projectKey LOOKS REQUIRED: this document describes the MAXIMAL schema, "
+		+ "so every parameter of the tool is listed and `projectKey` is required. A key scoped to exactly "
+		+ "one project may omit it — the server substitutes the key's own project — and the live per-key "
+		+ "schema (tools/list) says so in that parameter's description and drops it from `required`. "
+		+ "Passing it explicitly is always accepted, so a client generated from this document works with "
+		+ "any key. Every other parameter and every output schema is identical to what the server "
+		+ "publishes for any key.";
 
 	public static JsonObject Build(Assembly assembly, JsonSerializerOptions serializerOptions, IServiceProvider services)
 	{
