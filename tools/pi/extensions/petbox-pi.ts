@@ -24,6 +24,9 @@
 // reach the mirror from both). On a machine whose kit mirror is not under this path, the prefix
 // has to be repointed — see tools/pi/README.md's "Portability" note.
 
+import { existsSync, readFileSync } from "node:fs";
+import { homedir } from "node:os";
+import { join } from "node:path";
 import type { ExtensionAPI, ExtensionContext, SessionEntry } from "@earendil-works/pi-coding-agent";
 import { pushTranscript } from "C:/Users/stdray/.petbox/wire/append.ts";
 import type { PushTarget } from "C:/Users/stdray/.petbox/wire/append.ts";
@@ -71,6 +74,8 @@ const NUDGE_CUSTOM_TYPE = "petbox-recall-nudge";
 // Prefix every petbox MCP tool name shares, taken from the kit's OWN namer instead of being
 // spelled out a second time (mcpPetboxTool is `<prefix><verb>`, so an empty verb IS the prefix).
 const PETBOX_TOOL_PREFIX = mcpPetboxTool("");
+// The server key in `mcp.json` (`mcpServers.petbox`).
+const PETBOX_SERVER_NAME = "petbox";
 
 // A MessageEntry whose role is "system" carries the structured prompt state; only the section
 // THIS file owns is read back out of it (frozenBannerSection).
@@ -156,8 +161,38 @@ let bannerAllowed: boolean | null = null;
 // tools in its own `tools:` list therefore still gets the banner, and so does any future subagent
 // extension that exposes them. This deliberately does NOT sniff pi-subagents (no PI_SUBAGENT_*
 // env, no name pattern): swapping the subagent extension must not change what the banner claims.
+//
+// The registry is also LATE on a cold start: MCP servers connect in the background, so at the
+// only `before_agent_start` of a short run `getActiveTools()` still holds no petbox tool, and
+// the banner was withheld from every headless `pi --print` run even in a wired project —
+// observation `petbox-banner-withheld-in-headless-runs` (2026-10-20). So the predicate is a
+// disjunction, strongest signal last: the project CONFIGURES a petbox server (true from the
+// first turn, and the question the banner actually answers), or the session already declares
+// the tools. The comment above that says "capability, not agent class" still holds — a
+// configured-but-unreachable server is not a capability claim, and a child that cannot see the
+// server's config (a project whose `.pi/mcp.json` it does not share) still matches neither.
 function petboxToolsAreCallable(pi: ExtensionAPI): boolean {
-  return pi.getActiveTools().some((name) => name.startsWith(PETBOX_TOOL_PREFIX));
+  if (pi.getActiveTools().some((name) => name.startsWith(PETBOX_TOOL_PREFIX))) return true;
+  try {
+    if (pi.getMcpServers().some((server) => server.name === PETBOX_SERVER_NAME)) return true;
+  } catch {
+    // fall through to the config files
+  }
+  const candidates = [
+    join(homedir(), ".pi", "agent", "mcp.json"),
+    join(process.cwd(), ".pi", "mcp.json"),
+  ];
+  for (const file of candidates) {
+    try {
+      if (!existsSync(file)) continue;
+      const parsed = JSON.parse(readFileSync(file, "utf-8"));
+      const servers = parsed?.mcpServers;
+      if (servers && typeof servers === "object" && PETBOX_SERVER_NAME in servers) return true;
+    } catch {
+      // an unreadable or non-JSON config is not proof of absence, so keep looking
+    }
+  }
+  return false;
 }
 
 // Active-branch dialogue only: getBranch() walks root→leaf along the current branch (so
