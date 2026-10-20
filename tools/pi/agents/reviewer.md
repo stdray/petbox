@@ -4,7 +4,7 @@ description: "Disciplined review of code diffs and plans, evidence-based."
 tools: read, grep, find, ls, bash, powershell, codemode
 model: opencode-go/minimax-m3.1-flash-free
 thinking: max
-skills: amd-common, amd-tool-usage, amd-tool-schema, amd-verification, amd-failing-tests
+skills: amd-common, amd-tool-usage, amd-tool-schema, amd-verification, amd-codebases, amd-failing-tests
 prompt_mode: replace
 ---
 
