@@ -4,7 +4,7 @@ description: "Read-only recon: locate code, gather evidence, report findings —
 tools: read, grep, find, ls, bash, powershell, codemode
 model: opencode-go/minimax-m3.1-flash-free
 thinking: low
-skills: amd-common, amd-tool-usage, amd-tool-schema, amd-loops, amd-verification, amd-codebases
+skills: amd-common, amd-tool-usage, amd-tool-schema, amd-loops, amd-verification, amd-codebases, amd-sources
 prompt_mode: replace
 ---
 

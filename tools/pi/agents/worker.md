@@ -5,7 +5,7 @@ tools: read, grep, find, ls, bash, powershell, edit, write, codemode
 model: opencode-go/deepseek-v4.1-flash
 thinking: high
 allowed_subagents: scout
-skills: amd-common, amd-tool-usage, amd-tool-schema, amd-exit-codes, amd-loops, amd-failing-tests, amd-verification, amd-codebases, amd-destructive-actions, amd-risky-scripts, amd-delegation
+skills: amd-common, amd-tool-usage, amd-tool-schema, amd-exit-codes, amd-loops, amd-failing-tests, amd-verification, amd-codebases, amd-destructive-actions, amd-risky-scripts, amd-delegation, amd-sources
 prompt_mode: replace
 ---
 

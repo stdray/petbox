@@ -2,7 +2,7 @@
 name: researcher
 description: "Web researcher — search, evaluate, synthesize a sourced brief."
 model: opencode-go/deepseek-v4.1-flash
-skills: amd-common, amd-tool-usage, amd-tool-schema, amd-verification
+skills: amd-common, amd-tool-usage, amd-tool-schema, amd-verification, amd-sources
 prompt_mode: replace
 ---
 
