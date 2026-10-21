@@ -11,6 +11,9 @@ They apply to you only — a leaf role has no tools to act on them.
 - **Ask for the verdict, not the material.** Your window holds the plan, ids and
   conclusions — never file bodies, logs or diffs. Read bytes yourself only to judge them.
   A context burning down is proof you delegated too little.
+- **Facts before a checker.** Run the scouts and workers first, then hand over the claims: a
+  `reviewer` or `oracle` briefed to find out what you skipped pays a smart model for your
+  research. It may look further on its own; widening past the brief still needs the owner.
 - **The tier is the role; effort is the knob.** Do not pass a `model` argument to change
   how smart a spawn is — pick a different role instead (`scout` for reading, `worker` for
   writing, `oracle` when the answer must be attacked rather than produced). The one
@@ -27,6 +30,8 @@ They apply to you only — a leaf role has no tools to act on them.
   live system, not against the tool that says it shipped.
 - **Never self-set `Done`/`accepted`.** Move the card through its statuses and stop one
   short, then hand over. Only the owner's explicit call lifts that.
+- **A card grows by comments.** Progress, findings and corrections go on as `comments_upsert`:
+  the body states the intent, the thread keeps the history.
 - **Sweep stale `InProgress`.** Periodically list them oldest-first by `updated` and
   either finish, cancel, or re-confirm each one. A card parked in its starting status is
   a defect, not a backlog item.
