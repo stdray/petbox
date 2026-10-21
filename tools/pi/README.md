@@ -31,9 +31,33 @@ from `src/common/default-agents.json`.
 |---|---|
 | `extensions/petbox-pi.ts` | session mirror + memory banner + recall nudge (see below) |
 | `extensions/agent-rules.ts` | assembles `rules/amd-*.md` into the `agent_rules` prompt section for the main session |
+| `extensions/pwsh-tool.ts` | the built-in PowerShell tool registered a second time as `pwsh` — see "Why a second PowerShell tool" below |
 | `agents/*.md` | our five subagent roles: `worker`, `scout`, `oracle`, `reviewer`, `researcher` |
 | `rules/amd-*.md` | the operating rules, one topic per file (always injected) |
 | `rules/pbx-*.md` | PetBox-specific rules — injected only when the session declares a petbox MCP tool |
+
+## Why a second PowerShell tool (`pwsh`)
+
+`pwsh-tool.ts` re-registers pi's **own** PowerShell tool definition under the name `pwsh`.
+Nothing is reimplemented: `createPowerShellToolDefinition` is imported from the SDK and only
+`name`/`label` are overridden, so the parameter schema (`command`, `timeout`), output
+truncation, temp-file spill and session environment are the built-in's. The export exists in
+the package root of both `pi-coding-agent` 1.3.0 (CLI) and 1.2.0 (nested inside pi-web), and
+extensions resolve that specifier through the loader's virtual-module table, so one file
+serves both hosts.
+
+It exists because **pi-web collapses the two shells into one**. Its
+`lib/powershell-settings.ts` renames every name in `{bash, powershell}` to whichever shell is
+configured, so with both listed in `defaultTools` the model gets `bash` only — `powershell`
+is rewritten away. A tool whose name is outside pi-web's fixed `CODING_TOOL_NAMES` set is
+carried through untouched, which is why `pwsh` survives.
+
+Consequence, deliberately accepted: in the terminal both `powershell` and `pwsh` are active.
+They are the *same* code and the *same* binary — the tool named `powershell` resolves
+`pwsh.exe` first and only falls back to `powershell.exe` (`dist/utils/shell.js:105-114`), so
+the second name buys ~6 characters of prompt rather than a second engine. Banishing the
+canonical name instead would cost a rename across `settings.json`, this prose and four agent
+profiles, and would leave PowerShell unavailable whenever this extension fails to load.
 
 ## Rules: why skills and not `AGENTS.md`
 
