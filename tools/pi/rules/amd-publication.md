@@ -17,6 +17,11 @@ and it is spent once — there is no "edit later" that un-sends it.
   you actually ran in that order; version and platform stated; nothing that reads as
   "should work" or "probably". Anything unverified is either removed or labelled as
   unverified in the text itself.
+- **Search before you open.** Before writing a new issue or PR, search the project's existing
+  reports for the same behaviour and read the closest matches (`gh search issues --repo owner/name`,
+  the tracker's search, the changelog). Attach those matches — with why they are or are not the same
+  thing — to the evidence the reviewer gets, together with the exact installation method and
+  versions. A review that never saw the duplicate is not a review.
 - **Never publish:** keys, tokens, internal paths that expose a machine layout, private
   project names, personal data, transcripts. When in doubt, quote the minimum that makes
   the claim intelligible.
