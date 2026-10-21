@@ -16,8 +16,9 @@ You have `bash` (Git Bash on Windows) and `powershell` (`pwsh.exe`). This is a c
 command, not a session setting:
 
 - **`bash`** — POSIX tooling and everything the repo already scripts that way: `grep`,
-  `sed`, `awk`, pipelines, `find`, `./build.sh`, `git` output parsing. A repo command
-  documented as `./build.sh --target=X` runs in bash unchanged.
+  `sed`, `awk`, pipelines, `find`, `rg`/`fd` (both ship with pi), `./build.sh`, `git`
+  output parsing. `jq` is not shipped — it is there only if the machine has it. A repo
+  command documented as `./build.sh --target=X` runs in bash unchanged.
 - **`powershell`** — Windows-native work: `Get-*`/`Start-Process`, services, the registry,
   event logs, paths with backslashes and spaces, anything whose only documentation is
   PowerShell. A repo command documented as `./build.ps1 -Target X` is native here.
