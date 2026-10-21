@@ -161,13 +161,23 @@ function ndjson(msgs: readonly Msg[]): string {
   return msgs.map((m) => JSON.stringify(m)).join("\n");
 }
 
+// What ONE post() attempt produced. The timer case is reported as a fact ("our own timer is what
+// aborted it") rather than inferred from the thrown error's shape downstream: this abort is the
+// only abort signal in play, and a caller must not have to guess from an error message whether
+// the peer refused or the clock ran out (undici has surfaced both a DOMException named
+// "AbortError" and a TypeError wrapping one).
+type PostResult =
+  | { kind: "resp"; resp: Response }
+  | { kind: "timeout"; error: unknown }
+  | { kind: "error"; error: unknown };
+
 async function post(
   url: string,
   apiKey: string,
   body: string,
   timeoutMs: number,
   metaHeader: string | null,
-): Promise<Response> {
+): Promise<PostResult> {
   const headers: Record<string, string> = {
     "X-Api-Key": apiKey,
     "Content-Type": "application/x-ndjson; charset=utf-8",
@@ -177,14 +187,23 @@ async function post(
   };
   if (metaHeader) headers["X-PetBox-Session-Meta"] = metaHeader;
   const ctrl = new AbortController();
-  const timer = setTimeout(() => ctrl.abort(), timeoutMs);
+  let timedOut = false;
+  const timer = setTimeout(() => {
+    timedOut = true;
+    ctrl.abort();
+  }, timeoutMs);
   try {
-    return await fetch(url, {
-      method: "POST",
-      headers,
-      body,
-      signal: ctrl.signal,
-    });
+    return {
+      kind: "resp",
+      resp: await fetch(url, {
+        method: "POST",
+        headers,
+        body,
+        signal: ctrl.signal,
+      }),
+    };
+  } catch (error) {
+    return timedOut ? { kind: "timeout", error } : { kind: "error", error };
   } finally {
     clearTimeout(timer);
   }
@@ -197,17 +216,28 @@ type PostOutcome =
   // Kept distinct from "network" on purpose: a network failure means a request went out and
   // failed; this means none did, and claiming otherwise in wire.log would be a fabricated
   // diagnosis (see RETRY_DEADLINE_MS / pushTranscript's use of this outcome).
-  | { kind: "budget-exhausted" };
+  | { kind: "budget-exhausted" }
+  // An attempt WAS sent, and our own per-attempt timer aborted it mid-flight because that timer
+  // was the shared deadline itself (not the per-request cap) — i.e. the deadline, not the peer,
+  // ended this request. Kept distinct from "network" for the same reason "budget-exhausted" is:
+  // the peer never said anything was wrong, so calling it a network failure fabricates a
+  // diagnosis and hides the real one (observation
+  // append-retry-503-deadline-test-flaky-under-load — under load the final attempt got a
+  // sliver-sized timeout, aborted, and wire.log claimed "network failure … aborted" instead of
+  // naming the exhausted budget).
+  | { kind: "deadline-aborted"; error: unknown };
 
 // Retries post() against ONE fixed url+body while the outcome is transient (a RETRYABLE_STATUSES
 // status, or a thrown network error), never running past `deadline` (an absolute Date.now()-scale
 // timestamp shared across every attempt in this pushTranscript call — see RETRY_DEADLINE_MS) and
 // capped in COUNT only by MAX_RETRY_ATTEMPTS_SAFETY_CAP (a degenerate-case guard, not a real
 // limit — see its comment). Returns whatever the LAST attempt produced — a settled response
-// (2xx, 409, 404, or a retryable status the deadline ran out on) or an exhausted network failure
-// — or "budget-exhausted" if the deadline was already gone before any attempt — plus how many
+// (2xx, 409, 404, or a retryable status the deadline ran out on), an exhausted network failure,
+// or "deadline-aborted" when that last attempt was cut off by the deadline itself — or
+// "budget-exhausted" if the deadline was already gone before any attempt — plus how many
 // attempts it actually took (0 for budget-exhausted; 1 when the first try already settled it, so
 // callers can stay silent on the fast/normal path and only log when retries actually fired).
+// "deadline-aborted" counts the aborted attempt in `attempts`: it was sent, so it was spent.
 async function attemptWithRetry(
   url: string,
   apiKey: string,
@@ -222,16 +252,34 @@ async function attemptWithRetry(
     const remaining = deadline - Date.now();
     if (remaining <= 0) break; // out of budget — the loop-entry outcome above stands
     attempts++;
+    // Cap THIS attempt's own timeout to whatever remains of the shared deadline — this is what
+    // actually protects against a dead socket (see RETRY_DEADLINE_MS's comment): without it a
+    // single stalled attempt could burn the full baseTimeoutMs regardless of how little budget is
+    // left. Named (not inlined) because the classification below leans on it: when this value IS
+    // the remaining budget, a timeout fired by it is the deadline firing, by construction.
+    const attemptTimeoutMs = Math.min(baseTimeoutMs, remaining);
+    let r: PostResult;
     try {
-      // Cap THIS attempt's own timeout to whatever remains of the shared deadline — this is
-      // what actually protects against a dead socket (see RETRY_DEADLINE_MS's comment): without
-      // it a single stalled attempt could burn the full baseTimeoutMs regardless of how little
-      // budget is left.
-      const resp = await post(url, apiKey, body, Math.min(baseTimeoutMs, remaining), metaHeader);
-      outcome = { kind: "response", resp };
-      if (resp.ok || !isRetryableStatus(resp.status)) return { outcome, attempts };
+      r = await post(url, apiKey, body, attemptTimeoutMs, metaHeader);
     } catch (e) {
-      outcome = { kind: "network", error: e };
+      // post() reports its own failures as values; this only catches a genuinely unexpected
+      // throw (a bug, or a platform rejecting the call outright) and keeps it inside the old
+      // "treat it as a failed attempt" behaviour instead of letting it escape pushTranscript.
+      r = { kind: "error", error: e };
+    }
+    if (r.kind === "resp") {
+      outcome = { kind: "response", resp: r.resp };
+      if (r.resp.ok || !isRetryableStatus(r.resp.status)) return { outcome, attempts };
+    } else if (r.kind === "timeout" && attemptTimeoutMs === remaining) {
+      // Our own timer aborted the request, and that timer WAS the shared deadline: the budget is
+      // gone by construction, so no further attempt could be sent (hence the immediate break, and
+      // hence pushTranscript may safely say the fallback could attempt nothing).
+      outcome = { kind: "deadline-aborted", error: r.error };
+      break;
+    } else {
+      // A real network failure (connection refused/reset, DNS, …) — or a timeout that came from
+      // the per-request cap while deadline budget remained, which is retried the same way.
+      outcome = { kind: "network", error: r.error };
     }
     if (attempt === MAX_RETRY_ATTEMPTS_SAFETY_CAP - 1) break;
     const remainingAfter = deadline - Date.now();
@@ -239,6 +287,25 @@ async function attemptWithRetry(
     await sleep(Math.min(backoffDelayMs(attempt), remainingAfter));
   }
   return { outcome, attempts };
+}
+
+// The ONE honest wire.log line for "we ran out of retry budget": N attempts were spent on the
+// increment route and the legacy full-snapshot fallback never sent a request. Shared by the two
+// ways that happens, because they mean the same thing to whoever reads wire.log:
+//   * the deadline was already gone when the legacy phase started (the ordinary path), and
+//   * the increment phase's own LAST attempt was aborted mid-flight BY that deadline (this is
+//     only ever reachable with outcome.kind === "deadline-aborted", where the attempt's timeout
+//     was the remaining budget itself — so "could not attempt any request" is true by
+//     construction, not by hope).
+// Before the second case had its own outcome it fell into the "network failure" branch and the
+// real diagnosis never reached wire.log at all.
+function logRetryBudgetExhausted(t: PushTarget, appendAttempts: number): void {
+  wireLog(
+    "append",
+    `pushTranscript legacy fallback for ${t.project}/${t.sessionId} (agent=${t.agent}) — ` +
+      `retry budget exhausted after the increment phase's ${appendAttempts} attempt(s); ` +
+      `legacy fallback could not attempt any request — session NOT persisted this turn`,
+  );
 }
 
 // Push the (full, ordered) local transcript incrementally. `knownLastOrdinal` is the cursor
@@ -296,6 +363,16 @@ export async function pushTranscript(
         "append",
         `pushTranscript for ${t.project}/${t.sessionId} (agent=${t.agent}) — retry budget exhausted before the increment push could attempt any request — session NOT persisted this turn`,
       );
+      return null;
+    }
+
+    if (outcome.kind === "deadline-aborted") {
+      // The increment phase made `tries` attempts (in this iteration) and the deadline cut the
+      // LAST one off mid-flight — the route was busy, nothing refused, and the deadline is spent,
+      // so the legacy full-snapshot route must not be reached either (Point 1 of the retry
+      // design: a busy route must never trigger a full snapshot). Same honest diagnosis the
+      // legacy phase would have produced had it been entered.
+      logRetryBudgetExhausted(t, appendAttemptsTotal);
       return null;
     }
 
@@ -361,11 +438,20 @@ export async function pushTranscript(
     // because a small count was hit — only 404/unclassified do, and those don't consume the
     // deadline). Naming it plainly here — NOT as a fabricated "network failure" — is the honest
     // trace: no request went out, and here is why.
+    logRetryBudgetExhausted(t, appendAttemptsTotal);
+    return null;
+  }
+
+  if (legacyOutcome.kind === "deadline-aborted") {
+    // The legacy full-snapshot POST itself was cut off by the deadline on the last of
+    // `legacyTries` attempts. NOT the message above: that one promises no request was attempted,
+    // and here requests were. Still not a network failure — the peer never answered.
     wireLog(
       "append",
       `pushTranscript legacy fallback for ${t.project}/${t.sessionId} (agent=${t.agent}) — ` +
-        `retry budget exhausted after the increment phase's ${appendAttemptsTotal} attempt(s); ` +
-        `legacy fallback could not attempt any request — session NOT persisted this turn`,
+        `retry budget exhausted after the increment phase's ${appendAttemptsTotal} attempt(s) ` +
+        `and the legacy full-snapshot's ${legacyTries} attempt(s), the last one aborted by the ` +
+        `deadline — session NOT persisted this turn`,
     );
     return null;
   }

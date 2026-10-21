@@ -226,11 +226,11 @@ test("append: server always 503 (both routes) — the increment route retries fo
   await withIsolatedHome(async (home) => {
     // Backoff (append.ts's backoffDelayMs) is jittered 0.5x-1.5x per attempt precisely so that a
     // BATCH of parallel sessions does not retry in lockstep — it is not something this test wants
-    // to vary. Pinning it makes the retry SEQUENCE a property of the code rather than a draw: at
-    // the maximum jitter the loop's last sleep is always the one capped to the remaining budget,
-    // so it exits through the deadline check with the final 503 in hand. Left free, a draw can
-    // leave a sliver-sized final attempt (a few ms), and whether a loopback round trip finishes
-    // inside a sliver is exactly the load-dependent race that made this test red under the gate.
+    // to vary. Pinning it makes the retry SEQUENCE a property of the code rather than a draw. It is
+    // no longer load-bearing for the log assertion below: the final attempt ending either as a real
+    // 503 response or as a deadline abort now produces the SAME honest diagnosis (append.ts's
+    // "deadline-aborted" outcome), and the dedicated hanging-server test below covers the abort
+    // case without any timing at all.
     const random = mock.method(Math, "random", () => 1);
     let appendRequests = 0;
     let legacyRequests = 0;
@@ -251,10 +251,58 @@ test("append: server always 503 (both routes) — the increment route retries fo
         /pushTranscript legacy fallback for fake-project\/fake-session \(agent=claude-code\) — retry budget exhausted after the increment phase's (\d+) attempt\(s\); legacy fallback could not attempt any request — session NOT persisted this turn/,
       );
       assert.ok(match, `Point 2: wire.log must name the REAL diagnosis (budget exhausted, no request attempted), not a fabricated network failure, got:\n${log}`);
-      assert.equal(Number(match![1]), appendRequests, "the logged attempt count must match what the increment phase actually did");
+      // The logged count must be the count the increment phase actually spent — with exactly ONE
+      // permitted gap: the loop's final attempt can now legitimately end as "deadline-aborted"
+      // (append.ts), and an abort that lands before the request reaches the server leaves the loop
+      // having counted an attempt this server never saw. Anything wider than that is a fabricated
+      // count, which is what this assertion exists to catch.
+      const loggedAttempts = Number(match![1]);
+      assert.ok(
+        loggedAttempts === appendRequests || loggedAttempts === appendRequests + 1,
+        `the logged attempt count (${loggedAttempts}) must match the ${appendRequests} attempt(s) the server saw, plus at most the deadline-aborted one whose request may have died in flight`,
+      );
       assert.ok(!log.includes("network failure"), "Point 2: there was no network failure — every request got a real 503 response — the log must not claim otherwise");
     } finally {
       random.mock.restore();
+      await close();
+    }
+  });
+});
+
+// The classification added for observation append-retry-503-deadline-test-flaky-under-load, at
+// unit level and WITHOUT a wall-clock race: this server accepts the request and never answers, so
+// the client's own deadline necessarily aborts it mid-flight — there is no draw here, because an
+// unanswered request cannot turn into a 503 no matter how fast or loaded the box is. Under the old
+// code this exact situation was reported as "pushTranscript network failure … This operation was
+// aborted" (the peer never refused anything — we ran out of time), and the budget-exhausted
+// diagnosis never reached wire.log.
+test("append: server accepts the request and never answers — the deadline's abort is reported as an exhausted retry budget, not a fabricated network failure", async () => {
+  await withIsolatedHome(async (home) => {
+    const heldSockets: import("node:net").Socket[] = [];
+    let appendRequests = 0;
+    let legacyRequests = 0;
+    const { baseUrl, close } = await startFakeServer((req) => {
+      // Deliberately no writeHead()/end(): hold the request in flight until the client aborts it.
+      heldSockets.push(req.socket);
+      if (req.url?.includes("/append")) appendRequests++;
+      else legacyRequests++;
+    });
+    try {
+      const result = await pushTranscript(target(baseUrl), MSGS, null);
+
+      assert.equal(result, null, "a hanging server must still fail best-effort (null), never throw");
+
+      const log = wireLogText(home);
+      const match = log.match(
+        /pushTranscript legacy fallback for fake-project\/fake-session \(agent=claude-code\) — retry budget exhausted after the increment phase's (\d+) attempt\(s\); legacy fallback could not attempt any request — session NOT persisted this turn/,
+      );
+      assert.ok(match, `the abort must be diagnosed as the exhausted retry budget, got:\n${log}`);
+      assert.equal(Number(match![1]), 1, "the FIRST attempt's own timeout is already the whole remaining budget, so hanging on it spends the deadline in exactly one attempt");
+      assert.ok(appendRequests <= 1, `the increment route must be attempted at most once, got ${appendRequests}`);
+      assert.equal(legacyRequests, 0, "with no budget left, no full snapshot may be sent to the same unresponsive server");
+      assert.ok(!log.includes("network failure"), "the peer never refused — nothing was reset, nothing was unreachable — so claiming a network failure is exactly the fabrication this test exists to prevent");
+    } finally {
+      for (const socket of heldSockets) socket.destroy();
       await close();
     }
   });
