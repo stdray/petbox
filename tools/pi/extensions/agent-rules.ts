@@ -61,7 +61,16 @@ function compose(prefix: string): string {
 // same run declared 8 `mcp__petbox__*` tools a moment later. The config is also the honest
 // question: "does this project have a petbox MCP server" does not depend on whether it
 // finished connecting this second. User scope, then project scope — the same files pi reads.
-function declaresPetbox(pi: any): boolean {
+//
+// The project scope is the SESSION's cwd, not `process.cwd()`. Measured 2026-10-21 under a
+// pi-web host: one server process serves many projects, so its cwd is not the session's
+// project and the project's `.pi/mcp.json` was never read — `petbox_rules` silently stayed
+// out of the prompt while `agent_rules` (gate-free) arrived. `process.cwd()` stays as the
+// last fallback for a host that passes no context.
+//
+// Deliberately looser than pi's own MCP loader, which reads a project `mcp.json` only when
+// the project is trusted: the section is prose about how to orchestrate, not a connection.
+function declaresPetbox(pi: any, sessionCwd?: string): boolean {
 	try {
 		const servers = pi.getMcpServers?.() ?? [];
 		if (servers.some((s: any) => s?.name === PETBOX_SERVER_NAME)) return true;
@@ -70,6 +79,7 @@ function declaresPetbox(pi: any): boolean {
 	}
 	for (const file of [
 		join(homedir(), ".pi", "agent", "mcp.json"),
+		...(sessionCwd ? [join(sessionCwd, ".pi", "mcp.json")] : []),
 		join(process.cwd(), ".pi", "mcp.json"),
 	]) {
 		try {
@@ -89,7 +99,7 @@ export default function (pi: any) {
 	let alwaysText: string | undefined;
 	let petboxText: string | undefined;
 
-	const load = (): void => {
+	const load = (sessionCwd?: string): void => {
 		alwaysText = "";
 		petboxText = "";
 		try {
@@ -98,18 +108,18 @@ export default function (pi: any) {
 			// A broken skills dir must not break the session; the section is simply absent.
 		}
 		try {
-			petboxText = declaresPetbox(pi) ? compose(PETBOX_PREFIX) : "";
+			petboxText = declaresPetbox(pi, sessionCwd) ? compose(PETBOX_PREFIX) : "";
 		} catch {
 			// Same: absence beats a failed session.
 		}
 	};
 
-	pi.on("session_start", load);
+	pi.on("session_start", (_event: any, ctx: any) => load(ctx?.cwd));
 
-	pi.on("before_agent_start", (event: any) => {
+	pi.on("before_agent_start", (event: any, ctx: any) => {
 		const options = event?.systemPromptOptions;
 		if (!options?.sections) return;
-		if (alwaysText === undefined) load();
+		if (alwaysText === undefined) load(ctx?.cwd);
 		if (alwaysText) options.sections[ALWAYS_SECTION] = alwaysText;
 		if (petboxText) options.sections[PETBOX_SECTION] = petboxText;
 	});
