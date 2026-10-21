@@ -43,9 +43,11 @@ children, never both. The rules are therefore one file per topic, consumed by tw
 
 - **main session** — `agent-rules.ts` reads `rules/amd-*.md` **once, on `session_start`**, and
   serves that exact text for the rest of the session. Editing a rule takes effect at the next
-  pi start — the same contract a context file has. The freeze is not laziness: a section that
+  **`session_start`** — a new session, `/new`, a fork, **and a resume** all re-read the files; the
+  same contract a context file has. The freeze is not laziness: a section that
   changes mid-transcript makes pi replay the prompt and the provider re-read the whole
-  conversation without its cache (`Cache miss: N tokens re-billed`). Files
+  conversation without its cache (`Cache miss: N tokens re-billed`) — and a resume after editing
+  a rule costs exactly that one replay, by design. Files
   named `pbx-*.md` go into a separate `petbox_rules` section that is added **only when the
   session declares a petbox MCP tool** — PetBox prose must not reach a session that cannot
   call the board. Same capability test and asymmetry as `petbox-pi.ts`'s banner: a positive
