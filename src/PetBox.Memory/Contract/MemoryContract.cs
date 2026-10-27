@@ -47,6 +47,11 @@ public sealed record MemoryDelete(string Key, long Version);
 
 // An active entry projected for read surfaces (Type stringified; Tags split from the CSV
 // storage form into the array the surface speaks).
+// NO url here, and never add one: Routes/MemoryLinks live in PetBox.Web.Memory, and this contract
+// belongs to the MEMORY MODULE — an entry that knew its own UI address would drag the URL builder
+// into the module contract. The MCP adapter hangs the permalink on its OWN projection instead
+// (PetBox.Web.Mcp.Contract.MemoryGetEntryView / MemoryEntryRow), the same split tasks make between
+// TaskNode and TasksTools' adapter rows.
 public sealed record MemoryEntryView(string Key, string Type, string Description, string Body, IReadOnlyList<string> Tags, long Version, string Metadata);
 
 // The raw temporal upsert/delta result, ready for an adapter to serialize.

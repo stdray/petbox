@@ -24,6 +24,9 @@ public sealed class MemoryVerbsTests : IDisposable
 {
 	const string Proj = "proj";
 	const string OtherProj = "otherproj";
+	// The workspace Proj belongs to, read from its row — the FIRST path segment of an entry URL.
+	// Derived, never hardcoded: this test file resolves the same workspace the container does.
+	readonly string WsKey;
 	readonly string _dir;
 	readonly PetBoxDb _db;
 	readonly ScopedDbFactory<MemoryDb> _factory;
@@ -41,6 +44,7 @@ public sealed class MemoryVerbsTests : IDisposable
 		// hardcoded) — the workspace-membership authz lets its keys curate the shared memory;
 		// OtherProj lives in a foreign workspace and must be rejected there.
 		var containerWs = _db.Projects.First(p => p.Key == MemoryTools.WorkspaceContainer).WorkspaceKey;
+		WsKey = containerWs;
 		_db.Insert(new Project { Key = Proj, WorkspaceKey = containerWs, Name = "P", Description = "" });
 		_db.Insert(new Project { Key = OtherProj, WorkspaceKey = "other-ws", Name = "O", Description = "" });
 		_factory = new ScopedDbFactory<MemoryDb>(Path.Combine(_dir, "memory"), Scope.Project,
@@ -769,6 +773,194 @@ public sealed class MemoryVerbsTests : IDisposable
 		got.Warning.Should().BeNull();
 	}
 
+	// ---- includeUrl: the absolute entry permalink -------------------------------------------
+	//
+	// A memory entry is addressable from the UI and MemoryLinks is THE builder of that address
+	// (/ui/{ws}/{container}/memory/{store}?key={key}#{key}) — but the MCP verbs carried no pointer to
+	// it, so an agent could read a fact and never hand it on. These pin the missing half: the
+	// ABSOLUTE origin comes from the current request (TasksTools/comment-verb posture), the RELATIVE
+	// half stays MemoryLinks', and nothing changes when the caller does not ask.
+	//
+	// The container → workspace hop is the part a memory verb does not already hold: it addresses the
+	// CONTAINER (a project key, or $workspace / $ws-<ws>), while the URL starts with the WORKSPACE —
+	// derived here exactly as the cascade derives it (never a hardcoded "$workspace").
+
+	[Fact]
+	public async Task Search_IncludeUrl_EmitsAbsolutePermalinks_ForBothScopes()
+	{
+		var http = HttpAt("memory:read,memory:write");
+		var projectFact = await MemoryTools.RememberAsync(http, Flags(), _db.Factory().WorkspaceMemory(), _memory,
+			"a project scoped fact about permafrost", scope: "project");
+		var workspaceFact = await MemoryTools.RememberAsync(http, Flags(), _db.Factory().WorkspaceMemory(), _memory,
+			"a workspace scoped fact about permafrost", scope: "workspace");
+
+		var res = await MemoryTools.SearchAsync(http, Flags(), _db.Factory().WorkspaceMemory(), _memory,
+			new NoopUsageRecorder(), "permafrost", includeUrl: true);
+
+		var projectRow = res.Items.Single(i => i.Scope == "project");
+		var workspaceRow = res.Items.Single(i => i.Scope == "workspace");
+		projectRow.Url.Should().Be(
+			$"https://box.test/ui/{WsKey}/proj/memory/notes?key={projectRow.Key}#{projectRow.Key}");
+		workspaceRow.Url.Should().Be(
+			$"https://box.test/ui/{WsKey}/{WorkspaceMemory.ContainerKeyFor(WsKey)}/memory/notes?key={workspaceRow.Key}#{workspaceRow.Key}");
+		projectRow.Url.Should().StartWith("https://box.test/", "the url is ABSOLUTE — the row is addressed from outside");
+		_ = projectFact;
+		_ = workspaceFact;
+	}
+
+	[Fact]
+	public async Task Search_WithoutIncludeUrl_EmitsNoUrlAtAll()
+	{
+		var http = HttpAt("memory:read,memory:write");
+		await MemoryTools.RememberAsync(http, Flags(), _db.Factory().WorkspaceMemory(), _memory, "a fact about petrels");
+
+		var omitted = await MemoryTools.SearchAsync(http, Flags(), _db.Factory().WorkspaceMemory(), _memory,
+			new NoopUsageRecorder(), "petrels");
+		omitted.Items.Should().NotBeEmpty();
+		omitted.Items.Should().OnlyContain(i => i.Url == null, "off by default — the payload must not change");
+
+		var off = await MemoryTools.SearchAsync(http, Flags(), _db.Factory().WorkspaceMemory(), _memory,
+			new NoopUsageRecorder(), "petrels", includeUrl: false);
+		off.Items.Should().OnlyContain(i => i.Url == null);
+	}
+
+	[Fact]
+	public async Task Get_IncludeUrl_EmitsAbsolutePermalink_ForSingleKeyAndBatch_AndBothScopes()
+	{
+		var http = HttpAt("memory:read,memory:write");
+		var projectFact = await MemoryTools.RememberAsync(http, Flags(), _db.Factory().WorkspaceMemory(), _memory,
+			"a project scoped fact about lanternfish", scope: "project");
+		var workspaceFact = await MemoryTools.RememberAsync(http, Flags(), _db.Factory().WorkspaceMemory(), _memory,
+			"a workspace scoped fact about lanternfish", scope: "workspace");
+
+		var single = await MemoryTools.GetAsync(http, Flags(), _db.Factory().WorkspaceMemory(), _memory,
+			new NoopUsageRecorder(), Proj, "notes", key: projectFact.Key, includeUrl: true);
+		single.Entries.Single().Url.Should().Be(
+			$"https://box.test/ui/{WsKey}/proj/memory/notes?key={projectFact.Key}#{projectFact.Key}");
+
+		var wsScoped = await MemoryTools.GetAsync(http, Flags(), _db.Factory().WorkspaceMemory(), _memory,
+			new NoopUsageRecorder(), Proj, "notes", key: workspaceFact.Key, scope: "workspace", includeUrl: true);
+		wsScoped.Entries.Single().Url.Should().Be(
+			$"https://box.test/ui/{WsKey}/{WorkspaceMemory.ContainerKeyFor(WsKey)}/memory/notes?key={workspaceFact.Key}#{workspaceFact.Key}");
+
+		var batch = await MemoryTools.GetAsync(http, Flags(), _db.Factory().WorkspaceMemory(), _memory,
+			new NoopUsageRecorder(), Proj, "notes", keys: [projectFact.Key], includeUrl: true);
+		batch.Entries.Single().Url.Should().Be(single.Entries.Single().Url,
+			"one shape for both arities — the batch row carries the same absolute link");
+
+		var plain = await MemoryTools.GetAsync(http, Flags(), _db.Factory().WorkspaceMemory(), _memory,
+			new NoopUsageRecorder(), Proj, "notes", key: projectFact.Key);
+		plain.Entries.Single().Url.Should().BeNull("off by default");
+	}
+
+	[Fact]
+	public async Task Upsert_IncludeUrl_EmitsPermalinksOnAddedAndUpdated()
+	{
+		var http = HttpAt("memory:read,memory:write");
+		var created = await MemoryTools.UpsertAsync(http, Flags(), _db.Factory().WorkspaceMemory(), _memory,
+			Proj, "notes", McpInputs.Entries(new object[]
+			{
+				new { key = "k-url", type = "Project", description = "d", body = "b" },
+			}), includeUrl: true);
+		created.Added.Single().Url.Should().Be($"https://box.test/ui/{WsKey}/proj/memory/notes?key=k-url#k-url");
+
+		var edited = await MemoryTools.UpsertAsync(http, Flags(), _db.Factory().WorkspaceMemory(), _memory,
+			Proj, "notes", McpInputs.Entries(new object[]
+			{
+				new { key = "k-url", version = 1, description = "d2" },
+			}), includeUrl: true);
+		edited.Updated.Single().Url.Should().Be($"https://box.test/ui/{WsKey}/proj/memory/notes?key=k-url#k-url");
+
+		var plain = await MemoryTools.UpsertAsync(http, Flags(), _db.Factory().WorkspaceMemory(), _memory,
+			Proj, "notes", McpInputs.Entries(new object[]
+			{
+				new { key = "k-url-2", type = "Project", description = "d", body = "b" },
+			}));
+		plain.Added.Should().OnlyContain(r => r.Url == null, "off by default");
+	}
+
+	[Fact]
+	public async Task Delta_IncludeUrl_EmitsPermalinksOnChangedRows()
+	{
+		var http = HttpAt("memory:read,memory:write");
+		var rem = await MemoryTools.RememberAsync(http, Flags(), _db.Factory().WorkspaceMemory(), _memory, "a fact about whelks");
+
+		var delta = await MemoryTools.DeltaAsync(http, Flags(), _db.Factory().WorkspaceMemory(), _memory,
+			Proj, "notes", 0, includeUrl: true);
+		delta.Added.Single(r => r.Key == rem.Key).Url.Should().Be(
+			$"https://box.test/ui/{WsKey}/proj/memory/notes?key={rem.Key}#{rem.Key}");
+
+		var plain = await MemoryTools.DeltaAsync(http, Flags(), _db.Factory().WorkspaceMemory(), _memory,
+			Proj, "notes", 0);
+		plain.Added.Should().OnlyContain(r => r.Url == null, "off by default");
+	}
+
+	[Fact]
+	public async Task Remember_IncludeUrl_ReturnsThePermalink_AndNothingByDefault()
+	{
+		var http = HttpAt("memory:read,memory:write");
+		var withUrl = await MemoryTools.RememberAsync(http, Flags(), _db.Factory().WorkspaceMemory(), _memory,
+			"a fact about guillemots", includeUrl: true);
+		withUrl.Url.Should().Be($"https://box.test/ui/{WsKey}/proj/memory/notes?key={withUrl.Key}#{withUrl.Key}");
+
+		var plain = await MemoryTools.RememberAsync(http, Flags(), _db.Factory().WorkspaceMemory(), _memory,
+			"another fact about guillemots");
+		plain.Url.Should().BeNull("off by default");
+	}
+
+	[Fact]
+	public async Task SensitiveStore_IncludeUrl_StillEmitsNoUrl()
+	{
+		// "ops" is the SENSITIVE store: MemoryLinks refuses to mint a machine-readable pointer into it
+		// (it has held secrets). The verbs must pass that null THROUGH — never re-derive a link of
+		// their own shape, and never fail the read because the link is missing.
+		var http = HttpAt("memory:read,memory:write");
+		var rem = await MemoryTools.RememberAsync(http, Flags(), _db.Factory().WorkspaceMemory(), _memory,
+			"a sensitive fact about vaults", store: "ops", includeUrl: true);
+		rem.Url.Should().BeNull();
+
+		var got = await MemoryTools.GetAsync(http, Flags(), _db.Factory().WorkspaceMemory(), _memory,
+			new NoopUsageRecorder(), Proj, "ops", key: rem.Key, includeUrl: true);
+		got.Entries.Single().Url.Should().BeNull();
+
+		var res = await MemoryTools.SearchAsync(http, Flags(), _db.Factory().WorkspaceMemory(), _memory,
+			new NoopUsageRecorder(), "vaults", store: "ops", includeUrl: true);
+		res.Items.Should().ContainSingle(i => i.Key == rem.Key).Which.Url.Should().BeNull();
+
+		var delta = await MemoryTools.DeltaAsync(http, Flags(), _db.Factory().WorkspaceMemory(), _memory,
+			Proj, "ops", 0, includeUrl: true);
+		delta.Added.Single(r => r.Key == rem.Key).Url.Should().BeNull();
+	}
+
+	[Fact]
+	public async Task IncludeUrl_WithNoRequestOrigin_EmitsNoUrl_AndDoesNotThrow()
+	{
+		// An accessor with an HttpContext but no Host is what a non-HTTP caller looks like (and what
+		// every other test in this file has). A link is OPTIONAL: it must degrade to null here, not to
+		// "://" and not to an error — the read itself already succeeded.
+		var http = Http("memory:read,memory:write");
+		var rem = await MemoryTools.RememberAsync(http, Flags(), _db.Factory().WorkspaceMemory(), _memory,
+			"a fact about stalactites", includeUrl: true);
+		rem.Url.Should().BeNull();
+
+		var res = await MemoryTools.SearchAsync(http, Flags(), _db.Factory().WorkspaceMemory(), _memory,
+			new NoopUsageRecorder(), "stalactites", includeUrl: true);
+		res.Items.Should().ContainSingle().Which.Url.Should().BeNull();
+	}
+
+	[Fact]
+	public async Task IncludeUrl_WithNoHttpContext_FailsWhereItAlwaysDid_NotInTheUrlPlumbing()
+	{
+		// The memory verbs need a request for the PROJECT GUARDS (ModuleMcp.ResolveProject), with or
+		// without includeUrl — that prerequisite is pre-existing and unchanged here. What this pins is
+		// that asking for a link adds no NEW failure: the url layer reads http.HttpContext?.Request and
+		// yields null, so the only error a caller can meet is the old "No HttpContext" guard.
+		var noContext = new HttpContextAccessor { HttpContext = null };
+		var act = async () => await MemoryTools.SearchAsync(noContext, Flags(), _db.Factory().WorkspaceMemory(),
+			_memory, new NoopUsageRecorder(), "anything", scope: "project", projectKey: Proj, includeUrl: true);
+		(await act.Should().ThrowAsync<InvalidOperationException>()).Which.Message.Should().Be("No HttpContext");
+	}
+
 	IHttpContextAccessor Http(string scopes, string project = Proj)
 	{
 		var id = new ClaimsIdentity([new Claim("project", project), new Claim("scopes", scopes)], "test");
@@ -779,6 +971,17 @@ public sealed class MemoryVerbsTests : IDisposable
 		{
 			HttpContext = new DefaultHttpContext { User = new ClaimsPrincipal(id), RequestServices = services },
 		};
+	}
+
+	// The same accessor, plus a REQUEST ORIGIN — the absolute half an includeUrl link is built on
+	// (scheme + host, exactly what TasksTools.UrlPrefixAsync / CommentTools.UrlPrefixAsync read off
+	// the current request).
+	IHttpContextAccessor HttpAt(string scopes, string project = Proj)
+	{
+		var accessor = Http(scopes, project);
+		accessor.HttpContext!.Request.Scheme = "https";
+		accessor.HttpContext.Request.Host = new HostString("box.test");
+		return accessor;
 	}
 
 	static FeatureFlags Flags()

@@ -9,6 +9,7 @@ using PetBox.LlmRouter.Contract;
 using PetBox.Memory.Contract;
 using PetBox.Memory.Data;
 using PetBox.Web.Mcp.Contract;
+using PetBox.Web.Memory;
 using PetBox.Web.Search;
 
 namespace PetBox.Web.Mcp;
@@ -171,6 +172,9 @@ public static class MemoryTools
 		e.g. a canon-fallback read). Automated wiring-kit pulls should pass "machine". Case-
 		insensitive; an unrecognized value is REJECTED, naming both valid ones, never silently
 		folded into "deliberate".
+		`includeUrl` (default false) adds an absolute `url` permalink on every returned entry — the
+		memory page of that entry's container, seeded to the entry itself. Omitted when the request
+		has no origin or the store is sensitive.
 		""")]
 	public static async Task<MemoryGetResultView> GetAsync(
 		IHttpContextAccessor http, FeatureFlags features, IWorkspaceMemoryDirectory wsmem, IMemoryService memory, IMemoryUsageRecorder usage,
@@ -180,6 +184,7 @@ public static class MemoryTools
 		[Description("project | workspace; omit to cascade project first, then workspace.")] string? scope = null,
 		[LogArg][Description("Body length knob (uniform contract): omitted = the FULL body (this is the pointed full read); 0 = no body; N>0 = the first N chars (\"…\" when cut); -1 = the full body.")] int? bodyLen = null,
 		[Description("Usage-signal source of this read: \"deliberate\" (default — a human/agent intentionally read this entry) or \"machine\" (an automatic hook/context pull — bumps only the raw cost, never the deliberate cut GC trusts). Automated wiring-kit pulls should pass \"machine\". Case-insensitive; an unrecognized value is REJECTED, naming both valid ones, never silently folded into \"deliberate\".")] string? usageSource = null,
+		[Description("Include an absolute `url` permalink on every entry — /ui/{ws}/{container}/memory/{store}?key={key}#{key} on the current host (off by default). Omitted when the request has no origin, or when the store is sensitive (e.g. ops) — a null `url` always means \"no link\", never a failed read.")] bool includeUrl = false,
 		CancellationToken ct = default)
 	{
 		ModuleMcp.AssertFeature(features, Feature.Memory);
@@ -264,9 +269,14 @@ public static class MemoryTools
 		// Uniform bodyLen contract, default FULL (the pointed read); shape the wire body only —
 		// usage/cost below still measures against the STORED full body (BodyChars), the delivered
 		// count against what actually went on the wire (DeliveredChars, RowChars).
-		var wireEntries = entries
-			.Select(e => e with { Body = ModuleMcp.Body(e.Body, bodyLen, ModuleMcp.FullBody) ?? "" })
-			.ToList();
+		var wireEntries = new List<MemoryGetEntryView>(entries.Count);
+		var urls = EntryUrlsFor(http, wsmem, includeUrl, ct);
+		foreach (var e in entries)
+			wireEntries.Add(new MemoryGetEntryView(e.Key, e.Type, e.Description,
+				ModuleMcp.Body(e.Body, bodyLen, ModuleMcp.FullBody) ?? "", e.Tags, e.Version, e.Metadata,
+				// The container the entry was READ FROM (`origin`), not whatever the caller named —
+				// with no `scope` a cascade answer can mix a project and a workspace container.
+				await urls.ForAsync(origin[e.Key].Container, store, e.Key)));
 
 		// Delivery events (spec: usage-cost-and-fit-separate) — one per entry HANDED OVER, so a
 		// batch of N bodies is N deliveries. A get is a perfect fit by construction — the caller
@@ -337,6 +347,9 @@ public static class MemoryTools
 		(never other writers' history — there is no cursor parameter on a write) and carry
 		key/type/description/version; `body` follows the uniform bodyLen knob (omitted here = NO
 		body, a compact ack; 0 = no body; N>0 = the first N chars, "…" when cut; -1 = full body).
+		`includeUrl` adds an absolute `url` to every added/updated row — the entry's page in the
+		container it was written to, seeded to that entry. Omitted when the request has no origin or
+		the store is sensitive (e.g. ops).
 			`scope`: project (default) | workspace. `currentVersion` is the store-wide cursor:
 		for a full delta since a cursor, call memory_delta with it as `sinceVersion`.
 		`warning` (optional) is set when an APPLIED call created an entry (version 0) with an
@@ -358,6 +371,7 @@ public static class MemoryTools
 		[Description("Body length knob (uniform contract): omitted = NO body (the compact ack default); 0 = no body; N>0 = the first N chars (\"…\" when cut); -1 = the full body.")] int? bodyLen = null,
 		[Description("project | workspace (default project).")] string? scope = null,
 		[Description("Batch policy. TRUE (default) = ATOMIC: any conflict/refusal aborts the WHOLE call, nothing is written. FALSE = PARTIAL apply (explicit opt-in): valid entries LAND, each refused entry comes back in conflicts[] with its own reason — a STALE baseline is then a refusal of THAT ENTRY, not of the call. Memory entries cannot reference each other, so nothing cascades: every entry is independent.")] bool atomic = true,
+		[Description("Include an absolute `url` permalink on every added/updated echo row (off by default). Omitted when the request has no origin or the store is sensitive (e.g. ops).")] bool includeUrl = false,
 		// Optional + LAST among non-CancellationToken params (not next to the other DI params
 		// above) so the ~100 existing positional call sites across the test suite keep compiling
 		// unchanged. Nullable: FindSimilarAsync/AutocaptureDedup.TryEmbedAsync already degrade a
@@ -429,18 +443,20 @@ public static class MemoryTools
 			}
 			similar = rows;
 		}
-		return Serialize(outcome, bodyLen, warning, similar);
+		return await WithUrlsAsync(Serialize(outcome, bodyLen, warning, similar),
+			EntryUrlsFor(http, wsmem, includeUrl, ct), projectKey, store);
 	}
 
 	[RequiresScope(ApiKeyScopes.MemoryRead)]
 	[McpServerTool(Name = "memory_delta", Title = "Memory delta since cursor", ReadOnly = true, UseStructuredContent = true, OutputSchemaType = typeof(MemoryUpsertResultView))]
-	[Description("Return entries added/updated/removed since `sinceVersion` (no writes) — THE cursor/catch-up surface and the way to enumerate a store incrementally (memory_search's `q` is a relevance slice, never an enumeration). `scope`: project (default) | workspace. Omit to CASCADE project first, then workspace — the same cascade contract as memory_search: the first container that HAS the store answers; a leg that lacks it, or that you may not read, is skipped silently. When no readable container has the store the answer is ONE not-found error, identical in both cases (the memory-family read contract: absent and not-yours are deliberately the same answer). Bodies follow the uniform bodyLen knob (compact by default). PAGED: the changed rows are cut by the ~30k-char output budget and the optional `limit`, whichever comes first, extended to the end of a version group; a cut response carries `truncated:true`, `omitted:N`, a `hint`, and `currentVersion` = the watermark of the delivered prefix — pass it back as `sinceVersion` and REPEAT until a response has no `truncated` (a loop that instead runs until added and updated are empty also reaches the end). Never take `currentVersion` from anywhere but the response you are consuming. `removed` is returned whole on every page (idempotent). Requires memory:read.")]
+	[Description("Return entries added/updated/removed since `sinceVersion` (no writes) — THE cursor/catch-up surface and the way to enumerate a store incrementally (memory_search's `q` is a relevance slice, never an enumeration). `scope`: project (default) | workspace. Omit to CASCADE project first, then workspace — the same cascade contract as memory_search: the first container that HAS the store answers; a leg that lacks it, or that you may not read, is skipped silently. When no readable container has the store the answer is ONE not-found error, identical in both cases (the memory-family read contract: absent and not-yours are deliberately the same answer). Bodies follow the uniform bodyLen knob (compact by default). PAGED: the changed rows are cut by the ~30k-char output budget and the optional `limit`, whichever comes first, extended to the end of a version group; a cut response carries `truncated:true`, `omitted:N`, a `hint`, and `currentVersion` = the watermark of the delivered prefix — pass it back as `sinceVersion` and REPEAT until a response has no `truncated` (a loop that instead runs until added and updated are empty also reaches the end). Never take `currentVersion` from anywhere but the response you are consuming. `removed` is returned whole on every page (idempotent). `includeUrl` adds an absolute `url` to every added/updated row — the entry's page in the container that answered, seeded to that entry (omitted when the request has no origin or the store is sensitive). Requires memory:read.")]
 	public static async Task<MemoryUpsertResultView> DeltaAsync(
 		IHttpContextAccessor http, FeatureFlags features, IWorkspaceMemoryDirectory wsmem, IMemoryService memory,
 		string projectKey, string store, long sinceVersion,
 		[Description("Body length knob (uniform contract): omitted = NO body (compact default); 0 = no body; N>0 = the first N chars (\"…\" when cut); -1 = the full body.")] int? bodyLen = null,
 		[Description("project | workspace; omit to cascade project first, then workspace.")] string? scope = null,
 		[Description("Max changed rows (added + updated) per page, optional. The response is ALSO cut by the ~30k-char output budget, whichever comes first; the cut is extended to the end of a version group (a batch is never split; one giant batch is returned whole). A cut page sets truncated/omitted/hint and returns `currentVersion` = the watermark of what it delivered: pass it back as `sinceVersion`.")] int? limit = null,
+		[Description("Include an absolute `url` permalink on every added/updated row (off by default). Omitted when the request has no origin or the store is sensitive (e.g. ops).")] bool includeUrl = false,
 		CancellationToken ct = default)
 	{
 		ModuleMcp.AssertFeature(features, Feature.Memory);
@@ -460,9 +476,10 @@ public static class MemoryTools
 			if (!await memory.StoreExistsAsync(container, store, ct)) continue;
 			var view = Serialize(await memory.DeltaAsync(container, store, sinceVersion, ct), bodyLen);
 			var page = McpDeltaPage.Cut(view.Added, view.Updated, view.CurrentVersion, e => e.Version, limit);
-			return page.Omitted == 0
+			var answer = page.Omitted == 0
 				? view
 				: view with { Added = page.Added, Updated = page.Updated, CurrentVersion = page.CurrentVersion, Truncated = true, Omitted = page.Omitted, Hint = McpDeltaPage.Hint };
+			return await WithUrlsAsync(answer, EntryUrlsFor(http, wsmem, includeUrl, ct), container, store);
 		}
 
 		// THE ONE ABSENCE ANSWER (work `memory-container-authz-throw-vs-skip`). This message is the
@@ -605,6 +622,83 @@ public static class MemoryTools
 			throw new UnauthorizedAccessException(ProjectScope.SandboxDenialMessage(projectKey));
 	}
 
+	// ---- entry permalinks (includeUrl) --------------------------------------------------
+	//
+	// The ABSOLUTE half of a memory URL is `{scheme}://{host}` off the current request — the same two
+	// refusals TasksTools.UrlPrefixAsync and CommentTools.UrlPrefixAsync make (no includeUrl, no
+	// HttpContext/request ⇒ null, never a throw), plus one they do not have to make: a request with no
+	// Host is not an origin either, and rendering "://" would be a worse answer than silence.
+	//
+	// The RELATIVE half is MemoryLinks' alone — the ONE builder (/ui/{ws}/{container}/memory/{store}
+	// ?key=…, and null by construction for a sensitive store). Nothing here formats a path; this only
+	// decides WHICH workspace key to hand the builder.
+	//
+	// Container → workspace is the one piece a memory verb does not already carry: the verbs address the
+	// CONTAINER (a project key, or $workspace / $ws-<ws> for shared memory) while the URL starts with the
+	// WORKSPACE. A workspace container decodes for free (WorkspaceMemory.WorkspaceKeyOfContainer); a
+	// project key is inverted through the same service door the project ⊕ workspace cascade already uses
+	// to DERIVE its workspace leg — never a hardcoded "$workspace".
+	//
+	// Resolved ONCE per distinct container per response: a search can return hundreds of rows, and
+	// resolving a link must not become one core.db read per row.
+	sealed class EntryUrls(IWorkspaceMemoryDirectory wsmem, string? origin, CancellationToken ct)
+	{
+		readonly Dictionary<string, string?> _workspaces = new(StringComparer.Ordinal);
+
+		// False ⇒ every ForAsync is a null with no I/O: the caller did not ask for links.
+		public bool Enabled => origin is not null;
+
+		public async Task<string?> ForAsync(string containerKey, string store, string key)
+		{
+			if (origin is null) return null;
+			if (!_workspaces.TryGetValue(containerKey, out var workspaceKey))
+			{
+				workspaceKey = WorkspaceMemory.WorkspaceKeyOfContainer(containerKey)
+					?? await wsmem.WorkspaceKeyOfProjectAsync(containerKey, ct);
+				_workspaces[containerKey] = workspaceKey;
+			}
+			if (string.IsNullOrEmpty(workspaceKey)) return null;
+			// Which segment carries the SCOPE is the builder's rule, not this adapter's: a project key
+			// goes in as the container, and a shared-memory container key is re-derived from the
+			// workspace by WorkspaceEntry itself.
+			var path = WorkspaceMemory.IsWorkspaceContainer(containerKey)
+				? MemoryLinks.WorkspaceEntry(workspaceKey, store, key)
+				: MemoryLinks.ProjectEntry(workspaceKey, containerKey, store, key);
+			return path is null ? null : origin + path;
+		}
+	}
+
+	static EntryUrls EntryUrlsFor(IHttpContextAccessor http, IWorkspaceMemoryDirectory wsmem, bool includeUrl, CancellationToken ct) =>
+		new(wsmem, UrlOrigin(http, includeUrl), ct);
+
+	static string? UrlOrigin(IHttpContextAccessor http, bool includeUrl)
+	{
+		if (!includeUrl) return null;
+		var req = http.HttpContext?.Request;
+		return req is null || !req.Host.HasValue ? null : $"{req.Scheme}://{req.Host}";
+	}
+
+	// Attach the permalink to every echoed row of an upsert/delta answer (the two verbs share that echo
+	// shape). A no-op when the caller did not ask for links, and rows the builder refuses (a sensitive
+	// store) simply stay without one — null always means "no link", never "the call failed".
+	static async Task<MemoryUpsertResultView> WithUrlsAsync(
+		MemoryUpsertResultView view, EntryUrls urls, string containerKey, string store)
+	{
+		if (!urls.Enabled) return view;
+		return view with
+		{
+			Added = await Rows(urls, view.Added),
+			Updated = await Rows(urls, view.Updated),
+		};
+
+		async Task<IReadOnlyList<MemoryEntryRow>> Rows(EntryUrls u, IReadOnlyList<MemoryEntryRow> rows)
+		{
+			var shaped = new List<MemoryEntryRow>(rows.Count);
+			foreach (var r in rows) shaped.Add(r with { Url = await u.ForAsync(containerKey, store, r.Key) });
+			return shaped;
+		}
+	}
+
 	[RequiresScope(ApiKeyScopes.MemoryWrite)]
 	[McpServerTool(Name = "memory_remember", Title = "Remember a fact", UseStructuredContent = true, OutputSchemaType = typeof(MemoryRememberResult))]
 	[Description("""
@@ -637,7 +731,9 @@ public static class MemoryTools
 		so the ack carries a `warning` when it is empty. A unique key is generated. Store
 		durable facts not derivable from code/git/config; actionable work goes to a task
 		board. Requires memory:write.
-		Returns { id, scope, store, key, warning?, similar?, similarityUnavailable } — `warning` is
+		Returns { id, scope, store, key, warning?, similar?, similarityUnavailable, url? } — `url` is
+		the absolute permalink to this entry, present only under `includeUrl` (the same builder and the
+		same refusals as memory_search's rows: no origin or a sensitive store ⇒ omitted). `warning` is
 		set when `description` was empty (recall will find this fact poorly) or when this call's
 		payload was large enough to risk the client-side truncation described above; omitted when
 		neither applies. `similar`/`similarityUnavailable` (card
@@ -677,6 +773,7 @@ public static class MemoryTools
 		// storage, no new lookup, the same no-duplicate guarantee tasks_upsert/memory_upsert
 		// already give their callers via key+version.
 		[Description("Caller-chosen retry token (any string — you generate and keep it, e.g. a GUID). Reusing the SAME idempotencyKey for a retried call with IDENTICAL content is a safe no-op (no duplicate entry); reusing it with DIFFERENT content is refused. Omit for the old unconditional-create behavior.")] string? idempotencyKey = null,
+		[Description("Include an absolute `url` permalink to the entry this call created (off by default). Omitted when the request has no origin or the store is sensitive (e.g. ops).")] bool includeUrl = false,
 		// Optional + LAST among non-CancellationToken params — same reasoning as UpsertAsync's
 		// `client`: keeps every existing positional call site compiling unchanged.
 		ILlmClient? client = null,
@@ -742,7 +839,8 @@ public static class MemoryTools
 		// description/size warnings or the similarity search below, both of which only make sense
 		// for a write that actually happened just now.
 		if (usingIdempotencyKey && outcome.Result.Inserted == 0)
-			return new MemoryRememberResult($"{container.Key}/{st}/{key}", container.Scope, st, key);
+			return new MemoryRememberResult($"{container.Key}/{st}/{key}", container.Scope, st, key,
+				Url: await EntryUrlsFor(http, wsmem, includeUrl, ct).ForAsync(container.Key, st, key));
 
 		// Point 1 (card mcp-write-degrades-silently-fix): an empty description is a WARNING, not a
 		// refusal — memory_remember is often the last thing called at the end of a session, exactly
@@ -762,7 +860,8 @@ public static class MemoryTools
 		var (similarEntries, similarUnavailable) = await FindSimilarAsync(container.Key, st, key,
 			DedupText(description, text), client, memory, ct);
 		return new MemoryRememberResult($"{container.Key}/{st}/{key}", container.Scope, st, key, warning,
-			similarEntries, similarUnavailable);
+			similarEntries, similarUnavailable,
+			Url: await EntryUrlsFor(http, wsmem, includeUrl, ct).ForAsync(container.Key, st, key));
 	}
 
 	[RequiresScope(ApiKeyScopes.MemoryRead)]
@@ -845,6 +944,10 @@ public static class MemoryTools
 		description (and the full body).
 
 		Returns { items: [{ scope, store, key, type, description, body, tags, version }], retrievers? };
+		`includeUrl` adds an absolute `url` on every row — the entry's page in the container it came from,
+		seeded to that entry (/ui/{ws}/{container}/memory/{store}?key={key}#{key}) — so a hit can be
+		handed to a human or another agent as-is. Omitted when the request has no origin or the store is
+		sensitive; null always means \"no link\", never a failed read. Not part of the cursor fingerprint.
 		`version` is the entry's CAS baseline for memory_upsert (pass it back to edit without a Stale round-trip).
 		With `q` each row also carries `score` (the fused, freshness-blended relevance) and `retriever`
 		("lexical" = lexically confirmed, "semantic" = surfaced by the vector leg alone); a semantic-only
@@ -863,6 +966,7 @@ public static class MemoryTools
 		[LogArg][Description("Include usage per row: the counters (surfaced/opened/lastHitAt) AND the entry's cost/fit (deliveredChars/avgKRel) (default false).")] bool includeUsage = false,
 		[Description("Usage-signal source of the impression this search records (with q): \"deliberate\" (default — a human/agent intentionally searched, counts toward the honest value signal) or \"machine\" (an automatic hook/context pull — bumps only the raw surfaced count, never the deliberate cut GC trusts). Automated wiring-kit pulls should pass \"machine\". Case-insensitive; an unrecognized value is REJECTED, naming both valid ones, never silently folded into \"deliberate\".")] string? usageSource = null,
 		[LogArg(LogArgMode.Presence)][Description("Pagination: the opaque `nextCursor` from the previous page, passed back verbatim to continue after it. Keep every other argument identical while paging — a cursor from a different query/filter/sort is an ERROR, not a silent restart. With `q` it is additionally bound to the state of every store the cascade could see, so a write mid-walk also errors; drop the cursor to start over. A `q` walk is also bound to the POOL it was ranked in: that pool lives about 15 minutes from the last page, and once it expires the walk is over — the next page is REFUSED — the error names the expired pool — rather than re-ranked, because a cross-encoder does not reproduce its own order. Page promptly, and on that refusal start the query over.")] string? cursor = null,
+		[Description("Include an absolute `url` permalink per row — /ui/{ws}/{container}/memory/{store}?key={key}#{key} on the current host (off by default). Omitted when the request has no origin or the store is sensitive (e.g. ops). NOT part of the pagination fingerprint, so it may be flipped between pages.")] bool includeUrl = false,
 		CancellationToken ct = default)
 	{
 		ModuleMcp.AssertFeature(features, Feature.Memory);
@@ -895,6 +999,10 @@ public static class MemoryTools
 		// A bare search is deliberate intent; only an explicit usage:"machine" (automated hook
 		// pulls) records the softer, un-counted-toward-value signal (spec: memoverhaul).
 		var deliberate = resolvedUsageSource != MachineSource;
+		// The absolute half of each row's permalink (null unless includeUrl AND the request has an
+		// origin). One instance for the whole response: the container → workspace lookup behind it is
+		// cached per container, never per row.
+		var urls = EntryUrlsFor(http, wsmem, includeUrl, ct);
 
 		// Each collected row carries its scope RANK (cascade order — project first), the fused
 		// relevance Score (so we can HONESTLY merge across scopes below) and the delivery FACTS
@@ -980,7 +1088,10 @@ public static class MemoryTools
 					// read surface of that table. Surfaced/opened say it keeps appearing; these say
 					// what the appearing costs and whether it lands (spec: usage-cost-and-fit-separate).
 					DeliveredChars: includeUsage ? (u?.DeliveredChars ?? 0) : null,
-					AvgKRel: includeUsage && u?.AvgKRel is { } k ? Math.Round(k, 4) : null);
+					AvgKRel: includeUsage && u?.AvgKRel is { } k ? Math.Round(k, 4) : null,
+					// The row's OWN permalink — the container it was READ from, so a cascade answer labels
+					// each row with the scope it actually came from (project or workspace).
+					Url: await urls.ForAsync(container, h.Store, h.Entry.Key));
 				// The service was asked for FULL bodies (BodyLen: 0), so h.Entry.Body is the whole
 				// entry — the denominator of "how much of it did this delivery actually send".
 				// ScoreRaw is the PRE-decay fused score (null in a listing: no relevance leg ran).

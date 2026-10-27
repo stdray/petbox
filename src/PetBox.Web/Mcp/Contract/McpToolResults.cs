@@ -373,6 +373,24 @@ public sealed record MemoryStoreListResult(IReadOnlyList<MemoryStoreRow> Stores)
 
 public sealed record MemoryStoreDeletedResult(bool Deleted);
 
+// ONE entry of memory_get — the adapter's projection of PetBox.Memory.Contract.MemoryEntryView:
+// the module's fields ONE-FOR-ONE, plus the permalink it cannot know about. The module contract is
+// deliberately unchanged (no `Url` there): Routes/MemoryLinks live in this layer, and a memory
+// contract that carried a UI route would drag the URL builder into the module. Same split as
+// TaskNode → TasksTools' adapter rows.
+// `Url` is null whenever the caller did not ask for a link (`includeUrl`), the request has no
+// origin, or the entry's store is SENSITIVE — MemoryLinks refuses to mint a machine-readable
+// pointer into those, and that null is passed through untouched. See MemorySearchHitView.Url.
+public sealed record MemoryGetEntryView(
+	string Key,
+	string Type,
+	string Description,
+	string Body,
+	IReadOnlyList<string> Tags,
+	long Version,
+	string Metadata,
+	string? Url = null);
+
 // memory_get result (spec addressed-read-batched): ALWAYS a list, whether the caller addressed
 // one `key` or a batch of `keys` — one shape for both, so a client never branches on arity.
 // Rows come back in the requested key order; a key that resolved to nothing is simply absent
@@ -382,11 +400,12 @@ public sealed record MemoryStoreDeletedResult(bool Deleted);
 // STORE was wrong" (an address bug, silently returning [] would look identical to "these keys
 // happen to be missing") from the ordinary soft-filtered batch miss, which stays silent by
 // design. A single `key` read gets the same distinction as a thrown error instead (see GetAsync).
-public sealed record MemoryGetResultView(IReadOnlyList<PetBox.Memory.Contract.MemoryEntryView> Entries, string? Warning = null);
+public sealed record MemoryGetResultView(IReadOnlyList<MemoryGetEntryView> Entries, string? Warning = null);
 
 // Echo projection of a memory entry for the upsert/delta MCP surface. `Body` is
 // slice-controlled (null -> omitted). `Tags` is an array (the memory surface speaks
-// tag arrays; storage stays CSV).
+// tag arrays; storage stays CSV). `Url`: an absolute permalink, filled only under `includeUrl`
+// (null -> omitted) — see MemorySearchHitView.Url for the whole contract.
 public sealed record MemoryEntryRow(
 	string Key,
 	string Type,
@@ -394,7 +413,8 @@ public sealed record MemoryEntryRow(
 	string? Body,
 	IReadOnlyList<string> Tags,
 	long Version,
-	string? Metadata);
+	string? Metadata,
+	string? Url = null);
 
 // Provenance of a hybrid search/recall: which retrievers ran, whether the answer is degraded and
 // WHY (spec: search-provenance). `DegradedReason` is a stable machine code — see
@@ -476,7 +496,10 @@ public sealed record MemoryUpsertResultView(
 // single-entry shape — see SimilarEntriesView for what null vs [] vs populated means; here
 // `SimilarityUnavailable` plays the role of that record's `Unavailable` field directly.
 public sealed record MemoryRememberResult(string Id, string Scope, string Store, string Key, string? Warning = null,
-	IReadOnlyList<SimilarEntryView>? Similar = null, bool SimilarityUnavailable = false);
+	IReadOnlyList<SimilarEntryView>? Similar = null, bool SimilarityUnavailable = false,
+	// Absolute permalink to the entry this call created/already held — `includeUrl` only (null ->
+	// omitted). Same builder and same refusals as every other memory URL; see MemorySearchHitView.Url.
+	string? Url = null);
 
 // One memory_search row, labelled by scope (project|workspace) and store. Carries Version so
 // a search → upsert edit has its per-key CAS baseline without an extra get (or a
@@ -510,7 +533,13 @@ public sealed record MemorySearchHitView(
 	// ONLY read surface of delivery_events per entry: surfaced/opened say an entry keeps
 	// APPEARING, these two say what that costs and whether it was worth it.
 	long? DeliveredChars = null,
-	double? AvgKRel = null);
+	double? AvgKRel = null,
+	// The entry's absolute permalink — `includeUrl` only, null (→ omitted) otherwise. Built by
+	// MemoryLinks and prefixed with the CURRENT request's {scheme}://{host}, so it is addressable by
+	// another agent or a human; a row served from a workspace container carries that container in the
+	// path, so the same URL shape addresses BOTH scopes. Never emitted for a sensitive store (ops)
+	// and never when the request has no origin — the builder returns null there and this passes it on.
+	string? Url = null);
 
 // The memory_search result — ONE shape for both modes (SearchEnvelope form): `Items` in
 // final order, `Retrievers` provenance with a query (null in listing mode), and the

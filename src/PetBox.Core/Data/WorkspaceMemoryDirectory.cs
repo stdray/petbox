@@ -32,6 +32,14 @@ public interface IWorkspaceMemoryDirectory
 	// ensuring the row exists.
 	Task<string> ResolveContainerForProjectAsync(string projectKey, CancellationToken ct = default);
 
+	// The WORKSPACE key a project belongs to — the half a memory URL needs and a memory verb does not
+	// carry: an URL is /ui/{ws}/{container}/memory/{store}…, while the verbs address only the CONTAINER
+	// (a project key, or "$workspace"/"$ws-<key>" — WorkspaceMemory.WorkspaceKeyOfContainer decodes
+	// those without asking here). A pure READ, and deliberately non-throwing: null when the key has no
+	// Projects row, so resolving a LINK can never turn an unknown project into a new failure on a
+	// read path (ResolveContainerForProjectAsync throws there, because it ENSURES a row first).
+	Task<string?> WorkspaceKeyOfProjectAsync(string projectKey, CancellationToken ct = default);
+
 	// May a key whose project claim is `callerProjectKey` reach `containerKey`? True only when both are
 	// rows of the SAME workspace. A null/absent claim, an unknown container and an unknown caller
 	// project are all false — a container is never reachable "by default".
@@ -56,6 +64,15 @@ public sealed class WorkspaceMemoryDirectory(ICoreDbFactory dbf) : IWorkspaceMem
 	{
 		using var db = dbf.Open();
 		return await WorkspaceMemory.ResolveAndEnsureContainerAsync(db, projectKey, ct);
+	}
+
+	public async Task<string?> WorkspaceKeyOfProjectAsync(string projectKey, CancellationToken ct = default)
+	{
+		using var db = dbf.Open();
+		return await db.Projects
+			.Where(p => p.Key == projectKey)
+			.Select(p => p.WorkspaceKey)
+			.FirstOrDefaultAsync(ct);
 	}
 
 	public async Task<bool> ReachableByAsync(
