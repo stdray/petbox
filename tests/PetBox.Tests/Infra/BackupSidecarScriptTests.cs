@@ -273,8 +273,10 @@ public sealed class BackupSidecarScriptTests
 			"the deadline is what leg_remaining counts down from; left at 0 every restic call " +
 			"would get the 1 s floor and no leg could ever succeed");
 		runLeg.IndexOf("LEG_DEADLINE=", StringComparison.Ordinal).Should().BeLessThan(
-			runLeg.IndexOf("(set -e; push", StringComparison.Ordinal),
-			"and it has to be armed BEFORE the subshell that inherits it");
+			runLeg.IndexOf("run_leg_path", StringComparison.Ordinal),
+			"and it has to be armed BEFORE the subshell that inherits it (and before the egress " +
+			"preflight inside it, which is bounded by its own curl timeouts but still runs inside " +
+			"the leg)");
 	}
 
 	[Fact]
@@ -362,5 +364,202 @@ public sealed class BackupSidecarScriptTests
 		script.Should().Contain(@"printf 'fail %s\n' ""$_now"" > ""$_state_file""",
 			"and that write says `fail`: marking the state `ok` here would swallow backup.sh's " +
 			"one-shot recovery message and re-arm the alert for a repo that is still broken");
+	}
+
+	// ── work/backup-leg-direct-first-proxy-fallback (2026-11-16) ────────────────────────────
+	// A repository can be perfectly healthy and still be unreachable FROM THIS HOST: from apps1,
+	// TCP to firsts3.ru timed out on 5 attempts out of 5 while ICMP answered and R2 answered
+	// directly — the network in front of 37.46.135.0/24 drops TCP from this prefix. restic reports
+	// that as "unreachable endpoint, bad credentials, wrong RESTIC_PASSWORD or TLS" and spends
+	// minutes of backoff deciding which, so each leg now picks its own egress path first
+	// (deploy/backup/egress.sh). These assertions pin the three properties the fix is worth nothing
+	// without: the preflight is curl and never restic, DIRECT is tried before the proxy, and the
+	// proxy is never exported beyond the one leg that chose it.
+
+	static string EgressScript() =>
+		File.ReadAllText(FindDeployFile("deploy", "backup", "egress.sh"));
+
+	// Executable lines only: the header comments deliberately NAME restic, firsts3.ru and the
+	// incident's timings while explaining why none of them may appear in the code.
+	static string ExecutableLines(string script) =>
+		string.Join('\n', script.Split('\n').Select(l => l.Trim()).Where(l => !l.StartsWith('#')));
+
+	static string FunctionBodyIn(string script, string name)
+	{
+		var m = Regex.Match(script, @"^" + name + @"\(\)\s*\{.*?^\}", RegexOptions.Singleline | RegexOptions.Multiline);
+		m.Success.Should().BeTrue($"{name}() must still be defined");
+		return m.Value;
+	}
+
+	[Fact]
+	public void The_Egress_Preflight_Is_A_Curl_Probe_And_Never_A_Restic_Attempt()
+	{
+		var code = ExecutableLines(EgressScript());
+
+		code.Should().Contain("curl",
+			"path selection has to answer in seconds; asking restic is what cost minutes — `restic " +
+			"cat config` against an unreachable bucket was measured at over ten minutes of backend " +
+			"backoff on this image");
+		code.Should().NotContain("restic",
+			"a preflight that can invoke restic re-opens exactly the hole it exists to close");
+		code.Should().Contain("--noproxy '*'",
+			"the DIRECT probe must stay direct even when an ambient HTTPS_PROXY is set — otherwise a " +
+			"live proxy makes every path look direct and the fallback never triggers");
+		code.Should().Contain("--connect-timeout").And.Contain("--max-time",
+			"an unbounded probe would be as bad as the restic call it replaced");
+	}
+
+	[Fact]
+	public void No_Endpoint_Host_Is_Baked_Into_The_Path_Selection()
+	{
+		foreach (var file in new[] { "egress.sh", "backup.sh", "entrypoint.sh" })
+		{
+			var code = ExecutableLines(File.ReadAllText(FindDeployFile("deploy", "backup", file)));
+			code.Should().NotContain("firsts3.ru",
+				"{0} must take the host from FVDS_S3_ENDPOINT / R2_S3_ENDPOINT — a baked-in hostname " +
+				"silently keeps probing an endpoint the leg no longer pushes to", file);
+			code.Should().NotContain("cloudflarestorage.com", "{0} must derive the host too", file);
+		}
+	}
+
+	[Fact]
+	public void Each_Leg_Probes_The_Direct_Path_Before_It_Considers_The_Proxy()
+	{
+		var leg = FunctionBody("run_leg_path");
+
+		leg.IndexOf("egress_direct_ok", StringComparison.Ordinal).Should().BeGreaterThanOrEqualTo(0,
+			"the leg has to probe before it decides anything");
+		leg.IndexOf("egress_direct_ok", StringComparison.Ordinal).Should().BeLessThan(
+			leg.IndexOf("egress_proxy_ok", StringComparison.Ordinal),
+			"DIRECT is the priority and the choice is per leg: the first fix for this incident forced " +
+			"a container-wide HTTPS_PROXY, which put the perfectly reachable R2 leg behind a proxy on " +
+			"another host — an extra hop and an extra dependency for a leg that needs neither");
+	}
+
+	[Fact]
+	public void The_Proxy_Is_Exported_Only_Inside_One_Legs_Subshell()
+	{
+		var backup = File.ReadAllText(FindDeployFile("deploy", "backup", "backup.sh"));
+		var pushOnce = FunctionBody("push_once");
+
+		Regex.Matches(ExecutableLines(backup), @"egress_env\s").Should().HaveCount(1,
+			"one call site, inside push_once's subshell — an egress_env call at any other level " +
+			"would leak the proxy onto the other leg, onto the alert/heartbeat curls and onto the " +
+			"probes themselves");
+		pushOnce.Should().Contain("egress_env");
+		pushOnce.IndexOf("set -e", StringComparison.Ordinal).Should().BeLessThan(
+			pushOnce.IndexOf("push \"$@\"", StringComparison.Ordinal),
+			"errexit is armed here and only here: the first failing restic call must abort the " +
+			"ATTEMPT, while run_leg_path has to survive that failure to be able to retry");
+		ExecutableLines(backup).Should().NotContain("export HTTPS_PROXY",
+			"nothing in backup.sh may export the proxy globally — that is the shape of the incident's " +
+			"first, over-broad fix");
+
+		var egressEnv = FunctionBodyIn(EgressScript(), "egress_env");
+		egressEnv.Should().Contain("unset HTTPS_PROXY",
+			"the DIRECT path must actively clear a proxy it may have inherited, or \"direct\" is a " +
+			"label on a request that still went through the proxy");
+		egressEnv.Should().Contain("export HTTPS_PROXY");
+	}
+
+	[Fact]
+	public void A_Failed_Path_Gets_Exactly_One_Retry_Via_The_Other_One()
+	{
+		var leg = FunctionBody("run_leg_path");
+
+		Regex.Matches(leg, @"push_once\s").Should().HaveCount(2,
+			"one attempt plus exactly ONE fallback: a loop here would spend the rest of the leg's " +
+			"budget alternating between two paths");
+		leg.Should().Contain("egress_available",
+			"the fallback is only worth trying when the other path actually answers right now — " +
+			"retrying into a known-dead path just burns the budget on restic's backoff");
+		leg.Should().Contain("paths tried:",
+			"a leg that failed has to say WHICH paths it tried, or the next reader cannot tell an " +
+			"endpoint outage from a credentials problem");
+	}
+
+	[Fact]
+	public void The_Retry_Shares_The_Legs_Deadline()
+	{
+		FunctionBody("run_leg_path").Should().NotContain("LEG_DEADLINE",
+			"the deadline is armed once per leg in run_leg and every restic call counts down from it; " +
+			"re-arming it for the fallback would double the leg's ceiling — LEG_TIMEOUT_SECONDS is a " +
+			"ceiling on a WHOLE leg, asserted against the cron interval by another test");
+	}
+
+	[Fact]
+	public void An_Unreachable_Endpoint_Fails_The_Leg_Without_Asking_Restic()
+	{
+		var leg = FunctionBody("run_leg_path");
+
+		leg.Should().Contain("no usable path to",
+			"a leg with no path at all must fail loudly, naming the paths it tried");
+		leg.IndexOf("push_once", StringComparison.Ordinal).Should().BeGreaterThan(
+			leg.IndexOf("egress_proxy_ok", StringComparison.Ordinal),
+			"BOTH probes have to run before the first restic attempt — otherwise an unreachable " +
+			"endpoint still costs restic's multi-minute backoff, which is the entire behaviour this " +
+			"change removes");
+	}
+
+	[Fact]
+	public void The_Image_Ships_The_Shared_Egress_Library()
+	{
+		var dockerfile = File.ReadAllText(FindDeployFile("deploy", "backup", "Dockerfile"));
+
+		foreach (var script in new[] { "backup.sh", "entrypoint.sh" })
+		{
+			File.ReadAllText(FindDeployFile("deploy", "backup", script))
+				.Should().Contain("/egress.sh",
+					"{0} sources the shared path selection from beside itself", script);
+		}
+
+		dockerfile.Should().Contain("COPY egress.sh",
+			"both scripts source egress.sh; a script copied without the library would boot the sidecar " +
+			"straight into `.: egress.sh: not found` — and no local check builds this image");
+	}
+
+	[Fact]
+	public void Compose_Offers_The_Proxy_As_A_Fallback_And_Never_Forces_It()
+	{
+		var lines = File.ReadAllLines(FindDeployFile("deploy", "compose.yaml"));
+		var start = Array.FindIndex(lines, l => l.TrimEnd() == "  petbox-backup:");
+		start.Should().BeGreaterThanOrEqualTo(0, "deploy/compose.yaml must still declare petbox-backup");
+		var end = Array.FindIndex(lines, start + 1, l => l.StartsWith("volumes:", StringComparison.Ordinal));
+		if (end < 0) end = lines.Length;
+		var block = string.Join('\n', lines[start..end]);
+
+		block.Should().Contain("BACKUP_HTTPS_PROXY:",
+			"the sidecar has to RECEIVE the proxy as an available fallback");
+		block.Should().NotMatchRegex(@"(?m)^\s*HTTPS_PROXY:",
+			"a container-wide HTTPS_PROXY applies to BOTH legs — it routed the reachable R2 leg " +
+			"through the proxy too. The per-leg choice belongs to egress.sh, which exports the proxy " +
+			"for one leg at a time");
+	}
+
+	[Fact]
+	public void The_Deploy_Passes_The_Proxy_Secret_Into_The_Compose_Env()
+	{
+		var ci = File.ReadAllText(FindDeployFile(".github", "workflows", "ci.yml"));
+
+		ci.Should().Contain("BACKUP_HTTPS_PROXY: ${{ secrets.BACKUP_HTTPS_PROXY }}");
+		ci.Should().MatchRegex(@"envs: [^\n]*\bBACKUP_HTTPS_PROXY\b",
+			"appleboy/ssh-action forwards only the names listed in `envs:` — a var present in `env:` " +
+			"alone reaches the remote shell EMPTY, so the fallback would be silently absent and only " +
+			"the full leg would fail, six hours later");
+	}
+
+	[Fact]
+	public void The_StartUp_Probe_Asks_The_Preflight_Before_It_Asks_Restic()
+	{
+		var check = FunctionBodyIn(EntrypointScript(), "check_repo");
+
+		check.IndexOf("egress_direct_ok", StringComparison.Ordinal).Should().BeGreaterThanOrEqualTo(0);
+		check.IndexOf("egress_direct_ok", StringComparison.Ordinal).Should().BeLessThan(
+			check.IndexOf("cat config", StringComparison.Ordinal),
+			"the restic call may only happen once a path is known to answer — otherwise a deploy with " +
+			"a dead endpoint puts the start-up probe back on restic's multi-minute backoff");
+		check.Should().Contain("egress_env",
+			"and that restic call has to GO THROUGH the chosen path, or the probe would report a repo " +
+			"as unreadable while the scheduled run reads it fine via the proxy");
 	}
 }
