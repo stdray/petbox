@@ -52,6 +52,18 @@
 # on top of each other. LEG_TIMEOUT_SECONDS below is a ceiling on a WHOLE leg — see
 # leg_remaining().
 #
+# EGRESS PATH (work/backup-leg-direct-first-proxy-fallback, 2026-11-16). A repo can be perfectly
+# healthy and still be unreachable from THIS host: from apps1, TCP to firsts3.ru timed out on 5 of
+# 5 attempts while ICMP answered and R2 was fine, so the network in front of 37.46.135.0/24 drops
+# TCP from this prefix. restic reports that as "unreachable endpoint, bad credentials, wrong
+# RESTIC_PASSWORD or TLS" and burns minutes of backoff deciding which. So each leg picks its own
+# path FIRST, with a curl probe of the endpoint host (deploy/backup/egress.sh, shared with
+# entrypoint.sh): DIRECT if it answers, otherwise the egress proxy in BACKUP_HTTPS_PROXY. The
+# proxy is a fallback, never an order — a forced container-wide HTTPS_PROXY would put the
+# reachable R2 leg behind it too — and it is exported only inside the subshell of the leg that
+# chose it. If the chosen path still fails inside restic, the other path is tried exactly ONCE,
+# inside the SAME leg budget (leg_remaining counts down for both attempts).
+#
 # Each leg is independent: one leg's failure must not stop the other leg from
 # running (see run_leg below). The script exits 1 if either leg failed (so cron
 # logs + entrypoint reflect failure) and 0 only if both legs succeeded.
@@ -61,6 +73,10 @@
 #     "recovered" message when a subsequent run goes back to ok.
 #   - A success heartbeat ping to HEALTHCHECK_URL (dead-man's-switch style).
 set -u
+
+# Egress path selection (probe → direct/proxy). Sourced from beside this script so the authoring
+# copy and /usr/local/bin/backup.sh resolve the same file; shared with entrypoint.sh on purpose.
+. "$(dirname "$0")/egress.sh"
 
 DATA_DIR="${DATA_DIR:-/data}"
 KEEP_DAILY="${RESTIC_KEEP_DAILY:-7}"
@@ -102,6 +118,10 @@ ALERT_REPEAT_HOURS="${ALERT_REPEAT_HOURS:-24}"
 TELEGRAM_BOT_TOKEN="${TELEGRAM_BOT_TOKEN:-}"
 TELEGRAM_CHAT_ID="${TELEGRAM_CHAT_ID:-}"
 HEALTHCHECK_URL="${HEALTHCHECK_URL:-}"
+# The egress proxy a leg MAY fall back to (see the EGRESS PATH note above). A fallback, not a
+# command: the direct path is probed first and this is used only when that probe fails. Empty =
+# no fallback at all, which is the honest configuration when nothing filters the endpoint.
+BACKUP_HTTPS_PROXY="${BACKUP_HTTPS_PROXY:-}"
 
 log() { echo "[backup $(date -u +%FT%TZ)] $*"; }
 
@@ -218,20 +238,94 @@ push() {
 	log "$tag ok"
 }
 
-# run_leg NAME LOGFILE PUSH_ARGS... — runs push with its own `set -e` (so the first
-# failing restic call aborts just this leg, same as before) inside a subshell whose
-# output is captured to LOGFILE. NOTE: the subshell's exit status is captured via a
-# plain `$?` on its own line, deliberately NOT as the direct operand of `if`/`&&`/
-# `||` — busybox ash (unlike bash) silently ignores an inner `set -e` when the
-# subshell itself is the direct condition of if/while, so `if (set -e; push …); then`
-# would never abort a leg early on its first failing restic call. Capturing $?
-# afterwards avoids that pitfall. Output is replayed to stdout so cron/docker logs
-# still show it. Returns push's exit status.
+# push_once PATH PUSH_ARGS... — ONE complete restic sequence for a leg, through the egress PATH
+# that leg selected (see egress.sh). `set -e` is armed HERE and only here: the first failing restic
+# call must abort the attempt, while the caller (run_leg_path) has to SURVIVE that failure to be
+# able to try the other path. The proxy export lives in this innermost subshell, so it reaches this
+# leg's restic and nothing else — not the other leg, not the alert/heartbeat curls, not the probes.
+push_once() {
+	_po_path="$1"; shift
+	(
+		set -e
+		egress_env "$_po_path"
+		push "$@"
+	)
+}
+
+# run_leg_path NAME ENDPOINT PUSH_ARGS... — one leg, from path selection to final status.
+#
+# Deliberately WITHOUT `set -e` at this level (push_once arms it one level down): a failed attempt
+# has to come back here as a status, not abort the leg before the fallback can run. Statuses are
+# captured with a standalone statement plus `$?`, never as the operand of `if`/`||` — busybox ash
+# suppresses errexit for a command's ENTIRE subtree in that position, including an explicit
+# `set -e` inside a subshell nested in it, which would silently turn a failing restic call back
+# into a success.
+#
+# The fallback is exactly ONE retry and it shares the leg's deadline: push_once's calls are all
+# bounded by leg_remaining(), which keeps counting down across both attempts, so a second try can
+# never push the leg past LEG_TIMEOUT_SECONDS. A retry is only attempted when the other path is
+# actually usable right now — retrying into a path already known to be dead would just spend the
+# rest of the budget on restic's backoff.
+run_leg_path() {
+	_leg_name="$1"; _leg_endpoint="$2"; shift 2
+	_leg_started="$(date +%s)"
+	_leg_host="$(egress_host "$_leg_endpoint")"
+	_leg_tried=""
+
+	# ── path selection: DIRECT is the default, the proxy only an alternative ──
+	if egress_direct_ok "$_leg_host"; then
+		_leg_path=direct
+		log "$_leg_name preflight: $_leg_host answers directly — using the direct path"
+	elif [ -z "$BACKUP_HTTPS_PROXY" ]; then
+		log "$_leg_name FAILED: no usable path to $_leg_host — the direct probe failed and no BACKUP_HTTPS_PROXY is configured. Tried: direct"
+		return 1
+	elif egress_proxy_ok "$_leg_host"; then
+		_leg_path=proxy
+		log "$_leg_name preflight: $_leg_host does NOT answer directly and does answer through the configured egress proxy — using the proxy path"
+	else
+		log "$_leg_name FAILED: no usable path to $_leg_host — the direct probe failed and so did the egress proxy. Tried: direct, proxy"
+		return 1
+	fi
+
+	_leg_tried="$_leg_path"
+	push_once "$_leg_path" "$@"
+	_leg_rc=$?
+	if [ "$_leg_rc" -ne 0 ]; then
+		log "$_leg_name the $_leg_path path failed inside restic (exit $_leg_rc)"
+		_leg_alt="$(egress_other "$_leg_path")"
+		if egress_available "$_leg_alt" "$_leg_host"; then
+			log "$_leg_name retrying ONCE via the $_leg_alt path, inside the same ${LEG_TIMEOUT_SECONDS}s leg budget"
+			_leg_tried="$_leg_tried, $_leg_alt"
+			push_once "$_leg_alt" "$@"
+			_leg_rc=$?
+			_leg_path="$_leg_alt"
+		else
+			log "$_leg_name not retrying: the $_leg_alt path is not usable either, so there is nothing left to try"
+		fi
+	fi
+
+	if [ "$_leg_rc" -ne 0 ]; then
+		log "$_leg_name FAILED (paths tried: $_leg_tried)"
+		return 1
+	fi
+	_leg_elapsed=$(( $(date +%s) - _leg_started ))
+	log "$_leg_name ok (path=$_leg_path, ${_leg_elapsed}s)"
+	return 0
+}
+
+# run_leg NAME LOGFILE ENDPOINT PUSH_ARGS... — picks the egress path for this leg and runs
+# push through it (run_leg_path), inside a subshell whose output is captured to LOGFILE. NOTE: the
+# subshell's exit status is captured via a plain `$?` on its own line, deliberately NOT as the
+# direct operand of `if`/`&&`/`||` — busybox ash (unlike bash) silently ignores an inner `set -e`
+# when the subshell itself is the direct condition of if/while, so `if (set -e; push …); then`
+# would never abort a leg early on its first failing restic call. Capturing $? afterwards avoids
+# that pitfall. Output is replayed to stdout so cron/docker logs still show it. Returns the leg's
+# exit status.
 run_leg() {
-	_name="$1"; _log="$2"; shift 2
+	_name="$1"; _log="$2"; _endpoint="$3"; shift 3
 	CURRENT_LEG_LOG="$_log"
 	LEG_DEADLINE=$(( $(date +%s) + LEG_TIMEOUT_SECONDS ))
-	(set -e; push "$@") >"$_log" 2>&1
+	( run_leg_path "$_name" "$_endpoint" "$@" ) >"$_log" 2>&1
 	_status=$?
 	CURRENT_LEG_LOG=""
 	cat "$_log"
@@ -251,20 +345,22 @@ run_leg() {
 # NOTE: each run_leg call is deliberately a standalone statement whose status is
 # captured via a following `$?` assignment, NOT `run_leg ... || compact_ok=1`.
 # busybox ash suppresses errexit for a command's ENTIRE subtree — including any
-# explicit `set -e` in subshells nested arbitrarily deep inside it (see run_leg's
-# internal subshell above) — whenever that command is the direct operand of `||`
-# (same rule that bit the `if` form). Using `||` here would silently defeat
-# run_leg's internal `set -e` and make failed legs read as successful again.
+# explicit `set -e` in subshells nested arbitrarily deep inside it (see run_leg_path's
+# push_once) — whenever that command is the direct operand of `||` (same rule that bit
+# the `if` form). Using `||` here would silently defeat push_once's `set -e` and make
+# failed legs read as successful again.
 
 # ── compact -> R2 (data, no logs) ──
-run_leg compact /tmp/backup-compact.log \
+# The endpoint is passed SEPARATELY from the repo URL: it is what the egress preflight probes,
+# and both come from the environment so no hostname is baked into this script.
+run_leg compact /tmp/backup-compact.log "$R2_S3_ENDPOINT" \
 	"s3:${R2_S3_ENDPOINT}/${R2_BUCKET}/compact" compact "$EXCLUDE_LOGS" \
 	"$R2_ACCESS_KEY_ID" "$R2_SECRET_ACCESS_KEY"
 compact_ok=$?
 
 # ── full -> FirstVDS S3 (data, no logs — the "full" tag is historical; the repo
 # names/tags stay as-is so existing restic retention keeps working) ──
-run_leg full /tmp/backup-full.log \
+run_leg full /tmp/backup-full.log "$FVDS_S3_ENDPOINT" \
 	"s3:${FVDS_S3_ENDPOINT}/${FVDS_BUCKET}/full" full "$EXCLUDE_LOGS" \
 	"$FVDS_ACCESS_KEY_ID" "$FVDS_SECRET_ACCESS_KEY"
 full_ok=$?

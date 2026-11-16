@@ -18,7 +18,7 @@ if [ "${2:-}" = "--repo" ]; then REPO_ARG=(--repo "${3:?repo required after --re
 [ -f "$ENV_FILE" ] || { echo "env file not found: $ENV_FILE"; echo "copy deploy/backup/secrets.local.env.example and fill it"; exit 1; }
 command -v gh >/dev/null || { echo "gh CLI not found — install https://cli.github.com/"; exit 1; }
 
-KEYS=" RESTIC_PASSWORD R2_ACCESS_KEY_ID R2_SECRET_ACCESS_KEY R2_S3_ENDPOINT R2_BUCKET FVDS_ACCESS_KEY_ID FVDS_SECRET_ACCESS_KEY FVDS_S3_ENDPOINT FVDS_BUCKET TELEGRAM_BOT_TOKEN TELEGRAM_CHAT_ID HEALTHCHECK_URL "
+KEYS=" RESTIC_PASSWORD R2_ACCESS_KEY_ID R2_SECRET_ACCESS_KEY R2_S3_ENDPOINT R2_BUCKET FVDS_ACCESS_KEY_ID FVDS_SECRET_ACCESS_KEY FVDS_S3_ENDPOINT FVDS_BUCKET BACKUP_HTTPS_PROXY TELEGRAM_BOT_TOKEN TELEGRAM_CHAT_ID HEALTHCHECK_URL "
 
 while IFS='=' read -r key val; do
 	case "$key" in ''|\#*) continue ;; esac

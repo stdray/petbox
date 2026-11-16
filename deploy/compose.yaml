@@ -95,6 +95,15 @@ services:
       - petbox-backup-state:/state
     environment:
       DATA_DIR: /data
+      # A FALLBACK egress path, not an order. Set = a proxy the legs MAY use when the direct
+      # route to their endpoint does not answer; empty = direct only. Offsite full-repo lives on
+      # firsts3.ru, and from this host TCP to 37.46.135.0/24 does not open (ICMP does) — the
+      # network in front of it drops our prefix (work/backup-leg-direct-first-proxy-fallback).
+      # The per-leg choice lives in deploy/backup/egress.sh: direct is probed FIRST and the proxy
+      # is exported only for a leg that actually needs it. Do NOT set HTTPS_PROXY here: a
+      # container-wide value is applied to BOTH legs, which routes the perfectly reachable R2 leg
+      # through the proxy too (extra hop, extra dependency on a different host).
+      BACKUP_HTTPS_PROXY: ${BACKUP_HTTPS_PROXY:-}
       RESTIC_PASSWORD: ${RESTIC_PASSWORD}
       BACKUP_CRON: ${BACKUP_CRON:-17 */6 * * *}
       RESTIC_KEEP_DAILY: ${RESTIC_KEEP_DAILY:-7}

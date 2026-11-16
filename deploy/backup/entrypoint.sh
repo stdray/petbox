@@ -20,6 +20,16 @@
 #    scheduling — or unbounded — would mean an S3 hiccup at deploy time leaves the sidecar
 #    with no cron schedule at all for as long as it lasts. Diagnostics must never be able
 #    to delay the thing they are diagnosing.
+#    Since 2026-11-16 (work/backup-leg-direct-first-proxy-fallback) the probe is TWO phases,
+#    and the order is the point: first the SAME egress preflight backup.sh uses
+#    (deploy/backup/egress.sh) — a curl probe of the endpoint host, direct then via the egress
+#    proxy, seconds instead of minutes — and only if a path answers, `restic cat config`
+#    THROUGH that path. A dead endpoint therefore costs two short probes and no restic call at
+#    all: restic's backoff is what made this check slow, and skipping it is the fix. The second
+#    phase still runs because the preflight cannot tell bad credentials from good ones, and
+#    catching those on a fresh deploy instead of at the next cron tick is worth the 60 s cap.
+#    The preflight is shared rather than re-implemented so the start-up probe and the scheduled
+#    run can never disagree about which path a leg will take.
 #    A failed probe also PAGES (work/backup-leg-timeout-and-probe-alert). It used to print a
 #    WARNING into a log nobody tails, while the Telegram alert lived only in backup.sh — so
 #    credentials broken by a deploy stayed silent for up to 6 h, until the first cron tick
@@ -36,6 +46,10 @@
 #    Without this relay, the `stop_grace_period` on petbox-backup in deploy/compose.yaml
 #    would be pure deploy latency: it would postpone the identical SIGKILL, not prevent it.
 set -eu
+
+# The egress path preflight, shared with backup.sh so the start-up probe and the scheduled run
+# cannot disagree about which path a leg will take. Sourced from beside this script.
+. "$(dirname "$0")/egress.sh"
 
 CRON="${BACKUP_CRON:-17 */6 * * *}"
 
@@ -54,9 +68,10 @@ TELEGRAM_CHAT_ID="${TELEGRAM_CHAT_ID:-}"
 # different files and neither can read the other, so ComposeStopGraceTests asserts the gap.
 SHUTDOWN_WAIT_SECONDS=100
 
-# Hard ceiling on each reachability probe — see the header. Long enough that a healthy repo
-# always answers, short enough that two dead repos cost the start-up a bounded two minutes
-# of log noise and nothing else.
+# Hard ceiling on the CREDENTIALS half of each probe — see the header. Long enough that a healthy
+# repo always answers, short enough that two dead repos cost the start-up a bounded two minutes of
+# log noise and nothing else. The egress half is bounded separately, by egress.sh's
+# EGRESS_PROBE_CONNECT_TIMEOUT / EGRESS_PROBE_MAX_TIME (4 s / 8 s), and it runs first.
 PROBE_TIMEOUT_SECONDS=60
 
 term_handler() {
@@ -122,17 +137,40 @@ Scheduled runs will retry: $CRON" \
 		|| echo "[entrypoint] WARNING: could not write $_state_file — alert state not persisted"
 }
 
-# check_repo LABEL REPO ACCESS_KEY SECRET_KEY — read-only reachability probe, no lock, no writes.
+# probe_failed LABEL DETAIL — record a failed probe and say why. One place, because PROBE_FAILED
+# has to be accumulated across BOTH probes (see the alert below).
+probe_failed() {
+	PROBE_FAILED="${PROBE_FAILED}${PROBE_FAILED:+, }$1"
+	echo "[entrypoint] WARNING: $1 $2"
+}
+
+# check_repo LABEL ENDPOINT REPO ACCESS_KEY SECRET_KEY — read-only start-up reachability probe,
+# no lock, no writes. Phase 1 is the shared egress preflight (curl, seconds, path-aware); phase 2
+# only happens when phase 1 found a live path, and it is what proves the credentials.
 check_repo() {
-	_label="$1"; _repo="$2"
-	AWS_ACCESS_KEY_ID="$3"
-	AWS_SECRET_ACCESS_KEY="$4"
-	export AWS_ACCESS_KEY_ID AWS_SECRET_ACCESS_KEY
-	if timeout "$PROBE_TIMEOUT_SECONDS" restic -r "$_repo" cat config >/dev/null 2>&1; then
-		echo "[entrypoint] $_label repo reachable"
+	_label="$1"; _endpoint="$2"; _repo="$3"
+	_host="$(egress_host "$_endpoint")"
+	if egress_direct_ok "$_host"; then
+		_path=direct
+		echo "[entrypoint] $_label endpoint reachable directly ($_host)"
+	elif egress_proxy_ok "$_host"; then
+		_path=proxy
+		echo "[entrypoint] $_label endpoint NOT reachable directly, reachable through the egress proxy ($_host)"
 	else
-		PROBE_FAILED="${PROBE_FAILED}${PROBE_FAILED:+, }$_label"
-		echo "[entrypoint] WARNING: $_label repo NOT readable within ${PROBE_TIMEOUT_SECONDS}s — bad credentials, bad endpoint, wrong RESTIC_PASSWORD, unreachable S3, or the repo does not exist (backup.sh never inits on its own: first-time init needs RESTIC_ALLOW_INIT=1, see backup.sh). Scheduled runs will retry: $CRON"
+		probe_failed "$_label" "endpoint $_host answers on NEITHER path (direct, and the egress proxy) — bad endpoint, S3 down, or this network drops TCP to it. restic was NOT attempted: on an unreachable endpoint it retries with a multi-minute backoff. Scheduled runs will retry: $CRON"
+		return 0
+	fi
+	AWS_ACCESS_KEY_ID="$4"
+	AWS_SECRET_ACCESS_KEY="$5"
+	export AWS_ACCESS_KEY_ID AWS_SECRET_ACCESS_KEY
+	# The proxy, when the path chose it, is exported inside THIS subshell only.
+	if (
+		egress_env "$_path"
+		timeout "$PROBE_TIMEOUT_SECONDS" restic -r "$_repo" cat config >/dev/null 2>&1
+	); then
+		echo "[entrypoint] $_label repo reachable via $_path"
+	else
+		probe_failed "$_label" "endpoint $_host answers via $_path, but restic could not read the repo within ${PROBE_TIMEOUT_SECONDS}s — bad credentials, wrong RESTIC_PASSWORD, missing bucket, or the repo does not exist (backup.sh never inits on its own: first-time init needs RESTIC_ALLOW_INIT=1, see backup.sh). Scheduled runs will retry: $CRON"
 	fi
 }
 
@@ -147,8 +185,8 @@ crond -f -l 8 &
 crond_pid=$!
 
 echo "[entrypoint] checking offsite repo reachability (read-only, nothing is written)"
-check_repo compact "s3:${R2_S3_ENDPOINT}/${R2_BUCKET}/compact" "$R2_ACCESS_KEY_ID" "$R2_SECRET_ACCESS_KEY"
-check_repo full "s3:${FVDS_S3_ENDPOINT}/${FVDS_BUCKET}/full" "$FVDS_ACCESS_KEY_ID" "$FVDS_SECRET_ACCESS_KEY"
+check_repo compact "$R2_S3_ENDPOINT" "s3:${R2_S3_ENDPOINT}/${R2_BUCKET}/compact" "$R2_ACCESS_KEY_ID" "$R2_SECRET_ACCESS_KEY"
+check_repo full "$FVDS_S3_ENDPOINT" "s3:${FVDS_S3_ENDPOINT}/${FVDS_BUCKET}/full" "$FVDS_ACCESS_KEY_ID" "$FVDS_SECRET_ACCESS_KEY"
 # After BOTH probes, so two dead repos are one alert naming both rather than two messages of
 # which the anti-spam window would swallow the second (and with it the second repo's name).
 [ -z "$PROBE_FAILED" ] || alert_probe_failure "$PROBE_FAILED"
