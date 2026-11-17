@@ -8,7 +8,7 @@ namespace PetBox.Core.Models;
 // Creation is EXPLICIT at the agent MCP layer (memory_store_create; a cold memory_upsert /
 // memory_remember to an unknown store is rejected — spec agent-namespace-provisioning), but the
 // service door still auto-vivifies on first write for background jobs and the reserved system
-// stores (canon/notes/autocaptured/session-digests/ops).
+// stores (canon/notes/autocaptured/session-digests).
 [Table("MemoryStores")]
 public sealed record MemoryStoreMeta
 {

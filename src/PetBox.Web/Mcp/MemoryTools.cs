@@ -304,7 +304,7 @@ public static class MemoryTools
 		never fails silently (only the read verbs answer absence).
 		An unrecognized `store` value is REJECTED (with a "did you mean 'X'?" suggestion), NOT
 		auto-created — create a store explicitly with `memory_store_create` first (the reserved
-		system stores canon/notes/autocaptured/session-digests/ops are the exception; they always
+		system stores canon/notes/autocaptured/session-digests are the exception; they always
 		exist). Unsure a store exists? Check `memory_store_list`.
 		On an EDIT (version > 0) an omitted field stays UNCHANGED — send only what you change;
 		to clear a field pass it explicitly empty (description/body/metadata: "", tags: []).
@@ -1516,18 +1516,24 @@ public static class MemoryTools
 	static string NormalizeStore(string? store) =>
 		string.IsNullOrWhiteSpace(store) ? DefaultStore : store.Trim();
 
-	// Reserved system stores — ALWAYS auto-vivify on first write, NEVER gated. This is the UNION
-	// of every set that legitimately creates a store below the tool layer, hardcoded here (not
-	// referenced) because the module boundary (MemoryBoundaryTests) forbids this Web layer from
-	// depending on the store door PetBox.Memory.Data.MemoryStore, where two of the sets live.
-	// MemoryReservedStoresDriftTests pins this against the authoritative sets so a new system
-	// store cannot drift out of the reserve:
-	//   - memory_remember's default store        → "notes"            (DefaultStore, this class)
+	// Reserved system stores — ALWAYS auto-vivify on first write, NEVER gated. The reserve answers
+	// ONE question — "which names need no explicit creation" — so it is exactly the union of what
+	// the path below the tool layer creates on its own, hardcoded here (not referenced) because the
+	// module boundary (MemoryBoundaryTests) forbids this Web layer from depending on the store door
+	// PetBox.Memory.Data.MemoryStore, where one of the sets lives.
+	// NamespaceGateUnitTests.ReservedStores_Are_The_Union_Of_The_Authoritative_Sets pins this
+	// against the authoritative sets so a new system store cannot drift out of the reserve:
+	//   - memory_remember's default store         → "notes"           (DefaultStore, this class)
 	//   - MemoryStore.SystemStoreNames (IsSystem) → session-digests, autocaptured, canon
-	//   - MemoryStores.SensitiveNames (secrets)   → "ops"
+	//
+	// NOT derived from MemoryStores.SensitiveNames, and deliberately so: sensitivity is a
+	// VISIBILITY/RECALL veto (no auto-pull, no auto-link, no outbound prompt), not a CREATION
+	// policy. Gluing the two axes here is what made the retired `ops` store — a sensitive marker
+	// with no store behind it — resurrectable by a mere agent write naming it. A store that was
+	// deliberately deleted must not come back because a name is still flagged sensitive.
 	internal static readonly IReadOnlySet<string> ReservedStores =
 		new HashSet<string>(StringComparer.OrdinalIgnoreCase)
-		{ DefaultStore, "session-digests", "autocaptured", "canon", "ops" };
+		{ DefaultStore, "session-digests", "autocaptured", "canon" };
 
 	// The namespace-creation GATE for memory stores (spec agent-namespace-provisioning, variant C
 	// — hard opt-in): an AGENT write verb (memory_upsert / memory_remember) naming a store that

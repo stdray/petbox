@@ -4,7 +4,12 @@ namespace PetBox.Memory.Contract;
 // store be surfaced by an AUTOMATIC affordance?" (spec: memory-entry-url / memory-key-mention-link).
 // A sensitive store is one that has held secrets/credentials: it must never be auto-pulled into an
 // agent's context and must never get an auto-generated link (a linked key is a pointer that invites
-// exactly that pull). Members: "ops" (sensitive operational).
+// exactly that pull). Members: "ops" (sensitive operational) — the store itself was DELETED
+// (2026-11-17, content exported first); the marker is kept as a guard so that if the name is ever
+// explicitly re-created (`memory_store_create`), it still never gets auto-linked or auto-swept.
+//
+// Sensitivity is a VISIBILITY/RECALL veto, NOT a creation policy: it deliberately does not feed
+// MemoryTools.ReservedStores (which answers only "which names need no explicit creation").
 //
 // Deliberately NARROWER than two neighbouring sets, which is why it is its own:
 //   - MemoryStore.SystemStoreNames (the IsSystem badge + delete-guard) covers plumbing stores that

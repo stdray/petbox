@@ -401,7 +401,7 @@ over duplicating, delete when wrong (temporal history makes deletes safe). A col
 (with a "did you mean X?" suggestion) — the agent MCP layer requires explicit creation
 (`tasks_board_create` / `memory_store_create`, or a board provisioned by
 `tasks_methodology_create`). The reserved system
-stores (`canon`, `notes`, `autocaptured`, `session-digests`, `ops`) always exist; the
+stores (`canon`, `notes`, `autocaptured`, `session-digests`) always exist; the
 admin UI and background jobs are unchanged.
 
 ## Documents — what's here

@@ -144,6 +144,9 @@ public sealed class MemorySimilarSurfacingTests : IDisposable
 	[Fact]
 	public async Task Upsert_SensitiveStore_SkipsSimilarityCheckEntirely()
 	{
+		// `ops` is sensitive but no longer reserved (the store was deleted in prod), so the tool
+		// layer requires an explicit create before the first write.
+		await _memory.CreateStoreAsync(Proj, "ops", null);
 		await MemoryTools.UpsertAsync(Http("memory:read,memory:write"), Flags(), _db.Factory().WorkspaceMemory(), _memory, Proj, "ops",
 			McpInputs.Entries(new object[] { new { key = "s1", type = "project", description = "secret one", body = "b1" } }));
 

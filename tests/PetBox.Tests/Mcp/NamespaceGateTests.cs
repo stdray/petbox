@@ -23,21 +23,29 @@ namespace PetBox.Tests.Mcp;
 // ---- pure unit tests (no DB): reserved-set drift, matcher, telemetry markup ----
 public sealed class NamespaceGateUnitTests
 {
-	// The gate's reserved set must cover the UNION of every set that legitimately creates a store
-	// below the tool layer. It is hardcoded in the Web layer (the module boundary forbids
-	// referencing the store door there), so this pins it against the authoritative sources — a new
-	// system store cannot silently drift out of the reserve.
+	// The gate's reserved set answers ONE question — which names need no explicit creation — so it
+	// covers exactly the sets that legitimately create a store below the tool layer. It is
+	// hardcoded in the Web layer (the module boundary forbids referencing the store door there),
+	// so this pins it against the authoritative sources — a new system store cannot silently
+	// drift out of the reserve.
+	//
+	// Sensitivity is NOT one of those sources (observations/memory-suggest-reserved-name-suggests-
+	// itself): it is a visibility/recall veto, not a creation policy. `ops` was deleted in prod and
+	// left behind only as a sensitive MARKER — unioning it in here made a mere agent write naming
+	// `ops` re-create the store it was retired from.
 	[Fact]
 	public void ReservedStores_Are_The_Union_Of_The_Authoritative_Sets()
 	{
 		var expected = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "notes" };
 		expected.UnionWith(MemoryStore.SystemStoreNames);   // session-digests, autocaptured, canon
-		expected.UnionWith(MemoryStores.SensitiveNames);    // ops
 
 		MemoryTools.ReservedStores.Should().BeEquivalentTo(expected);
-		// The exact five, spelled out — a human-readable pin next to the derived one above.
+		// The exact four, spelled out — a human-readable pin next to the derived one above.
 		MemoryTools.ReservedStores.Should().BeEquivalentTo(
-			new[] { "notes", "canon", "autocaptured", "session-digests", "ops" });
+			new[] { "notes", "canon", "autocaptured", "session-digests" });
+		// The sensitive marker must stay OUT of the reserve — the two axes are separate.
+		MemoryTools.ReservedStores.Intersect(MemoryStores.SensitiveNames)
+			.Should().BeEmpty("a sensitive marker is a visibility veto, never a creation policy");
 	}
 
 	// Edit-distance ONLY — no prefix leg. A deliberate derivation like `notes-archive` must NOT be
@@ -135,7 +143,7 @@ public sealed class MemoryNamespaceGateTests : IDisposable
 	public async Task ReservedStores_AutoVivify_OnFirstWrite()
 	{
 		var http = Http();
-		foreach (var store in new[] { "notes", "canon", "autocaptured", "session-digests", "ops" })
+		foreach (var store in new[] { "notes", "canon", "autocaptured", "session-digests" })
 		{
 			var res = await MemoryTools.UpsertAsync(http, Flags(), _db.Factory().WorkspaceMemory(), _memory, Proj, store,
 				McpInputs.Entries(new object[] { new { key = "k", type = "project", description = "d", body = "b" } }));
@@ -152,6 +160,46 @@ public sealed class MemoryNamespaceGateTests : IDisposable
 		var input = new MemoryEntryInput { Key = "k", Version = 0, Type = "Project", Body = "b" };
 		await _memory.UpsertAsync(Proj, "svc-only-store", [input], [], ct: default);
 		(await _store.ExistsAsync(Proj, "svc-only-store")).Should().BeTrue();
+	}
+
+	// The RETIRED `ops` store (deleted in prod 2026-11-17, content exported first) is no longer
+	// reserved: it stays a SENSITIVE marker only, so naming it must not bring the store back — and
+	// the did-you-mean must not offer `ops` back to itself (observations/memory-suggest-reserved-
+	// name-suggests-itself). Both agent write verbs, because either one could resurrect it.
+	[Fact]
+	public async Task Upsert_RetiredOpsStore_IsRejected_AndDoesNotSuggestItself()
+	{
+		var http = Http();
+		var entries = McpInputs.Entries(new object[] { new { key = "k", type = "project", description = "d", body = "b" } });
+
+		var ex = await Assert.ThrowsAsync<InvalidOperationException>(() =>
+			MemoryTools.UpsertAsync(http, Flags(), _db.Factory().WorkspaceMemory(), _memory, Proj, "ops", entries));
+		ex.Message.Should().Contain("does not exist").And.Contain("memory_store_create");
+		DidYouMean(ex.Message).Should().NotContain("ops");
+
+		// Nothing was written — the deleted store did not come back by being named.
+		(await _store.ExistsAsync(Proj, "ops")).Should().BeFalse("a retired store must not be resurrectable by a write");
+	}
+
+	[Fact]
+	public async Task Remember_RetiredOpsStore_IsRejected_AndDoesNotSuggestItself()
+	{
+		var http = Http();
+
+		var ex = await Assert.ThrowsAsync<InvalidOperationException>(() =>
+			MemoryTools.RememberAsync(http, Flags(), _db.Factory().WorkspaceMemory(), _memory, "secret deploy token xyz", store: "ops"));
+		ex.Message.Should().Contain("does not exist").And.Contain("memory_store_create");
+		DidYouMean(ex.Message).Should().NotContain("ops");
+
+		(await _store.ExistsAsync(Proj, "ops")).Should().BeFalse("a retired store must not be resurrectable by a write");
+	}
+
+	// The did-you-mean tail of a rejection message, or "" when there is none — the store name
+	// itself always appears earlier in the message, so the suggestion has to be read separately.
+	static string DidYouMean(string message)
+	{
+		var at = message.IndexOf("Did you mean", StringComparison.Ordinal);
+		return at < 0 ? "" : message[at..];
 	}
 
 	static IHttpContextAccessor Http()

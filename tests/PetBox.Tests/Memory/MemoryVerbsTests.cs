@@ -194,6 +194,9 @@ public sealed class MemoryVerbsTests : IDisposable
 	public async Task Search_AllStores_SkipsSensitiveOps_ButExplicitStoreReaches()
 	{
 		var http = Http("memory:read,memory:write");
+		// `ops` is SENSITIVE but no longer RESERVED (the store was deleted in prod; see
+		// MemoryTools.ReservedStores), so the tool layer requires an explicit create first.
+		await _memory.CreateStoreAsync(Proj, "ops", null);
 		await MemoryTools.RememberAsync(http, Flags(), _db.Factory().WorkspaceMemory(), _memory, "secret deploy token xyz", store: "ops");
 		await MemoryTools.RememberAsync(http, Flags(), _db.Factory().WorkspaceMemory(), _memory, "public deploy note", store: "notes");
 
@@ -913,8 +916,10 @@ public sealed class MemoryVerbsTests : IDisposable
 	{
 		// "ops" is the SENSITIVE store: MemoryLinks refuses to mint a machine-readable pointer into it
 		// (it has held secrets). The verbs must pass that null THROUGH — never re-derive a link of
-		// their own shape, and never fail the read because the link is missing.
+		// their own shape, and never fail the read because the link is missing. `ops` is sensitive
+		// but no longer reserved (deleted in prod), so the tool layer needs an explicit create.
 		var http = HttpAt("memory:read,memory:write");
+		await _memory.CreateStoreAsync(Proj, "ops", null);
 		var rem = await MemoryTools.RememberAsync(http, Flags(), _db.Factory().WorkspaceMemory(), _memory,
 			"a sensitive fact about vaults", store: "ops", includeUrl: true);
 		rem.Url.Should().BeNull();
