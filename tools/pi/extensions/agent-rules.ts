@@ -34,24 +34,51 @@ const PETBOX_SECTION = "petbox_rules";
 const PETBOX_PREFIX = "pbx-";
 const PETBOX_SERVER_NAME = "petbox";
 
-/** Every `<prefix>*.md` under the skills dir, joined in byte order. */
-function compose(prefix: string): string {
-	const files = readdirSync(SKILLS_DIR)
-		.filter((f) => f.startsWith(prefix) && f.endsWith(".md"))
-		.sort();
-	const parts: string[] = [];
-	for (const f of files) {
-		const raw = readFileSync(join(SKILLS_DIR, f), "utf8");
-		// Strip Agent-Skills frontmatter if a file ever carries any; the body is what the
-		// model reads.
-		let body = raw;
-		if (raw.startsWith("---")) {
-			const end = raw.indexOf("\n---", 3);
-			if (end !== -1) body = raw.slice(end + 4).replace(/^\s*\n/, "");
-		}
-		parts.push(body.trimEnd());
+/** A composed section, plus everything that went wrong while composing it. */
+type Composed = { readonly text: string; readonly problems: readonly string[] };
+
+function describe(error: unknown): string {
+	return error instanceof Error ? error.message : String(error);
+}
+
+// Every `<prefix>*.md` under the skills dir, joined in byte order.
+//
+// Failures are COLLECTED, not thrown. Throwing one exception for one bad file is how the whole
+// section used to vanish without a word — the caller now publishes `problems` instead (see
+// `report`), and a section built from the readable fragments beats an empty one that nobody
+// mentions.
+function compose(prefix: string): Composed {
+	let files: string[];
+	try {
+		files = readdirSync(SKILLS_DIR)
+			.filter((f) => f.startsWith(prefix) && f.endsWith(".md"))
+			.sort();
+	} catch (error) {
+		return { text: "", problems: [`cannot read ${SKILLS_DIR}: ${describe(error)}`] };
 	}
-	return parts.join("\n\n");
+	if (files.length === 0) {
+		// Not an error in the filesystem sense, and exactly as silent as one: a skills dir that
+		// exists but holds no fragment leaves the session rule-free and says nothing about it.
+		return { text: "", problems: [`no ${prefix}*.md under ${SKILLS_DIR}`] };
+	}
+	const parts: string[] = [];
+	const problems: string[] = [];
+	for (const f of files) {
+		try {
+			const raw = readFileSync(join(SKILLS_DIR, f), "utf8");
+			// Strip Agent-Skills frontmatter if a file ever carries any; the body is what the
+			// model reads.
+			let body = raw;
+			if (raw.startsWith("---")) {
+				const end = raw.indexOf("\n---", 3);
+				if (end !== -1) body = raw.slice(end + 4).replace(/^\s*\n/, "");
+			}
+			parts.push(body.trimEnd());
+		} catch (error) {
+			problems.push(`${f}: ${describe(error)}`);
+		}
+	}
+	return { text: parts.join("\n\n"), problems };
 }
 
 // Is this project wired to PetBox? Ask the CONFIG, not the runtime.
@@ -98,28 +125,51 @@ export default function (pi: any) {
 	// Frozen for the life of the session; `undefined` means "not loaded yet".
 	let alwaysText: string | undefined;
 	let petboxText: string | undefined;
+	// One report per session, not one per turn: the same broken fragment must not re-warn on
+	// every `before_agent_start`.
+	let reported = false;
 
-	const load = (sessionCwd?: string): void => {
-		alwaysText = "";
-		petboxText = "";
+	// Why shout at all, when the old code deliberately stayed quiet: staying quiet is how a
+	// session ends up running with NO operating rules and no trace that it did. Before this, an
+	// unreadable fragment or a skills dir that moved left `alwaysText` empty, `before_agent_start`
+	// skipped the section, and "rules missing" became indistinguishable from "rules never
+	// deployed" — the exact failure this whole section exists to prevent. So the problems go to
+	// the log AND to the UI once, and the session still starts: a warning is a report, not a veto.
+	const report = (ctx: any, problems: readonly string[]): void => {
+		if (reported || problems.length === 0) return;
+		reported = true;
+		const line = `pi rules: ${problems.join("; ")}`;
 		try {
-			alwaysText = compose(ALWAYS_PREFIX);
+			console.warn(line);
 		} catch {
-			// A broken skills dir must not break the session; the section is simply absent.
+			// a host without a console must not lose the session over a log call
 		}
 		try {
-			petboxText = declaresPetbox(pi, sessionCwd) ? compose(PETBOX_PREFIX) : "";
+			ctx?.ui?.notify?.(line, "warning");
 		} catch {
-			// Same: absence beats a failed session.
+			// print and JSON modes carry no UI; the console line is the fallback
 		}
 	};
 
-	pi.on("session_start", (_event: any, ctx: any) => load(ctx?.cwd));
+	const load = (ctx: any, sessionCwd?: string): void => {
+		const always = compose(ALWAYS_PREFIX);
+		alwaysText = always.text;
+		report(ctx, always.problems);
+		// `declaresPetbox` swallows its own read and parse failures by design, so there is no
+		// outer catch left here to hide a broken compose.
+		petboxText = "";
+		if (!declaresPetbox(pi, sessionCwd)) return;
+		const petbox = compose(PETBOX_PREFIX);
+		petboxText = petbox.text;
+		report(ctx, petbox.problems);
+	};
+
+	pi.on("session_start", (_event: any, ctx: any) => load(ctx, ctx?.cwd));
 
 	pi.on("before_agent_start", (event: any, ctx: any) => {
 		const options = event?.systemPromptOptions;
 		if (!options?.sections) return;
-		if (alwaysText === undefined) load(ctx?.cwd);
+		if (alwaysText === undefined) load(ctx, ctx?.cwd);
 		if (alwaysText) options.sections[ALWAYS_SECTION] = alwaysText;
 		if (petboxText) options.sections[PETBOX_SECTION] = petboxText;
 	});

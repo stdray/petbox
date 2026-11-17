@@ -30,7 +30,7 @@ from `src/common/default-agents.json`.
 | Path | What it is |
 |---|---|
 | `extensions/petbox-pi.ts` | session mirror + memory banner + recall nudge (see below) |
-| `extensions/agent-rules.ts` | assembles `rules/amd-*.md` into the `agent_rules` prompt section for the main session |
+| `extensions/agent-rules.ts` | assembles `rules/amd-*.md` into the `agent_rules` prompt section for the main session; reports an unreadable or missing fragment once to the log and the UI instead of dropping the whole section silently |
 | `extensions/pwsh-tool.ts` | the built-in PowerShell tool registered a second time as `pwsh` — see "Why a second PowerShell tool" below |
 | `agents/*.md` | our five subagent roles: `worker`, `scout`, `oracle`, `reviewer`, `researcher` |
 | `rules/amd-*.md` | the operating rules, one topic per file (always injected) |
