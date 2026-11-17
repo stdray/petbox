@@ -86,9 +86,17 @@ public sealed partial class RetentionService(
 			try
 			{
 				using var logDb = store.NewEnsuredContext(log.ProjectKey, log.Name);
-				var deleted = await logDb.LogEntries
-					.Where(e => e.TimestampMs < cutoffMs)
-					.DeleteAsync(token: ct);
+
+				// Every sweep here is BATCHED, and that is not an optimisation — it is the difference
+				// between a background pass and an outage. A single DELETE over a table that grew without
+				// a window holds SQLite's write lock for the whole scan: the first pass after this sweep
+				// shipped locked $system/petbox for minutes, `/v1/traces` died on its 30 s busy timeout and
+				// the log wrote nothing at all (2026-11-17, caught in the post-deploy smoke).
+				var deleted = await SweepInBatchesAsync(
+					logDb.LogEntries.Where(e => e.TimestampMs < cutoffMs),
+					e => e.Id,
+					ids => logDb.LogEntries.Where(e => ids.Contains(e.Id)),
+					ct);
 				if (deleted > 0)
 					LogSwept(logger, logRef, deleted, cutoff);
 
@@ -103,12 +111,16 @@ public sealed partial class RetentionService(
 				// UNSTAMPED, not ancient — a bare `< cutoff` would delete it on the very first pass
 				// and look like healthy retention while silently dropping data.
 				var cutoffNs = cutoffMs * 1_000_000L;
-				var deletedSpans = await logDb.Spans
-					.Where(s => s.StartUnixNs > 0 && s.StartUnixNs < cutoffNs)
-					.DeleteAsync(token: ct);
-				var deletedPoints = await logDb.MetricPoints
-					.Where(m => m.TimeUnixNs > 0 && m.TimeUnixNs < cutoffNs)
-					.DeleteAsync(token: ct);
+				var deletedSpans = await SweepInBatchesAsync(
+					logDb.Spans.Where(s => s.StartUnixNs > 0 && s.StartUnixNs < cutoffNs),
+					s => s.SpanId,
+					ids => logDb.Spans.Where(s => ids.Contains(s.SpanId)),
+					ct);
+				var deletedPoints = await SweepInBatchesAsync(
+					logDb.MetricPoints.Where(m => m.TimeUnixNs > 0 && m.TimeUnixNs < cutoffNs),
+					m => m.Id,
+					ids => logDb.MetricPoints.Where(m => ids.Contains(m.Id)),
+					ct);
 				if (deletedSpans > 0 || deletedPoints > 0)
 					LogSignalsSwept(logger, logRef, deletedSpans, deletedPoints, cutoff);
 			}
@@ -163,11 +175,33 @@ public sealed partial class RetentionService(
 		return nextDelay;
 	}
 
+	// Bounded batches, one transaction each: read the next N stale keys, delete exactly those, repeat.
+	// 500 keeps the IN-list under SQLite's parameter limit (the same reason InsertOrIgnore chunks at
+	// 900) and keeps every transaction short enough that the log's writers interleave instead of
+	// queueing behind a million-row scan. Safe against concurrent writes: staleness is by timestamp,
+	// so a row written while this pass runs is newer than the cutoff and never lands in a batch.
+	const int SweepBatchSize = 500;
+
+	static async Task<int> SweepInBatchesAsync<TRow, TKey>(
+		IQueryable<TRow> stale,
+		Func<TRow, TKey> keyOf,
+		Func<IReadOnlyList<TKey>, IQueryable<TRow>> byKeys,
+		CancellationToken ct)
+		where TKey : notnull
+	{
+		var total = 0;
+		while (true)
+		{
+			var batch = await stale.Take(SweepBatchSize).ToListAsync(ct).ConfigureAwait(false);
+			if (batch.Count == 0)
+				return total;
+			total += await byKeys(batch.Select(keyOf).ToList()).DeleteAsync(token: ct).ConfigureAwait(false);
+		}
+	}
+
 	[LoggerMessage(EventId = 100, Level = LogLevel.Information,
 		Message = "Retention swept {Project}: deleted {Count} events older than {Cutoff:O}")]
-	static partial void LogSwept(ILogger logger, string project, int count, DateTime cutoff);
-
-	[LoggerMessage(EventId = 109, Level = LogLevel.Information,
+	static partial void LogSwept(ILogger logger, string project, int count, DateTime cutoff); [LoggerMessage(EventId = 109, Level = LogLevel.Information,
 		Message = "Retention swept {Project}: deleted {Spans} spans and {MetricPoints} metric points older than {Cutoff:O}")]
 	static partial void LogSignalsSwept(ILogger logger, string project, int spans, int metricPoints, DateTime cutoff);
 
