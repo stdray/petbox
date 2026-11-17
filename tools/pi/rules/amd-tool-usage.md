@@ -5,6 +5,14 @@
   cannot do the job, not as the default route.
 - Use `edit` for targeted changes to existing files; `write` for new files or a full
   rewrite. Do not create a file that the task did not ask for.
+- **Never write a file through a shell.** `sed -i`, `perl -pi`, `python - <<EOF`,
+  `cat > file <<EOF`, `echo >> file`: none of them is a substitute for `edit`/`write`.
+  They carry no uniqueness check, no diff anyone can review, and a `str.replace` on text
+  that did not match leaves the file untouched while the script exits 0 and prints
+  success. `edit` reporting "did not match" is not a reason to reach for a script — it is
+  a reason to re-`read` the file and retry with the exact fragment.
+- A replacement bigger than a screenful — a whole section, or a paragraph with real
+  newlines and quotes — is a `write` of the file, not a fight with `edit`'s exact match.
 - Make independent tool calls in parallel; dependent ones sequentially.
 - Use absolute file paths when you refer to files.
 - Do not chain shell commands with `;` or `&&` just to print separators — the output
