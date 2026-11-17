@@ -11,6 +11,18 @@
   that did not match leaves the file untouched while the script exits 0 and prints
   success. `edit` reporting "did not match" is not a reason to reach for a script — it is
   a reason to re-`read` the file and retry with the exact fragment.
+- **The one exception: content that must not enter the transcript.** A password, a token,
+  anything read out of a secrets file. `edit` and `write` put the file body into the tool
+  call, and the tool call IS the transcript — so there a script is right: it reads the
+  secret and writes the file without echoing either. It must print nothing, the script
+  source must not contain the secret, and the command must not carry it on the command line
+  either (that is argv, and argv is shown and logged). Say why you did it — the next reader
+  otherwise sees a `python` call where `write` belonged and files it as the habit this rule
+  forbids.
+- **Never print a secret.** It comes out of a file, an environment variable or a config:
+  name the path or the key instead of the value, and keep it out of your answer, out of
+  `echo`, out of a diff and out of a tool argument. Once printed it is in the transcript,
+  and a transcript is not something you can retract from.
 - A replacement bigger than a screenful — a whole section, or a paragraph with real
   newlines and quotes — is a `write` of the file, not a fight with `edit`'s exact match.
 - Make independent tool calls in parallel; dependent ones sequentially.
