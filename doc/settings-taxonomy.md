@@ -28,7 +28,7 @@ Every configurable thing in PetBox today, grouped by the entity it belongs to.
 | Shared config bindings | rows | per-ws `ConfigDb` | `/ui/{ws}/admin/config` | ws-member + `config:write` |
 | Tag vocabulary | rows | per-ws `ConfigDb` | `/ui/{ws}/admin/config/tags` | ws-member |
 
-### Project (log stream + services + keys)
+### Project (log stream + keys)
 
 | Parameter | Type | Storage | UI | Permission |
 |---|---|---|---|---|
@@ -36,19 +36,9 @@ Every configurable thing in PetBox today, grouped by the entity it belongs to.
 | Name | string | `Projects` table | `/ui/{ws}/admin/projects/{key}/info` | ws-admin |
 | Description | string | `Projects` table | `/ui/{ws}/admin/projects/{key}/info` | ws-admin |
 | `LogSettings.retention.days` | int | `Settings` (scope=project) | `/ui/{ws}/admin/projects/{key}/log` | ws-admin |
-| `LogSettings.retention.sizeBytes` | int | `Settings` (scope=project) | `/ui/{ws}/admin/projects/{key}/log` | ws-admin |
-| Services | rows | `Services` table | `/ui/{ws}/admin/projects/{key}/services` | ws-admin |
 | API keys | rows | `ApiKeys` table | `/ui/{ws}/admin/projects/{key}/keys` | ws-admin |
 | Data tables | rows | `DataTables` table | `/ui/{ws}/admin/projects/{key}/data` | ws-admin |
 | Saved queries | rows | `SavedQueries` table | inline in `/ui/{ws}/{key}` (data UI) | ws-member |
-
-### Service
-
-| Parameter | Type | Storage | UI | Permission |
-|---|---|---|---|---|
-| Key | string (immutable) | `Services` table | create form | ws-admin |
-| Url | string | `Services` table | service edit | ws-admin |
-| HealthModel | enum (Endpoint / Push) | `Services` table | service edit | ws-admin |
 
 ### API key
 
@@ -92,7 +82,7 @@ Three storage classes — every setting belongs to exactly one.
 
 ### L1 — Typed entity tables
 
-Use when the setting has **identity**, **referential integrity** (FK), and **dedicated CRUD UI**. Existing tables: `Workspaces`, `Projects`, `Services`, `ApiKeys`, `Users`, `WorkspaceMembers`, `DataTables`, `SavedQueries`, `ShareLinks`.
+Use when the setting has **identity**, **referential integrity** (FK), and **dedicated CRUD UI**. Existing tables: `Workspaces`, `Projects`, `ApiKeys`, `Users`, `WorkspaceMembers`, `DataTables`, `SavedQueries`, `ShareLinks`.
 
 The previous `RetentionPolicies` table is being **removed** — it had no FK, no rich CRUD, and is a perfect L2 fit (one int per project). Its data does not survive (project-scoped retention starts fresh at L2).
 
@@ -146,15 +136,21 @@ public sealed class SettingAttribute : Attribute
 public sealed record LogSettings
 {
     [Setting(TopLevel = Scope.Workspace, Key = "log.retention.days")]
-    public int RetentionDays { get; init; } = 20;
+    public int RetentionDays { get; init; } = 7;
 
-    [Setting(TopLevel = Scope.System, Key = "log.retention.sizeBytes")]
-    public long RetentionSize { get; init; } = 40_000_000;
+    [Setting(TopLevel = Scope.System, Key = "log.retention.systemDays")]
+    public int SystemRetainDays { get; init; } = 30;
+
+    [Setting(TopLevel = Scope.System, Key = "log.retention.runIntervalSeconds")]
+    public int RunIntervalSeconds { get; init; } = 3600;
 }
 ```
 
 `RetentionDays` cascades through Project → Workspace (its `TopLevel` is Workspace, so it stops there).
-`RetentionSize` cascades through Project → Workspace → System.
+`SystemRetainDays` and `RunIntervalSeconds` are System-only (`TopLevel` = System): the `$system` project's
+window, and the sweeper cadence — `RetentionService` is one process-wide loop, so a per-project interval
+would be meaningless. There is no size cap: retention is a time window over events, spans AND metric
+points of the log, not a byte budget.
 
 ### Resolution algorithm
 
@@ -223,7 +219,6 @@ Admin is a separate visual zone with its own layout (`_AdminLayout`) and sidebar
 │   {projectKey}                           │
 │   ├─ Info                                │
 │   ├─ Log settings                        │
-│   ├─ Services                            │
 │   ├─ API keys                            │
 │   └─ Data tables                         │
 ├──────────────────────────────────────────┤

@@ -91,6 +91,26 @@ public sealed partial class RetentionService(
 					.DeleteAsync(token: ct);
 				if (deleted > 0)
 					LogSwept(logger, logRef, deleted, cutoff);
+
+				// The window belongs to the LOG, not to one table: a log that keeps 7 days keeps 7 days
+				// of every signal it stores. Sweeping LogEntries alone left Spans and MetricPoints
+				// growing without any bound, in the same .db, the same -wal/-shm sidecars and the same
+				// backups (observation retention-does-not-sweep-spans-and-metric-points).
+				//
+				// `> 0` is deliberate, and it is the reason this is not one shared predicate with the
+				// events sweep: TimestampMs is stamped on ingest, but these two carry the producer's
+				// raw OTLP nanos, and a client that omits the field lands at 0. Such a row is
+				// UNSTAMPED, not ancient — a bare `< cutoff` would delete it on the very first pass
+				// and look like healthy retention while silently dropping data.
+				var cutoffNs = cutoffMs * 1_000_000L;
+				var deletedSpans = await logDb.Spans
+					.Where(s => s.StartUnixNs > 0 && s.StartUnixNs < cutoffNs)
+					.DeleteAsync(token: ct);
+				var deletedPoints = await logDb.MetricPoints
+					.Where(m => m.TimeUnixNs > 0 && m.TimeUnixNs < cutoffNs)
+					.DeleteAsync(token: ct);
+				if (deletedSpans > 0 || deletedPoints > 0)
+					LogSignalsSwept(logger, logRef, deletedSpans, deletedPoints, cutoff);
 			}
 			catch (Exception ex) when (ex is not OperationCanceledException)
 			{
@@ -146,6 +166,10 @@ public sealed partial class RetentionService(
 	[LoggerMessage(EventId = 100, Level = LogLevel.Information,
 		Message = "Retention swept {Project}: deleted {Count} events older than {Cutoff:O}")]
 	static partial void LogSwept(ILogger logger, string project, int count, DateTime cutoff);
+
+	[LoggerMessage(EventId = 109, Level = LogLevel.Information,
+		Message = "Retention swept {Project}: deleted {Spans} spans and {MetricPoints} metric points older than {Cutoff:O}")]
+	static partial void LogSignalsSwept(ILogger logger, string project, int spans, int metricPoints, DateTime cutoff);
 
 	[LoggerMessage(EventId = 101, Level = LogLevel.Error, Message = "Retention failed on project {Project}")]
 	static partial void LogProjectFailed(ILogger logger, Exception ex, string project);

@@ -12,7 +12,7 @@ namespace PetBox.Core.Settings;
 public sealed record LogSettings
 {
 	[Setting(TopLevel = Scope.Workspace, Key = "log.retention.days",
-		Description = "How long to keep log entries before sweeping. Per-project override, otherwise workspace or system default.")]
+		Description = "How long to keep log data (events, spans, metric points) before sweeping. Per-project override, otherwise workspace or system default.")]
 	public int RetentionDays { get; init; } = 7;
 
 	[Setting(TopLevel = Scope.System, Key = "log.retention.systemDays",

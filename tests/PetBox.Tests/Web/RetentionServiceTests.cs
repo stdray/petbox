@@ -6,7 +6,9 @@ using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using PetBox.Core.Data;
 using PetBox.Core.Models;
+using PetBox.Log.Core.Metrics;
 using PetBox.Log.Core.Retention;
+using PetBox.Log.Core.Tracing;
 
 namespace PetBox.Tests.Web;
 
@@ -184,4 +186,60 @@ public sealed class RetentionServiceTests : IClassFixture<RetentionServiceFixtur
 		var row = await db.Logs.FirstAsync(l => l.ProjectKey == TestProjectKey && l.Name == "defaulted");
 		row.RetentionDays.Should().BeNull();
 	}
+
+	// spec log-retention-cascade as it is actually meant: the window belongs to the LOG, so every
+	// signal stored in that log is swept by it — not just events. Guards two things at once: the
+	// sweep itself, and the `> 0` predicate that keeps an UNSTAMPED row (a producer that omits the
+	// OTLP time field lands at 0) from being deleted as though it were ancient.
+	[Fact]
+	public async Task RunPassAsync_SweepsSpansAndMetricPoints_ByTheLogsOwnWindow()
+	{
+		using var scope = _factory.Services.CreateScope();
+		var store = scope.ServiceProvider.GetRequiredService<ILogStore>();
+		await store.CreateAsync(TestProjectKey, "signals", null, retentionDays: 1);
+
+		var now = DateTime.UtcNow;
+		var oldNs = Nanos(now.AddDays(-2));
+		var freshNs = Nanos(now.AddHours(-1));
+
+		using (var logDb = store.NewEnsuredContext(TestProjectKey, "signals"))
+		{
+			await logDb.InsertAsync(Entry(now.AddDays(-2)));
+			await logDb.InsertAsync(Span("old", oldNs));
+			await logDb.InsertAsync(Span("fresh", freshNs));
+			await logDb.InsertAsync(Span("unstamped", 0));
+			await logDb.InsertAsync(Point("old", oldNs));
+			await logDb.InsertAsync(Point("fresh", freshNs));
+			await logDb.InsertAsync(Point("unstamped", 0));
+		}
+
+		var service = ActivatorUtilities.CreateInstance<RetentionService>(_factory.Services);
+		await service.RunPassAsync(now, CancellationToken.None);
+
+		using var check = store.NewEnsuredContext(TestProjectKey, "signals");
+		(await check.LogEntries.CountAsync()).Should().Be(0);
+		(await check.Spans.CountAsync()).Should().Be(2,
+			"the 2-day-old span is outside the log's 1-day window; the fresh one and the " +
+			"unstamped one (time 0) both survive");
+		(await check.MetricPoints.CountAsync()).Should().Be(2,
+			"same window, same unstamped guard, for metric points");
+	}
+
+	static long Nanos(DateTime ts) =>
+		new DateTimeOffset(ts, TimeSpan.Zero).ToUnixTimeMilliseconds() * 1_000_000;
+
+	static SpanRecord Span(string name, long startNs) => new()
+	{
+		SpanId = "span-" + name,
+		TraceId = "trace-" + name,
+		Name = name,
+		StartUnixNs = startNs,
+		EndUnixNs = startNs,
+	};
+
+	static MetricPointRecord Point(string name, long timeNs) => new()
+	{
+		MetricName = "metric-" + name,
+		TimeUnixNs = timeNs,
+	};
 }
