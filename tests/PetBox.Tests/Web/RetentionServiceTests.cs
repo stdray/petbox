@@ -225,6 +225,34 @@ public sealed class RetentionServiceTests : IClassFixture<RetentionServiceFixtur
 			"same window, same unstamped guard, for metric points");
 	}
 
+	// Regression guard for the lock-out that this sweep caused on 2026-11-17: the sweep runs in
+	// bounded batches, so a table holding MORE stale rows than one batch must still empty completely
+	// (the loop must not stop after the first batch). Batching is what keeps the log's writers — and
+	// `/v1/traces` behind them — from waiting on a million-row transaction.
+	[Fact]
+	public async Task RunPassAsync_SweepsMoreStaleRowsThanOneBatch()
+	{
+		using var scope = _factory.Services.CreateScope();
+		var store = scope.ServiceProvider.GetRequiredService<ILogStore>();
+		await store.CreateAsync(TestProjectKey, "bulk", null, retentionDays: 1);
+
+		var now = DateTime.UtcNow;
+		var oldNs = Nanos(now.AddDays(-2));
+
+		using (var logDb = store.NewEnsuredContext(TestProjectKey, "bulk"))
+		{
+			for (var i = 0; i < 1_200; i++)
+				await logDb.InsertAsync(Span("bulk-" + i, oldNs));
+		}
+
+		var service = ActivatorUtilities.CreateInstance<RetentionService>(_factory.Services);
+		await service.RunPassAsync(now, CancellationToken.None);
+
+		using var check = store.NewEnsuredContext(TestProjectKey, "bulk");
+		(await check.Spans.CountAsync()).Should().Be(0,
+			"1 200 stale spans is more than two batches — the loop has to keep going until none is left");
+	}
+
 	static long Nanos(DateTime ts) =>
 		new DateTimeOffset(ts, TimeSpan.Zero).ToUnixTimeMilliseconds() * 1_000_000;
 
