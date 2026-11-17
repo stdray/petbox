@@ -7,6 +7,7 @@ loads live in `~/.pi/agent/`, outside the repo, and are refreshed by `deploy.sh`
 ```
 tools/pi/extensions/petbox-pi.ts   ──▶  ~/.pi/agent/extensions/petbox-pi.ts
 tools/pi/extensions/agent-rules.ts ──▶  ~/.pi/agent/extensions/agent-rules.ts
+tools/pi/extensions/child-session-dir.ts ──▶  ~/.pi/agent/extensions/child-session-dir.ts
 tools/pi/agents/*.md               ──▶  ~/.pi/agent/agents/*.md
 tools/pi/rules/amd-*.md            ──▶  ~/.pi/agent/skills/amd-*.md
 ```
@@ -32,6 +33,7 @@ from `src/common/default-agents.json`.
 | `extensions/petbox-pi.ts` | session mirror + memory banner + recall nudge (see below) |
 | `extensions/agent-rules.ts` | assembles `rules/amd-*.md` into the `agent_rules` prompt section for the main session |
 | `extensions/pwsh-tool.ts` | the built-in PowerShell tool registered a second time as `pwsh` — see "Why a second PowerShell tool" below |
+| `extensions/child-session-dir.ts` | redirects persisted subagent sessions into `<project session dir>/_children/` — see "Why children get their own directory" below |
 | `agents/*.md` | our five subagent roles: `worker`, `scout`, `oracle`, `reviewer`, `researcher` |
 | `rules/amd-*.md` | the operating rules, one topic per file (always injected) |
 | `rules/pbx-*.md` | PetBox-specific rules — injected only when the session declares a petbox MCP tool |
@@ -58,6 +60,33 @@ They are the *same* code and the *same* binary — the tool named `powershell` r
 the second name buys ~6 characters of prompt rather than a second engine. Banishing the
 canonical name instead would cost a rename across `settings.json`, this prose and four agent
 profiles, and would leave PowerShell unavailable whenever this extension fails to load.
+
+## Why children get their own directory (`child-session-dir.ts`)
+
+`rememberAgents` (on by default since `@tintinweb/pi-subagents` 0.22) writes every top-level
+spawn as a real session file into pi's normal store, and pi lists that directory **one level
+deep** (`listSessionsFromDir` in `dist/core/session-manager.js`: `readdir` plus a `.jsonl`
+filter, no recursion; `listAll` walks exactly one level of project directories). So each
+`scout#1b8c729` appears in `/resume` and in any other browser of that directory as if the user
+had started it — 117 of the files in this project's own session directory carried a
+`parentSession` header on 2026-11-17.
+
+The extension redirects `SessionManager.create` when, and only when, it is called for a child:
+`opts.parentSession` is set (the shape pi-subagents uses for a spawn) and no `sessionDir` was
+given. pi's own `/fork` and `/branch` go through the instance method `newSession` and are
+untouched; an agent's `session_dir:` frontmatter or a global `sessionDir` setting is an explicit
+choice and is left alone; a nested spawn stays beside its parent instead of nesting
+`_children/_children`.
+
+Why not patch the package instead: upstream releases every ~3 days (7 in the 30 days before
+2026-11-17), while the line that decides the directory was **byte-identical in all eight
+published versions 0.22.0…0.26.0** and the file hash changed in five of seven upgrades. A
+hash-gated patcher would therefore have declined to patch almost every release, and a hand-edited
+`node_modules` does not survive `pi update`. The redirect is installed at module load (pi imports
+extension modules during startup, before any turn can spawn) and costs nothing when it stops
+firing: children simply reappear beside conversations, which is the symptom to watch for. If
+upstream ever lands a per-parent layout ([tintinweb/pi-subagents#402](https://github.com/tintinweb/pi-subagents/issues/402)),
+this file becomes unnecessary.
 
 ## Rules: why skills and not `AGENTS.md`
 
