@@ -234,7 +234,7 @@ public static class KqlSqlExpressions
 
 	// 1-based index of the first ORDINAL occurrence of `needle` in `s` (0 when absent or `s` is null),
 	// matching SQLite's builtin instr. Backs the SQL translation of `parse` (the star-free literal/position
-	// matcher — KqlTransformer.BuildParseCaptures reproduces MatchParse's IndexOf via this + substr). C#
+	// matcher — KqlTransformer.BuildParseCaptures reproduces that IndexOf via this + substr). C#
 	// body mirrors the builtin exactly (IFNULL(...,0) folds the null arg so both pipeline positions agree).
 	[Sql.Expression("IFNULL(instr({0}, {1}), 0)", ServerSideOnly = true)]
 	public static long Instr(string? s, string needle) =>

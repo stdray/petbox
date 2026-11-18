@@ -46,7 +46,7 @@ public abstract class KqlDialect
 // attribute-bound KqlSqlExpressions methods (all ServerSideOnly=true), and the array-explode form is
 // SQLite's builtin `json_each`, whose `value` column carries each element (pinned by
 // SqliteJsonEachProbeTests — the direct SelectMany/[Sql.TableExpression] lateral is rejected by the
-// SQLite provider, so the ApplyMvExpand rewrite will emit this fragment via a raw table source).
+// SQLite provider, so the mv-expand SQL lowering emits this fragment via a raw table source).
 public sealed class SqliteDialect : KqlDialect
 {
 	public override string Name => "sqlite";
