@@ -27,6 +27,7 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 
 const SKILLS_DIR = join(homedir(), ".pi", "agent", "skills");
+const AGENTS_DIR = join(homedir(), ".pi", "agent", "agents");
 
 const ALWAYS_SECTION = "agent_rules";
 const ALWAYS_PREFIX = "amd-";
@@ -121,6 +122,67 @@ function declaresPetbox(pi: any, sessionCwd?: string): boolean {
 	return false;
 }
 
+// Children never see this extension's section: `@tintinweb/pi-subagents` overrides their system
+// prompt (`prompt_mode: replace` makes the role file the whole prompt), so a role's rules reach
+// it only through `skills:` in its frontmatter. A name that resolves to nothing is not an error
+// to that loader — `skill-loader.ts` substitutes `(Skill "x" not found in ...)` and the child
+// starts with a placeholder where its rules were. Nobody sees that: not the model, which reads
+// one odd line among many, and not the owner, who never opens a child's prompt. So the check
+// runs here, once, on the main session's start — the only place left that can still speak.
+//
+// `prompt_mode: replace` also means a role with NO `skills:` line runs with no rules at all:
+// the same silent hole wearing a different hat, reported the same way.
+function missingRoleSkills(): string[] {
+	let roles: string[];
+	let fragments: Set<string>;
+	try {
+		roles = readdirSync(AGENTS_DIR)
+			.filter((f) => f.endsWith(".md"))
+			.sort();
+	} catch (error) {
+		return [`cannot read ${AGENTS_DIR}: ${describe(error)}`];
+	}
+	try {
+		fragments = new Set(
+			readdirSync(SKILLS_DIR)
+				.filter((f) => f.endsWith(".md"))
+				.map((f) => f.slice(0, -3)),
+		);
+	} catch (error) {
+		return [`cannot read ${SKILLS_DIR}: ${describe(error)}`];
+	}
+	const problems: string[] = [];
+	for (const role of roles) {
+		let raw: string;
+		try {
+			raw = readFileSync(join(AGENTS_DIR, role), "utf8");
+		} catch (error) {
+			problems.push(`${role}: ${describe(error)}`);
+			continue;
+		}
+		const line = /^skills:[ \t]*(.*)$/m.exec(raw);
+		if (!line) {
+			problems.push(`${role}: no skills: line, so the child preloads no rules`);
+			continue;
+		}
+		const value = line[1].trim();
+		if (value === "" || value === "false" || value === "none") {
+			problems.push(`${role}: skills: ${value === "" ? "" : value} preloads no rules`);
+			continue;
+		}
+		const names = value
+			.replace(/^\[/, "")
+			.replace(/\]$/, "")
+			.split(",")
+			.map((n) => n.trim())
+			.filter((n) => n.length > 0);
+		for (const name of names) {
+			if (!fragments.has(name)) problems.push(`${role}: skill "${name}" is not under ${SKILLS_DIR}`);
+		}
+	}
+	return problems;
+}
+
 export default function (pi: any) {
 	// Frozen for the life of the session; `undefined` means "not loaded yet".
 	let alwaysText: string | undefined;
@@ -152,16 +214,23 @@ export default function (pi: any) {
 	};
 
 	const load = (ctx: any, sessionCwd?: string): void => {
+		const problems: string[] = [];
 		const always = compose(ALWAYS_PREFIX);
 		alwaysText = always.text;
-		report(ctx, always.problems);
+		problems.push(...always.problems);
 		// `declaresPetbox` swallows its own read and parse failures by design, so there is no
 		// outer catch left here to hide a broken compose.
 		petboxText = "";
-		if (!declaresPetbox(pi, sessionCwd)) return;
-		const petbox = compose(PETBOX_PREFIX);
-		petboxText = petbox.text;
-		report(ctx, petbox.problems);
+		if (declaresPetbox(pi, sessionCwd)) {
+			const petbox = compose(PETBOX_PREFIX);
+			petboxText = petbox.text;
+			problems.push(...petbox.problems);
+		}
+		// The children's half of the same question, asked from the only session that can still
+		// reach a human. Collected, not reported piecemeal: `report` fires once per session, so a
+		// second call would be swallowed and the role problems would never be heard.
+		problems.push(...missingRoleSkills());
+		report(ctx, problems);
 	};
 
 	pi.on("session_start", (_event: any, ctx: any) => load(ctx, ctx?.cwd));
