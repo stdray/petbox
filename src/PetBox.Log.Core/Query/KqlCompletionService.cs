@@ -55,7 +55,7 @@ public static class KqlCompletionService
 
 	static KqlCompletionItem? ToCompletionItem(Kusto.Language.Editor.CompletionItem i)
 	{
-		if (i.Kind == CompletionKind.QueryPrefix && !SupportedQueryPrefixes.Contains(i.DisplayText))
+		if (!IsSupported(i))
 			return null;
 
 		if (i.DisplayText == "Properties")
@@ -67,4 +67,17 @@ public static class KqlCompletionService
 			BeforeText: i.BeforeText ?? "",
 			AfterText: i.AfterText ?? "");
 	}
+
+	// The ONLY filter, and it asks the COMPILER, never a copy of its knowledge: a pipeline prefix against
+	// the operator allowlist here, a scalar infix operator against KqlScalar.CanCompileOperator, a built-in
+	// function against the scalar-function registry (KqlScalar.CanCompileFunction). An item the engine
+	// cannot compile must not be advertised — offering `hasprefix` before the compiler learned it was the
+	// reported defect. Everything else (columns, tables, keywords, types) is offered unfiltered.
+	static bool IsSupported(Kusto.Language.Editor.CompletionItem i) => i.Kind switch
+	{
+		CompletionKind.QueryPrefix => SupportedQueryPrefixes.Contains(i.DisplayText),
+		CompletionKind.ScalarInfix => KqlScalar.CanCompileOperator(i.DisplayText),
+		CompletionKind.BuiltInFunction => KqlScalar.CanCompileFunction(i.DisplayText),
+		_ => true,
+	};
 }

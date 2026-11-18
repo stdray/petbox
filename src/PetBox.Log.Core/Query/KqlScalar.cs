@@ -585,6 +585,48 @@ sealed class EmittedStorageScalarContext : SqlRecordScalarContext
 
 static class KqlScalar
 {
+	// --- THE CAPABILITY MANIFEST: what this engine can compile. ---
+	// KqlCompletionService answers "may I offer this?" from here instead of from its own list, so the
+	// completer CANNOT drift from the compiler: the names below are the DisplayTexts Kusto.Language's
+	// ScalarInfix completion emits, and every one of them has a live arm in Binary()/In()/Between().
+	// Adding an operator arm means adding its name; a name without an arm is caught by the round-trip
+	// test (KqlOperatorCapabilityTests) that compiles every entry through the production path.
+	// Deliberately ABSENT: `like`/`!like`, `has_ipv4*` and the rest of the unsupported operator surface —
+	// they are filtered OUT of the completer rather than implemented.
+	public static readonly IReadOnlySet<string> SupportedInfixOperators = new HashSet<string>(StringComparer.Ordinal)
+	{
+		// logical
+		"and", "or",
+		// arithmetic (Arithmetic)
+		"+", "-", "*", "/", "%",
+		// comparison (IsComparison)
+		"==", "!=", "<", "<=", ">", ">=",
+		"=~", "!~",
+		// membership / ranges
+		"in", "!in", "in~", "!in~", "between", "!between",
+		// substring predicates
+		"contains", "!contains", "contains_cs", "!contains_cs",
+		"startswith", "!startswith", "startswith_cs", "!startswith_cs",
+		"endswith", "!endswith", "endswith_cs", "!endswith_cs",
+		// term predicates (boundary regexes, see HasFn/HasAffix/HasList)
+		"has", "!has", "has_cs", "!has_cs",
+		"hasprefix", "!hasprefix", "hasprefix_cs", "!hasprefix_cs",
+		"hassuffix", "!hassuffix", "hassuffix_cs", "!hassuffix_cs",
+		"has_any", "has_all",
+		"matches regex",
+	};
+
+	public static bool CanCompileOperator(string displayText) => SupportedInfixOperators.Contains(displayText);
+
+	// A completer function item's DisplayText is `name(args…)` ("tostring(value)", "now([offset])"); the
+	// engine's answer is the registry's, matched on the name up to the parenthesis.
+	public static bool CanCompileFunction(string displayText)
+	{
+		var paren = displayText.IndexOf('(');
+		var name = paren > 0 ? displayText[..paren] : displayText;
+		return KqlScalarFunctions.TryResolve(name, out _);
+	}
+
 	public static Expr Compile(Expression node, ScalarContext ctx) => node switch
 	{
 		LiteralExpression lit => Literal(lit),
