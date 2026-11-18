@@ -143,6 +143,96 @@ public sealed class KqlStringOpsTests
 			}
 	}
 
+	// `in~` / `!in~` are Kusto's CASE-INSENSITIVE membership spellings (Kusto.Language InCsExpression /
+	// NotInCsExpression — a `Cs` that means the OPPOSITE of the one in `contains_cs`). They used to compile to a
+	// plain ordinal equality, so the whole operator silently returned the wrong rows with no error:
+	// `Message in~ ('crash on earth')` gave [] instead of [2]. Pinned on every active backend, because the fold
+	// is now real SQL (`lower(...)` on both sides), not an in-memory nicety.
+	[Theory]
+	[InlineData("crash on earth")]
+	[InlineData("CRASH ON EARTH")]
+	[InlineData("Crash On Earth")]
+	public void InTilde_IsCaseInsensitive_AndItsNegationIsTheComplement(string term)
+	{
+		foreach (var backend in KqlBackendConfig.Active)
+		{
+			var matching = KqlTestHost.Apply(Rows, Parse($"events | where Message in~ ('{term}')"), backend)
+				.Select(r => r.Id).ToList();
+			var excluded = KqlTestHost.Apply(Rows, Parse($"events | where Message !in~ ('{term}')"), backend)
+				.Select(r => r.Id).ToList();
+
+			matching.Should().BeEquivalentTo([2L], $"'in~ ({term})' on {backend} must match row 2 whatever its casing");
+			excluded.Should().BeEquivalentTo([1L, 3L, 4L], $"'!in~ ({term})' on {backend} must exclude only row 2");
+		}
+	}
+
+	// The complement rule over a MULTI-element list (so the OR-chain, not just a single equality, is exercised):
+	// no seed row is null, so the two spellings are disjoint and jointly exhaustive.
+	[Fact]
+	public void InTilde_ListIsTheExactComplementOfItsNegation()
+	{
+		const string list = "('CRASH ON EARTH', 'starting UP', 'nothing-matches-this')";
+		foreach (var backend in KqlBackendConfig.Active)
+		{
+			var matching = KqlTestHost.Apply(Rows, Parse($"events | where Message in~ {list}"), backend)
+				.Select(r => r.Id).ToList();
+			var excluded = KqlTestHost.Apply(Rows, Parse($"events | where Message !in~ {list}"), backend)
+				.Select(r => r.Id).ToList();
+
+			matching.Should().BeEquivalentTo([1L, 2L], $"'in~ {list}' on {backend} must be case-insensitive");
+			excluded.Should().BeEquivalentTo(
+				Rows.Select(r => r.Id).Except(matching),
+				$"'!in~ {list}' on {backend} must return exactly what 'in~ {list}' does not");
+		}
+	}
+
+	// The tilde is what buys the case folding — `in` / `!in` stay ORDINAL, and this test is the guard that
+	// keeps the fix from being "improved" into folding the plain spellings too.
+	[Fact]
+	public void In_StaysCaseSensitive()
+	{
+		foreach (var backend in KqlBackendConfig.Active)
+		{
+			KqlTestHost.Apply(Rows, Parse("events | where Message in ('crash on earth')"), backend)
+				.Select(r => r.Id).ToList().Should().BeEmpty($"'in' on {backend} is ordinal");
+			KqlTestHost.Apply(Rows, Parse("events | where Message in ('crash on Earth')"), backend)
+				.Select(r => r.Id).ToList().Should().BeEquivalentTo([2L], $"'in' on {backend} matches exact casing");
+			KqlTestHost.Apply(Rows, Parse("events | where Message !in ('crash on Earth')"), backend)
+				.Select(r => r.Id).ToList().Should().BeEquivalentTo([1L, 3L, 4L], $"'!in' on {backend} is ordinal");
+		}
+	}
+
+	// A null left operand is excluded from BOTH spellings — `in~` folds the operand with lower(), and the
+	// json_extract NULL must survive that fold as NULL rather than becoming a match. Row 2 carries no `env`
+	// property, so it belongs in NEITHER list (same seeding style as NegatedStringOperators_ExcludeNullOperands).
+	[Fact]
+	public void InTilde_ExcludesNullOperands()
+	{
+		LogEntryRecord[] rows =
+		[
+			new() { Id = 1, Message = "dev row", PropertiesJson = """{"env":"dev"}""" },
+			new() { Id = 2, Message = "no env property", PropertiesJson = """{"other":"x"}""" },
+			new() { Id = 3, Message = "prod row", PropertiesJson = """{"env":"prod"}""" },
+		];
+
+		(string Predicate, long[] Expected)[] cases =
+		[
+			("in~ ('PROD')", [3]),
+			("!in~ ('PROD')", [1]),
+			("in~ ('nothing-matches-this')", []),
+			("!in~ ('nothing-matches-this')", [1, 3]),
+		];
+
+		foreach (var backend in KqlBackendConfig.Active)
+			foreach (var (predicate, expected) in cases)
+			{
+				var kql = $"events | where Properties[\"env\"] {predicate}";
+				KqlTestHost.Apply(rows, Parse(kql), backend).Select(r => r.Id).ToList()
+					.Should().BeEquivalentTo(expected,
+						$"'Properties[\"env\"] {predicate}' on {backend} must return exactly [{string.Join(",", expected)}] — the null-env row is excluded from both spellings");
+			}
+	}
+
 	// `!in` / `!between` parse to their own kinds and were wired by reading Kind inside In()/Between();
 	// `not(...)` is a function. Before this fix NEITHER route could negate a string predicate other than
 	// through not(), so pin that a negated spelling resolves WITHOUT falling into the generic

@@ -857,13 +857,37 @@ static class KqlScalar
 		return guarded;
 	}
 
+	// The two KqlSqlExpressions shims In() reaches by name — the EXISTING SQL-translatable, dual-dialect,
+	// nullable-aware ones (no new shim is introduced by the `~` support): ToLower is `lower({0})`, IsNotNull is
+	// `({0} IS NOT NULL)`. Resolved once here because KqlScalar has no SqlM helper of its own (that one lives
+	// on KqlScalarFunctions) and a reflection `!` is not the house style.
+	static readonly MethodInfo LowerSql = SqlShim(nameof(KqlSqlExpressions.ToLower));
+	static readonly MethodInfo IsNotNullSql = SqlShim(nameof(KqlSqlExpressions.IsNotNull));
+
+	static MethodInfo SqlShim(string name) =>
+		typeof(KqlSqlExpressions).GetMethod(name)
+		?? throw new InvalidOperationException($"{nameof(KqlSqlExpressions)}.{name} is missing");
+
 	static Expr In(InExpression inx, ScalarContext ctx)
 	{
+		// Kusto's `in~` (InCsExpression) and `!in~` (NotInCsExpression) are the CASE-INSENSITIVE membership
+		// spellings. READ THIS BEFORE "FIXING" THE NAME: on every OTHER operator the `_cs` suffix means
+		// case-SENSITIVE (`contains_cs`, `has_cs`), but Kusto.Language names the tilde forms with a `Cs` that
+		// means the OPPOSITE — it is Kusto's own historical spelling of the `~` form. So `in~` without case
+		// folding is silently ordinal and returns wrong rows with no error. Do not invert this.
+		var fold = inx.Kind is SyntaxKind.InCsExpression or SyntaxKind.NotInCsExpression;
 		var negate = inx.Kind is SyntaxKind.NotInExpression or SyntaxKind.NotInCsExpression;
 		var le = Compile(inx.Left, ctx);
 		var elements = inx.Right.Expressions.Select(e => Compile(e.Element, ctx)).ToList();
 		if (elements.Count == 0)
 			return Expr.Constant(negate);
+
+		// A STRING left has no HasValue for NullGuard to test, so the `~` spellings need the explicit
+		// non-null check: measured, the negated membership SQL KEEPS a null-operand row (`Properties["env"]
+		// !in ('PROD')` returns the row whose `env` is missing), which is exactly the Kusto null rule the
+		// `!has` family already had to restore via Negated(). Applied to the `~` spelling ONLY — `in` / `!in`
+		// keep the tree they compiled before this change.
+		var stringFold = fold && NonNullable(le.Type) == typeof(string);
 
 		Expr? acc = null;
 		foreach (var element in elements)
@@ -873,13 +897,19 @@ static class KqlScalar
 			// `Start in (datetime(...))` work identically pre- and post-split.
 			var (nl, nr) = NormalizeInstants(le, element, ctx);
 			var (l, r) = UnifyComparable(nl, nr, SyntaxKind.EqualExpression);
+			// Fold BOTH sides, but only for string membership: `1 in~ (1)` or a datetime in~ a list are
+			// order-equality either way, so the plain path is the CORRECT one for non-strings (and for
+			// `in` / `!in`, which are ordinal by definition — byte-for-byte unchanged).
+			if (stringFold)
+				(l, r) = (Expr.Call(LowerSql, l), Expr.Call(LowerSql, r));
 			var eq = Expr.Equal(l, r, liftToNull: false, method: null);
 			acc = acc is null ? eq : Expr.OrElse(acc, eq);
 		}
 		Expr result = negate ? Expr.Not(acc!) : acc!;
 		// A null left operand matches nothing, and its negation is still excluded — so both `in` and `!in`
 		// yield false for a null left (Kusto null semantics; see Compare's NOTE on two-valued logic).
-		return NullGuard(result, le);
+		result = NullGuard(result, le);
+		return negate && stringFold ? Expr.AndAlso(Expr.Call(IsNotNullSql, le), result) : result;
 	}
 
 	static Expr Between(BetweenExpression btw, ScalarContext ctx)
