@@ -155,6 +155,13 @@ public static class KqlSqlExpressions
 	[Sql.Expression("lower({0})", ServerSideOnly = true, IsNullable = Sql.IsNullableType.IfAnyParameterNullable)]
 	public static string? ToLower(string? s) => s?.ToLowerInvariant();
 
+	// The null-propagating comparison the string shims above DO NOT universally give us: a `!<op>` must
+	// EXCLUDE a null subject (Kusto: a null matches nothing, and so does its negation), but MatchesRegex
+	// deliberately PINS a null subject to FALSE (IFNULL/COALESCE), so NOT(<a pinned FALSE>) would keep the
+	// row. This explicit IS NOT NULL is what restores the rule for every negated string predicate.
+	[Sql.Expression("({0} IS NOT NULL)", ServerSideOnly = true, IsNullable = Sql.IsNullableType.NotNullable)]
+	public static bool IsNotNull(string? s) => s != null;
+
 	[Sql.Expression("upper({0})", ServerSideOnly = true, IsNullable = Sql.IsNullableType.IfAnyParameterNullable)]
 	public static string? ToUpper(string? s) => s?.ToUpperInvariant();
 
