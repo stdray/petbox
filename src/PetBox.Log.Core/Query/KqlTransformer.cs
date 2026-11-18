@@ -377,17 +377,15 @@ public static partial class KqlTransformer
 	static Type Nullable(Type t) =>
 		t.IsValueType && !KqlScalar.IsNullable(t) ? typeof(Nullable<>).MakeGenericType(t) : t;
 
-	// --- post-shape (in-memory) order by / take / top / distinct ---
-	// These run after a shape change, over the streamed object?[] rows. order/top buffer the
-	// whole stream (a sort must); take just truncates. Sort keys compile through the wave-1
-	// scalar engine over the current row shape, so they may reference computed columns.
+	// --- post-shape order by / take / top / distinct: ALL of them compose in SQL ---
+	// HISTORY, recorded so nobody rebuilds it: these once ran over streamed object?[] rows with an in-memory
+	// sort. That stage was deleted with the single-path migration (4e35c8e2) and nothing replaced it — a
+	// shape-changed pipeline continues through ComposeOrder / ComposeTake / ComposeTop / ComposeDistinct on the
+	// composed SqlStage, where sort keys compile straight to SQL and may reference computed columns.
 
-	// Compares boxed scalar values (long/double/string/DateTime/…) for post-shape sorting.
-	// Comparer<object>.Default routes to the boxed value's IComparable and treats null as the
-	// smallest value, matching Kusto's nulls-first ascending order. STRINGS compare ORDINAL: the
-	// pre-split ORDER BY runs under SQLite's BINARY collation, and String.CompareTo (culture-
-	// sensitive) would order the same clause differently by pipeline position ("apple" before
-	// "Banana" post-split, after it pre-split).
+	// UNUSED LEFTOVER of that deleted in-memory sort: nothing references this type and it orders nothing. Its
+	// one rule, were it ever revived — STRING keys compare ORDINAL, matching the SQL BINARY collation, so the
+	// answer cannot depend on the pipeline position of the sort.
 	sealed class BoxedComparer : IComparer<object?>
 	{
 		public static readonly BoxedComparer Instance = new();
