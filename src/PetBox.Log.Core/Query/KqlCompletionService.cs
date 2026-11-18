@@ -12,6 +12,14 @@ public static class KqlCompletionService
 		"take",
 		"limit",
 		"project",
+		// The column-selection family: they reshape the result in SQL (no in-memory fallback), so the
+		// completion surface must offer them — hiding a working operator is the same defect as offering a
+		// broken one.
+		"project-away",
+		"project-keep",
+		"project-rename",
+		"project-reorder",
+		"project-by-names",
 		"extend",
 		"count",
 		"summarize",

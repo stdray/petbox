@@ -264,8 +264,15 @@ public static partial class KqlTransformer
 	// columns; the others compute/aggregate. `order by` / `take` / `top` are NOT here — they preserve the
 	// current shape and compose in SQL both before the split (pre-split ApplyPipeline) and after it
 	// (ComposeOrder/ComposeTake/ComposeTop), so a query that only sorts/limits stays one linq2db query.
+	// The project-* COLUMN SELECTION family (away/keep/rename/reorder/by-names) is here too: it computes no
+	// value but it does change the row SHAPE (which columns exist, under which names, in which order), so a
+	// downstream stage must compose over the reshaped stage — and, because the live-tail surface has no
+	// per-row form of a reshaped row, it stays refused there (HasShapeChangingOps → 400), never silently
+	// full-scanned.
 	static bool IsShapeChangingOp(SyntaxNode op) =>
 		op is ProjectOperator or CountOperator or SummarizeOperator or ExtendOperator or DistinctOperator
+			or ProjectAwayOperator or ProjectKeepOperator or ProjectRenameOperator or ProjectReorderOperator
+			or ProjectByNamesOperator
 			// correlation ops (wave 5): all post-materialization in-memory stages. join/lookup carry a
 			// right-hand subquery that runs independently; mv-expand/parse reshape each streamed row.
 			or JoinOperator or LookupOperator or MvExpandOperator or ParseOperator;

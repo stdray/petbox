@@ -99,6 +99,12 @@ public static partial class KqlTransformer
 			{
 				DistinctOperator distinct => ComposeDistinct(stage, distinct, now),
 				ProjectOperator project => ComposeProject(stage, project, now),
+				ProjectAwayOperator away => ComposeProjectAway(stage, away, now),
+				ProjectKeepOperator keep => ComposeColumnSelection(stage, keep.Expressions, "project-keep", now),
+				ProjectByNamesOperator byNames => ComposeColumnSelection(
+					stage, byNames.Expressions, "project-by-names", now, specifierOrder: true, ignoreUnknownNames: true),
+				ProjectRenameOperator rename => ComposeProjectRename(stage, rename, now),
+				ProjectReorderOperator reorder => ComposeProjectReorder(stage, reorder, now),
 				ExtendOperator extend => ComposeExtend(stage, extend, now),
 				SummarizeOperator summarize => ComposeSummarize(stage, summarize, now, options),
 				ParseOperator parse => ComposeParse(stage, parse, now),
@@ -261,6 +267,248 @@ public static partial class KqlTransformer
 		}
 
 		return BuildEmittedStage(stage.Query, stage.ElementType, param, cols, distinct: false, now);
+	}
+
+	// ========================================================================================
+	// COLUMN SELECTION: project-away / project-keep / project-by-names / project-rename /
+	// project-reorder. All five rewrite the emitted SELECT's column list — membership, names and/or ORDER —
+	// and NOTHING else: no value is computed, no row is added, dropped or SORTED (that last point is
+	// project-reorder's classic misreading: it orders COLUMNS, never ROWS — pinned by a test). Each one is
+	// therefore a pure SQL reshape over BuildEmittedStage, exactly like `project`, and the in-memory path
+	// (order/take/top/distinct AFTER a shape change) is not involved at all. They DO change the row shape,
+	// so they stay refused on the live-tail surface (IsShapeChangingOp).
+	// ========================================================================================
+
+	// A Kusto column wildcard: '*' matches any run of characters, zero or more, and '*' is the ONLY
+	// wildcard — there is no '?' in a column pattern. Matching is case-INSENSITIVE, matching the house rule
+	// for bare column references (ResolveColumnIndexCI): a `project-away message` that kept Message while
+	// `where message == …` filtered on it would be exactly the trap that rule exists to close.
+	static bool IsColumnPattern(string name) => name.Contains('*', StringComparison.Ordinal);
+
+	internal static bool ColumnPatternMatches(string pattern, string name)
+	{
+		// Classic glob over '*' only: greedy walk with one backtrack point per star, no regex.
+		int p = 0, n = 0, star = -1, mark = 0;
+		while (n < name.Length)
+		{
+			if (p < pattern.Length && pattern[p] == '*')
+			{
+				star = p++;
+				mark = n;
+			}
+			else if (p < pattern.Length
+				&& char.ToUpperInvariant(pattern[p]) == char.ToUpperInvariant(name[n]))
+			{
+				p++;
+				n++;
+			}
+			else if (star >= 0)
+			{
+				p = star + 1;
+				n = ++mark;
+			}
+			else
+				return false;
+		}
+		while (p < pattern.Length && pattern[p] == '*')
+			p++;
+		return p == pattern.Length;
+	}
+
+	// One column-list element → the SOURCE indices it names, in source order. A plain column name that
+	// resolves to nothing is a precise error (a typo in a column list is a bug, not a filter); a wildcard
+	// pattern that matches nothing is NOT — Kusto treats a pattern as a set, and an empty set is a result.
+	// `opName` only feeds the error text. All five operators are column-list-only: anything that is not a
+	// name or a pattern (a computed expression, a Properties path) is refused rather than half-supported.
+	static List<int> MatchColumnElement(
+		IReadOnlyList<KqlColumn> columns, Expression element, string opName, bool ignoreUnknownNames)
+	{
+		if (element is not NameReference reference)
+			throw new UnsupportedKqlException(
+				$"{opName}: '{element.Kind}' is not a column name or wildcard pattern "
+				+ "(use e.g. 'Message' or 'session*')");
+
+		var pattern = reference.SimpleName;
+		var isPattern = IsColumnPattern(pattern);
+		var matches = new List<int>();
+		for (var i = 0; i < columns.Count; i++)
+		{
+			var hit = isPattern
+				? ColumnPatternMatches(pattern, columns[i].Name)
+				: string.Equals(pattern, columns[i].Name, StringComparison.OrdinalIgnoreCase);
+			if (hit)
+				matches.Add(i);
+		}
+
+		if (matches.Count == 0 && !isPattern && !ignoreUnknownNames)
+			throw new UnsupportedKqlException($"{opName}: unknown column '{pattern}'");
+		return matches;
+	}
+
+	// A new emitted stage over a CHOSEN subset/order of the current stage's columns: each output column
+	// rides the storage expression the upstream stage already resolves for its SOURCE column (so a rename
+	// changes the label and nothing else, and a datetime/timespan keeps its epoch-ms/ticks storage until
+	// the single materialization conversion).
+	static SqlStage EmittedColumnsStage(
+		SqlStage stage, IReadOnlyList<(string Source, KqlColumn Column)> columns, DateTime now)
+	{
+		var param = Expr.Parameter(stage.ElementType, "e");
+		var ctx = stage.MakeContext(param);
+		var cols = columns.Select(c => new SqlCol(c.Column.Name, c.Column.ClrType, ctx.ResolveColumn(c.Source))).ToList();
+		return BuildEmittedStage(stage.Query, stage.ElementType, param, cols, distinct: false, now);
+	}
+
+	static SqlStage EmittedColumnsStage(SqlStage stage, IReadOnlyList<int> indexes, DateTime now) =>
+		EmittedColumnsStage(stage, indexes.Select(i => (stage.Columns[i].Name, stage.Columns[i])).ToList(), now);
+
+	// ---- project-away: every column EXCEPT the named/pattern-matched ones, in source order ----
+	static SqlStage ComposeProjectAway(SqlStage stage, ProjectAwayOperator away, DateTime now)
+	{
+		var dropped = new HashSet<int>();
+		foreach (var element in away.Expressions)
+			dropped.UnionWith(MatchColumnElement(stage.Columns, element.Element, "project-away", ignoreUnknownNames: false));
+
+		var kept = new List<int>();
+		for (var i = 0; i < stage.Columns.Count; i++)
+			if (!dropped.Contains(i))
+				kept.Add(i);
+		return EmittedColumnsStage(stage, kept, now);
+	}
+
+	// ---- project-keep / project-by-names: exactly the named/pattern-matched columns. The two differ in
+	// ONE documented way each, and each difference is a doc quote:
+	//   project-keep       — source order ("the order of the columns in the result is determined by their
+	//                        original order in the table"); an unknown name is an error.
+	//   project-by-names   — specifier order ("ordered based on the sequence in which they're specified or
+	//                        matched"); unknown names are IGNORED ("column names that don't match any
+	//                        existing column are safely ignored").
+	// Flags rather than two copies: the rest of the machinery (patterns, emission) is identical.
+	static SqlStage ComposeColumnSelection(SqlStage stage, SyntaxList<SeparatedElement<Expression>> expressions,
+		string opName, DateTime now, bool specifierOrder = false, bool ignoreUnknownNames = false)
+	{
+		var chosen = new List<int>();
+		var seen = new HashSet<int>();
+		foreach (var element in expressions)
+			foreach (var i in MatchColumnElement(stage.Columns, element.Element, opName, ignoreUnknownNames))
+				if (seen.Add(i))
+					chosen.Add(i);
+		// A repeated name/overlapping pattern selects the column once — and in source order it must land
+		// at its source position, not at the position of a later duplicate mention.
+		if (!specifierOrder)
+			chosen.Sort();
+		return EmittedColumnsStage(stage, chosen, now);
+	}
+
+	// ---- project-rename new = old: the SAME columns in the SAME order, each named column relabelled in
+	// place ("a table that has the columns in the same order as in an existing table, with columns
+	// renamed"). The right side must be a plain column reference: project-rename RENAMES, it does not
+	// compute, so `project-rename x = Level * 2` is a precise error rather than a half-rename. ----
+	static SqlStage ComposeProjectRename(SqlStage stage, ProjectRenameOperator rename, DateTime now)
+	{
+		var renamedTo = new Dictionary<int, string>();
+		foreach (var element in rename.Expressions)
+		{
+			if (element.Element is not SimpleNamedExpression { Name: NameDeclaration alias } named)
+				throw new UnsupportedKqlException(
+					$"project-rename: '{element.Element.Kind}' is not supported (use 'newName = columnName')");
+			if (named.Expression is not NameReference source)
+				throw new UnsupportedKqlException(
+					$"project-rename: '{named.Expression.Kind}' is not a column name — project-rename only renames "
+					+ "existing columns (use 'project' to compute a new one)");
+
+			var index = ResolveColumnIndexCI(stage.Columns, source.SimpleName);
+			if (index < 0)
+				throw new UnsupportedKqlException($"project-rename: unknown column '{source.SimpleName}'");
+			renamedTo[index] = alias.Name.SimpleName;
+		}
+
+		// The resulting names must stay unique: a rename onto a column that is still there would emit two
+		// columns under one name, which no downstream stage (or caller) could address.
+		var finalNames = stage.Columns.Select((c, i) => renamedTo.GetValueOrDefault(i, c.Name)).ToList();
+		for (var i = 0; i < finalNames.Count; i++)
+			for (var j = i + 1; j < finalNames.Count; j++)
+				if (string.Equals(finalNames[i], finalNames[j], StringComparison.OrdinalIgnoreCase))
+					throw new UnsupportedKqlException($"project-rename: column '{finalNames[i]}' already exists");
+
+		var cols = stage.Columns
+			.Select((c, i) => (c.Name, Column: new KqlColumn(renamedTo.GetValueOrDefault(i, c.Name), c.ClrType)))
+			.ToList();
+		return EmittedColumnsStage(stage, cols, now);
+	}
+
+	// ---- project-reorder a, b*, c desc: COLUMN ORDER ONLY — it never sorts ROWS and never renames or
+	// drops a column (that distinction is the operator's classic misreading, pinned by a test). Named /
+	// pattern-matched columns come first, in the listed order; every remaining column is appended in source
+	// order ("columns that aren't specified explicitly appear as the last columns of the output table").
+	// The asc/desc/granny-asc/granny-desc modifier orders the columns ONE PATTERN MATCHED at the moment it
+	// matched — "how to order the columns when a wildcard pattern is used": no modifier = source order,
+	// asc/desc = by column name, granny-* = natural order (a20 before a100). A column matched by more than
+	// one specifier lands at the FIRST one, and a plain single column name is unaffected by a modifier. ----
+	static SqlStage ComposeProjectReorder(SqlStage stage, ProjectReorderOperator reorder, DateTime now)
+	{
+		var placed = new bool[stage.Columns.Count];
+		var order = new List<int>();
+		foreach (var element in reorder.Expressions)
+		{
+			var (expr, ordering) = element.Element switch
+			{
+				OrderedExpression { Expression: var e, Ordering: var o } => (e, o.AscOrDescKeyword?.Text ?? ""),
+				var e => ((Expression)e, ""),
+			};
+			var matches = MatchColumnElement(stage.Columns, expr, "project-reorder", ignoreUnknownNames: false)
+				.Where(i => !placed[i])
+				.ToList();
+			if (ordering.Length > 0)
+				matches.Sort((x, y) => ordering switch
+				{
+					"asc" => string.Compare(stage.Columns[x].Name, stage.Columns[y].Name, StringComparison.OrdinalIgnoreCase),
+					"desc" => string.Compare(stage.Columns[y].Name, stage.Columns[x].Name, StringComparison.OrdinalIgnoreCase),
+					"granny-asc" => NaturalCompare(stage.Columns[x].Name, stage.Columns[y].Name),
+					"granny-desc" => NaturalCompare(stage.Columns[y].Name, stage.Columns[x].Name),
+					_ => throw new UnsupportedKqlException($"project-reorder: unsupported ordering '{ordering}'"),
+				});
+			foreach (var i in matches)
+			{
+				placed[i] = true;
+				order.Add(i);
+			}
+		}
+		for (var i = 0; i < placed.Length; i++)
+			if (!placed[i])
+				order.Add(i);
+		return EmittedColumnsStage(stage, order, now);
+	}
+
+	// "granny" = natural order: a run of digits compares by VALUE, so a20 sorts before a100 (Kusto's own
+	// documented example for granny-asc); everything else compares ordinal-ignore-case, like `asc`.
+	internal static int NaturalCompare(string a, string b)
+	{
+		int i = 0, j = 0;
+		while (i < a.Length && j < b.Length)
+		{
+			if (char.IsAsciiDigit(a[i]) && char.IsAsciiDigit(b[j]))
+			{
+				int si = i, sj = j;
+				while (i < a.Length && char.IsAsciiDigit(a[i]))
+					i++;
+				while (j < b.Length && char.IsAsciiDigit(b[j]))
+					j++;
+				var da = a[si..i].TrimStart('0');
+				var db = b[sj..j].TrimStart('0');
+				var byValue = da.Length != db.Length ? da.Length.CompareTo(db.Length) : string.CompareOrdinal(da, db);
+				if (byValue != 0)
+					return byValue;
+			}
+			else
+			{
+				var byChar = char.ToUpperInvariant(a[i]).CompareTo(char.ToUpperInvariant(b[j]));
+				if (byChar != 0)
+					return byChar;
+				i++;
+				j++;
+			}
+		}
+		return (a.Length - i).CompareTo(b.Length - j);
 	}
 
 	// ---- extend: passes ALL input columns through and appends/replaces the computed ones. An extended

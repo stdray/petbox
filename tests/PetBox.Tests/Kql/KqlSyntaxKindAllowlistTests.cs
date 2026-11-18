@@ -22,6 +22,12 @@ public sealed class KqlSyntaxKindAllowlistTests
 		SyntaxKind.LookupOperator,
 		SyntaxKind.MvExpandOperator,
 		SyntaxKind.ParseOperator,
+		// column selection (project-*): pure SQL SELECT reshaping, no in-memory path
+		SyntaxKind.ProjectAwayOperator,
+		SyntaxKind.ProjectKeepOperator,
+		SyntaxKind.ProjectRenameOperator,
+		SyntaxKind.ProjectReorderOperator,
+		SyntaxKind.ProjectByNamesOperator,
 	];
 
 	static readonly HashSet<string> ExplicitlyUnsupportedNames = new(StringComparer.Ordinal)
@@ -34,9 +40,8 @@ public sealed class KqlSyntaxKindAllowlistTests
 		"FindOperator", "SearchOperator", "SampleOperator", "SampleDistinctOperator",
 		"ScanOperator", "SerializeOperator", "RenderOperator", "MakeSeriesOperator",
 		"ReduceByOperator", "InvokeOperator", "AsOperator", "GetSchemaOperator",
-		"PartitionOperator", "PartitionByOperator", "ProjectAwayOperator",
-		"ProjectKeepOperator", "ProjectRenameOperator", "ProjectReorderOperator",
-		"ProjectByNamesOperator", "RangeOperator", "PrintOperator", "AssertSchemaOperator",
+		"PartitionOperator", "PartitionByOperator",
+		"RangeOperator", "PrintOperator", "AssertSchemaOperator",
 		"ForkOperator", "BadQueryOperator", "GraphMarkComponentsOperator",
 		"GraphMatchOperator", "GraphShortestPathsOperator", "GraphToTableOperator",
 		"MakeGraphOperator",
@@ -90,6 +95,11 @@ public sealed class KqlSyntaxKindAllowlistTests
 			[SyntaxKind.LookupOperator] = "events | lookup (events) on ServiceKey",
 			[SyntaxKind.MvExpandOperator] = "events | mv-expand Tags",
 			[SyntaxKind.ParseOperator] = "events | parse Message with \"a=\" A",
+			[SyntaxKind.ProjectAwayOperator] = "events | project-away Message",
+			[SyntaxKind.ProjectKeepOperator] = "events | project-keep Id, Level",
+			[SyntaxKind.ProjectRenameOperator] = "events | project-rename Text = Message",
+			[SyntaxKind.ProjectReorderOperator] = "events | project-reorder Level, Id",
+			[SyntaxKind.ProjectByNamesOperator] = "events | project-by-names Message, Id",
 		};
 
 		SupportedOperators.Should().BeEquivalentTo(applyExamples.Keys.Concat(executeExamples.Keys));
