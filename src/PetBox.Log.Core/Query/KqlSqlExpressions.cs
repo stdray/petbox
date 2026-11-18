@@ -1,5 +1,7 @@
 using System.Globalization;
+using System.Text;
 using System.Text.Json;
+using System.Text.RegularExpressions;
 using LinqToDB;
 using PetBox.Log.Core.Metrics;
 using PetBox.Log.Core.Models;
@@ -509,6 +511,326 @@ public static class KqlSqlExpressions
 	// row shape uses so the SQL and in-memory paths agree exactly.
 	[Sql.Expression("(CASE {0} WHEN 0 THEN 'Gauge' WHEN 1 THEN 'Sum' WHEN 2 THEN 'Histogram' WHEN 3 THEN 'ExponentialHistogram' WHEN 4 THEN 'Summary' ELSE 'Unknown' END)", ServerSideOnly = true)]
 	public static string MetricTypeName(int type) => MetricPointTypeNames.ToName(type);
+
+	// === string scalars: strlen / indexof / replace_string / trim,trim_start,trim_end / format_bytes /
+	// isascii / isutf8. Contracts verified against the official Kusto docs (kusto/query/<fn>-function).
+	// As everywhere in this file each method carries a [Sql.Expression] translation AND a real C# body:
+	// the attribute is what the SQL path uses, the body is what the in-memory/row compile (logical typing)
+	// and the differential tests run, and the two are pinned to each other by KqlScalarFunctionsBatchTests.
+	// Null IN → null OUT everywhere (Kusto's null rule, and what length()/replace()/regexp_replace() already
+	// do natively), so no CASE is needed for the null case. ---
+
+	// strlen = length in CHARACTERS. Both dialects' length() counts Unicode CODE POINTS over a UTF-8
+	// string, which is exactly Kusto's rule ("This function counts Unicode code points", e.g. 'C\u0327edilla'
+	// is 8); .NET s.Length would count UTF-16 units, hence the rune count in the body.
+	[Sql.Expression("length({0})", ServerSideOnly = true, IsNullable = Sql.IsNullableType.Nullable)]
+	public static long? StrLen(string? s) => s is null ? null : s.EnumerateRunes().Count();
+
+	// indexof(source, match, start, length) — ZERO-based index of `match`, -1 when not found, NULL for an
+	// invalid start/length (Kusto: null when start is negative after the end-offset, or length < -1).
+	// `start` < 0 offsets from the END of source ("abs(start) steps from the end"); `length` = -1 means
+	// unlimited. instr on SQLite and strpos on DuckDB are the SAME 1-based (haystack, needle) primitive —
+	// DuckDB also accepts instr, so this is ONE portable expression. An empty `match` is NULL (Kusto does
+	// not define it; the dialects disagree on instr(x, ''), so it is pinned away from the divergence).
+	// The occurrence argument is NOT here: counting the Nth occurrence needs a per-row loop no dialect can
+	// express, so the registry refuses it (see KqlScalarFunctions.IndexOf).
+	[Sql.Expression(
+		"(CASE WHEN length({1}) = 0 OR {3} < -1 THEN NULL"
+		+ " WHEN (CASE WHEN {2} < 0 THEN length({0}) + {2} ELSE {2} END) < 0 THEN NULL"
+		+ " WHEN instr(substr({0}, (CASE WHEN {2} < 0 THEN length({0}) + {2} ELSE {2} END) + 1, (CASE WHEN {3} = -1 THEN length({0}) ELSE {3} END)), {1}) = 0 THEN -1"
+		+ " ELSE (CASE WHEN {2} < 0 THEN length({0}) + {2} ELSE {2} END) - 1"
+		+ " + instr(substr({0}, (CASE WHEN {2} < 0 THEN length({0}) + {2} ELSE {2} END) + 1, (CASE WHEN {3} = -1 THEN length({0}) ELSE {3} END)), {1}) END)",
+		ServerSideOnly = true, IsNullable = Sql.IsNullableType.Nullable)]
+	public static long? IndexOf(string? s, string? match, long start, long length)
+	{
+		if (s is null || string.IsNullOrEmpty(match) || length < -1)
+			return null;
+		if (start < 0)
+		{
+			start += s.Length;
+			if (start < 0)
+				return null;
+		}
+		if (start >= s.Length)
+			return -1;
+		var window = length == -1
+			? s[(int)start..]
+			: s[(int)start..(int)Math.Min(s.Length, start + length)];
+		var idx = window.IndexOf(match, StringComparison.Ordinal);
+		return idx < 0 ? -1 : start + idx;
+	}
+
+	// replace_string(text, lookup, rewrite) — ALL matches, NON-overlapping (Kusto: "Matches don't
+	// overlap"), which is exactly SQLite's/DuckDB's replace(text, lookup, rewrite). An empty lookup is a
+	// no-op: .NET's string.Replace throws on "" while the SQL replaces nothing, and this keeps the two
+	// sides identical.
+	[Sql.Expression("replace({0}, {1}, {2})", ServerSideOnly = true, IsNullable = Sql.IsNullableType.Nullable)]
+	public static string? ReplaceString(string? text, string? lookup, string? rewrite) =>
+		text is null || string.IsNullOrEmpty(lookup) || rewrite is null
+			? text
+			: text.Replace(lookup, rewrite, StringComparison.Ordinal);
+
+	// trim_start / trim_end / trim take a REGEX (not a char set) and strip ALL leading / trailing / both
+	// matches of it (kusto/query/trim-function: "Removes all leading and trailing matches of the specified
+	// regular expression"). A single anchored regexp_replace cannot repeat, so the registry passes an
+	// ALREADY-ANCHORED, already-quantified pattern — `^(?:P)+` / `(?:P)+$` — whose greedy repetition
+	// consumes the same run of matches Kusto's loop would. Both dialects' regexp_replace replace matches of
+	// the pattern with the replacement (DuckDB non-global by default, sqlean global — immaterial for an
+	// ANCHORED pattern, which can only match at one place).
+	[Sql.Expression("regexp_replace({0}, {1}, '')", ServerSideOnly = true, IsNullable = Sql.IsNullableType.Nullable)]
+	public static string? RegexTrim(string? source, string pattern) =>
+		source is null ? null : Regex.Replace(source, pattern, "", RegexOptions.CultureInvariant);
+
+	// format_bytes: ONE rung of the unit ladder — the registry picks the divisor/unit (and folds the
+	// magnitude CASE for auto-selection), so the only dialect surface left is printf. Verified identical on
+	// SQLite and DuckDB (printf('%.1f', 10332.0/1024) = '10.1' on both). `format` is the compile-time
+	// literal '%.{precision}f'; the C# body re-derives the precision from it so one literal serves both
+	// sides.
+	[Sql.Expression(ProviderName.SQLite, "(printf({1}, CAST({0} AS REAL)) || ' ' || {2})", ServerSideOnly = true, IsNullable = Sql.IsNullableType.Nullable)]
+	[Sql.Expression(ProviderName.DuckDB, "(printf({1}, CAST({0} AS DOUBLE)) || ' ' || {2})", ServerSideOnly = true, IsNullable = Sql.IsNullableType.Nullable)]
+	public static string? FormatBytesRung(double? size, string format, string unit)
+	{
+		if (size is not { } value)
+			return null;
+		var precision = format.Length >= 4 ? format[2..^1] : "0";
+		var rounded = Math.Round(value, int.Parse(precision, CultureInfo.InvariantCulture), MidpointRounding.AwayFromZero);
+		return rounded.ToString("F" + precision, CultureInfo.InvariantCulture) + " " + unit;
+	}
+
+	// isascii: "valid ASCII string" = every character is < 128 = the UTF-8 BYTE count equals the CHARACTER
+	// count. SQLite spells the byte count octet_length, DuckDB spells it strlen (DuckDB's octet_length only
+	// accepts BLOB/BIT). Null is not a valid ASCII string, so it pins to FALSE rather than NULL.
+	[Sql.Expression(ProviderName.SQLite, "COALESCE(length({0}) = octet_length({0}), 0)", ServerSideOnly = true, IsNullable = Sql.IsNullableType.NotNullable)]
+	[Sql.Expression(ProviderName.DuckDB, "COALESCE(length({0}) = strlen({0}), FALSE)", ServerSideOnly = true, IsNullable = Sql.IsNullableType.NotNullable)]
+	public static bool IsAscii(string? s)
+	{
+		if (s is null)
+			return false;
+		foreach (var c in s)
+			if (c > 0x7f)
+				return false;
+		return true;
+	}
+
+	// isutf8: every Kusto string is valid UTF-8 by construction (invalid input is replaced with U+FFFD at
+	// ingestion), and both dialects STORE text as UTF-8, so the SQL side is "is there a value at all". The
+	// body makes the same statement precisely: a string whose UTF-8 encoding is well-formed (a .NET string
+	// carrying a lone surrogate would NOT be, and cannot be stored either).
+	[Sql.Expression("({0} IS NOT NULL)", ServerSideOnly = true, IsNullable = Sql.IsNullableType.NotNullable)]
+	public static bool IsUtf8(string? s)
+	{
+		if (s is null)
+			return false;
+		try
+		{
+			new UTF8Encoding(false, throwOnInvalidBytes: true).GetByteCount(s);
+			return true;
+		}
+		catch (EncoderFallbackException)
+		{
+			return false;
+		}
+	}
+
+	// === math scalars. Kusto's sign/round/floor/… are REAL-domain (double) functions; the arithmetic
+	// guards below are not decoration — they are measured dialect divergences (SQLite returns NULL for
+	// sqrt(-1)/ln(-1)/ln(0) and for pow(-8, 0.5), where DuckDB THROWS 'Out of Range Error' or returns NaN).
+	// Pinning every domain edge to NULL keeps both backends identical AND matches Kusto's documented null
+	// for log(negative|0). Every template is domain-guarded so DuckDB never raises. ---
+
+	[Sql.Expression("abs({0})", ServerSideOnly = true, IsNullable = Sql.IsNullableType.Nullable)]
+	public static long? AbsLong(long? v) => v is { } x ? Math.Abs(x) : null;
+
+	[Sql.Expression("abs({0})", ServerSideOnly = true, IsNullable = Sql.IsNullableType.Nullable)]
+	public static double? AbsDouble(double? v) => v is { } x ? Math.Abs(x) : null;
+
+	[Sql.Expression("floor({0})", ServerSideOnly = true, IsNullable = Sql.IsNullableType.Nullable)]
+	public static double? Floor(double? v) => v is { } x ? Math.Floor(x) : null;
+
+	[Sql.Expression("ceil({0})", ServerSideOnly = true, IsNullable = Sql.IsNullableType.Nullable)]
+	public static double? Ceiling(double? v) => v is { } x ? Math.Ceiling(x) : null;
+
+	// round(number[, precision]) — Kusto rounds to N digits, HALF AWAY FROM ZERO (round(2.5) = 3,
+	// round(-2.5) = -3, round(-50.55, -2) = -100, round(21.5, -1) = 20), and the precision may be
+	// NEGATIVE. Neither native round() is faithful: SQLite's printf-based round disagrees on the negative
+	// precision (round(21.5,-1) = 22 vs Kusto 20) and DuckDB's disagrees on both (it returned 0 for
+	// round(-50.55,-2)); both were measured. So the shim is the definitional formula
+	// sign(x) * floor(|x| * 10^p + 0.5) / 10^p, which measured IDENTICAL on both dialects for every
+	// documented example. Bucket-free (no banker's rounding) by construction.
+	// NB: the negation of the operand is spelled `(0 - {0})`, NOT `-{0}` — linq2db prints a negated constant
+	// LITERAL with its sign, so `-{0}` would render `--50.55`, which every SQL dialect reads as a COMMENT.
+	[Sql.Expression(
+		"(CASE WHEN {0} < 0 THEN (0 - floor((0 - {0}) * pow(10, {1}) + 0.5)) / pow(10, {1}) ELSE floor({0} * pow(10, {1}) + 0.5) / pow(10, {1}) END)",
+		ServerSideOnly = true, IsNullable = Sql.IsNullableType.Nullable)]
+	public static double? RoundDouble(double? v, long precision)
+	{
+		if (v is not { } x)
+			return null;
+		var scale = Math.Pow(10, precision);
+		return x < 0 ? -Math.Floor(-x * scale + 0.5) / scale : Math.Floor(x * scale + 0.5) / scale;
+	}
+
+	[Sql.Expression("(CASE WHEN {0} < 0 THEN NULL ELSE sqrt({0}) END)", ServerSideOnly = true, IsNullable = Sql.IsNullableType.Nullable)]
+	public static double? Sqrt(double? v) => v is { } x && x >= 0 ? Math.Sqrt(x) : null;
+
+	// pow: a negative base with a NON-INTEGRAL exponent is a domain error — SQLite yields NULL, DuckDB
+	// yields NaN, and NaN is not representable in a SQLite REAL at all. Pin both to NULL.
+	[Sql.Expression("(CASE WHEN {0} < 0 AND {1} <> CAST({1} AS BIGINT) THEN NULL ELSE pow({0}, {1}) END)", ServerSideOnly = true, IsNullable = Sql.IsNullableType.Nullable)]
+	public static double? Pow(double? b, double? e) =>
+		b is { } x && e is { } y && (x >= 0 || y == Math.Truncate(y)) ? Math.Pow(x, y) : null;
+
+	[Sql.Expression("exp({0})", ServerSideOnly = true, IsNullable = Sql.IsNullableType.Nullable)]
+	public static double? Exp(double? v) => v is { } x ? Math.Exp(x) : null;
+
+	// log/log2/log10 are defined for x > 0 only (Kusto: log "is null if the argument is negative or null");
+	// the guard also keeps DuckDB from RAISING on a non-positive input.
+	[Sql.Expression("(CASE WHEN {0} > 0 THEN ln({0}) ELSE NULL END)", ServerSideOnly = true, IsNullable = Sql.IsNullableType.Nullable)]
+	public static double? LogNatural(double? v) => v is { } x && x > 0 ? Math.Log(x) : null;
+
+	[Sql.Expression("(CASE WHEN {0} > 0 THEN log2({0}) ELSE NULL END)", ServerSideOnly = true, IsNullable = Sql.IsNullableType.Nullable)]
+	public static double? Log2(double? v) => v is { } x && x > 0 ? Math.Log2(x) : null;
+
+	[Sql.Expression("(CASE WHEN {0} > 0 THEN log10({0}) ELSE NULL END)", ServerSideOnly = true, IsNullable = Sql.IsNullableType.Nullable)]
+	public static double? Log10(double? v) => v is { } x && x > 0 ? Math.Log10(x) : null;
+
+	// sign returns -1/0/1 as an INTEGER (DuckDB's sign returns a TINYINT, so the CAST pins the type).
+	[Sql.Expression("CAST(sign({0}) AS BIGINT)", ServerSideOnly = true, IsNullable = Sql.IsNullableType.Nullable)]
+	public static long? Sign(double? v) => v is { } x ? Math.Sign(x) : null;
+
+	[Sql.Expression("pi()", ServerSideOnly = true)]
+	public static double Pi() => Math.PI;
+
+	// isnan: `x <> x` is TRUE only for NaN — DuckDB computes it natively; SQLite CANNOT STORE NaN (it
+	// folds every NaN to NULL at the storage boundary), so FALSE is the truthful answer there, not a
+	// divergence papered over. Null pins to FALSE rather than NULL (a total predicate, like isascii).
+	[Sql.Expression("COALESCE({0} <> {0}, FALSE)", ServerSideOnly = true, IsNullable = Sql.IsNullableType.NotNullable)]
+	public static bool IsNaNFn(double? v) => v is { } x && double.IsNaN(x);
+
+	// isinf: DBL_MAX is finite in both dialects (measured), so `|x| > DBL_MAX` is true exactly for ±inf.
+	[Sql.Expression("COALESCE(abs({0}) > 1.7976931348623157e308, FALSE)", ServerSideOnly = true, IsNullable = Sql.IsNullableType.NotNullable)]
+	public static bool IsInfFn(double? v) => v is { } x && double.IsInfinity(x);
+
+	// min_of/max_of/coalesce over STRINGS (the numeric arms are composed in the registry from HasValue
+	// tests and comparisons, like NullGuard). Kusto: "Non-null values take precedence to null values" for
+	// min/max, and for coalesce "the first arg whose value isn't null (or not-empty for string
+	// expressions)" — so an EMPTY string is skipped, which plain COALESCE would not do.
+	[Sql.Expression("(CASE WHEN {0} IS NULL THEN {1} WHEN {1} IS NULL THEN {0} WHEN {0} > {1} THEN {0} ELSE {1} END)", ServerSideOnly = true, IsNullable = Sql.IsNullableType.Nullable)]
+	public static string? MaxOfString(string? a, string? b) =>
+		a is null ? b : b is null ? a : string.CompareOrdinal(a, b) >= 0 ? a : b;
+
+	[Sql.Expression("(CASE WHEN {0} IS NULL THEN {1} WHEN {1} IS NULL THEN {0} WHEN {0} < {1} THEN {0} ELSE {1} END)", ServerSideOnly = true, IsNullable = Sql.IsNullableType.Nullable)]
+	public static string? MinOfString(string? a, string? b) =>
+		a is null ? b : b is null ? a : string.CompareOrdinal(a, b) <= 0 ? a : b;
+
+	[Sql.Expression("(CASE WHEN {0} IS NULL OR {0} = '' THEN {1} ELSE {0} END)", ServerSideOnly = true, IsNullable = Sql.IsNullableType.Nullable)]
+	public static string? CoalesceString(string? a, string? b) => string.IsNullOrEmpty(a) ? b : a;
+
+	// === datetime part extraction + construction, in the epoch-ms storage domain (a datetime is a long
+	// here; the registry bridges to the logical DateTime/TimeSpan). Every extractor has a per-dialect arm:
+	// SQLite spells them with strftime, DuckDB with the extract functions over epoch_ms(…). ---
+
+	// dayofweek returns a TIMESPAN — "the number of days since the preceding Sunday" (kusto/query/
+	// day-of-week-function), so the SQL answer is a day index in TICKS (the storage form of a duration).
+	// Both dialects number Sunday = 0.
+	[Sql.Expression("(CAST(strftime('%w', {0} / 1000, 'unixepoch') AS INTEGER) * 864000000000)", ServerSideOnly = true, IsNullable = Sql.IsNullableType.Nullable)]
+	[Sql.Expression(ProviderName.DuckDB, "(CAST(dayofweek(epoch_ms({0})) AS BIGINT) * 864000000000)", ServerSideOnly = true, IsNullable = Sql.IsNullableType.NotNullable)]
+	public static long DayOfWeekTicks(long ms) => (long)FromUnixMs(ms).DayOfWeek * TimeSpan.TicksPerDay;
+
+	[Sql.Expression("CAST(strftime('%d', {0} / 1000, 'unixepoch') AS INTEGER)", ServerSideOnly = true, IsNullable = Sql.IsNullableType.Nullable)]
+	[Sql.Expression(ProviderName.DuckDB, "CAST(day(epoch_ms({0})) AS BIGINT)", ServerSideOnly = true, IsNullable = Sql.IsNullableType.NotNullable)]
+	public static long DayOfMonthOfMs(long ms) => FromUnixMs(ms).Day;
+
+	[Sql.Expression("CAST(strftime('%j', {0} / 1000, 'unixepoch') AS INTEGER)", ServerSideOnly = true, IsNullable = Sql.IsNullableType.Nullable)]
+	[Sql.Expression(ProviderName.DuckDB, "CAST(dayofyear(epoch_ms({0})) AS BIGINT)", ServerSideOnly = true, IsNullable = Sql.IsNullableType.NotNullable)]
+	public static long DayOfYearOfMs(long ms) => FromUnixMs(ms).DayOfYear;
+
+	[Sql.Expression("CAST(strftime('%H', {0} / 1000, 'unixepoch') AS INTEGER)", ServerSideOnly = true, IsNullable = Sql.IsNullableType.Nullable)]
+	[Sql.Expression(ProviderName.DuckDB, "CAST(hour(epoch_ms({0})) AS BIGINT)", ServerSideOnly = true, IsNullable = Sql.IsNullableType.NotNullable)]
+	public static long HourOfMs(long ms) => FromUnixMs(ms).Hour;
+
+	[Sql.Expression("CAST(strftime('%M', {0} / 1000, 'unixepoch') AS INTEGER)", ServerSideOnly = true, IsNullable = Sql.IsNullableType.Nullable)]
+	[Sql.Expression(ProviderName.DuckDB, "CAST(minute(epoch_ms({0})) AS BIGINT)", ServerSideOnly = true, IsNullable = Sql.IsNullableType.NotNullable)]
+	public static long MinuteOfMs(long ms) => FromUnixMs(ms).Minute;
+
+	[Sql.Expression("CAST(strftime('%S', {0} / 1000, 'unixepoch') AS INTEGER)", ServerSideOnly = true, IsNullable = Sql.IsNullableType.Nullable)]
+	[Sql.Expression(ProviderName.DuckDB, "CAST(second(epoch_ms({0})) AS BIGINT)", ServerSideOnly = true, IsNullable = Sql.IsNullableType.NotNullable)]
+	public static long SecondOfMs(long ms) => FromUnixMs(ms).Second;
+
+	// quarter = (month - 1) / 3 + 1. DuckDB's `/` on integers is FLOAT division, so the integer division
+	// has to be spelled `//` there (same reason as BinDateTimeMs).
+	[Sql.Expression("((CAST(strftime('%m', {0} / 1000, 'unixepoch') AS INTEGER) - 1) / 3 + 1)", ServerSideOnly = true, IsNullable = Sql.IsNullableType.Nullable)]
+	[Sql.Expression(ProviderName.DuckDB, "(((CAST(month(epoch_ms({0})) AS BIGINT) - 1) // 3) + 1)", ServerSideOnly = true, IsNullable = Sql.IsNullableType.NotNullable)]
+	public static long QuarterOfMs(long ms) => (FromUnixMs(ms).Month - 1) / 3 + 1;
+
+	// week_of_year is ISO 8601 ("the first week of a year is the one that includes the first Thursday",
+	// kusto/query/week-of-year-function: 2020-12-31 → 53, 2000-01-01 → 52, 1970-01-01 → 1). DuckDB has it
+	// natively (week() = ISO week); SQLite does not (strftime %W is Monday-based, 00-53, NOT ISO), so the
+	// SQLite arm uses the standard Thursday trick: the ISO week of D is the week containing D's Thursday,
+	// i.e. (dayofyear(Thursday) - 1) / 7 + 1 — Thursday = D + (4 - isoDow(D)) days, isoDow = ((dow+6)%7)+1.
+	// Both arms are pinned against each other over year boundaries by KqlScalarFunctionsBatchTests.
+	[Sql.Expression(
+		"((CAST(strftime('%j', ({0} + (4 - (((CAST(strftime('%w', {0} / 1000, 'unixepoch') AS INTEGER) + 6) % 7) + 1)) * 86400000) / 1000, 'unixepoch') AS INTEGER) - 1) / 7 + 1)",
+		ServerSideOnly = true, IsNullable = Sql.IsNullableType.NotNullable)]
+	[Sql.Expression(ProviderName.DuckDB, "week(epoch_ms({0}))", ServerSideOnly = true, IsNullable = Sql.IsNullableType.NotNullable)]
+	public static long WeekOfYearOfMs(long ms)
+	{
+		var d = FromUnixMs(ms);
+		var isoDow = ((int)d.DayOfWeek + 6) % 7 + 1;
+		var thursday = d.AddDays(4 - isoDow);
+		return (thursday.DayOfYear - 1) / 7 + 1;
+	}
+
+	// Ticks (the storage form of a duration) → the in-memory TimeSpan. Bridges make_timespan()/dayofweek()
+	// into the row/logical-typing domain, where a duration column's LOGICAL type is TimeSpan. The nullable
+	// form is what make_timespan() returns when a component is out of range.
+	public static TimeSpan? FromTicksN(long? ticks) => ticks is { } t ? TimeSpan.FromTicks(t) : null;
+
+	// make_timespan(day, hour, minute, second) — the registry passes 0 for the components the arity does
+	// not carry. Kusto returns NULL when a component is out of range (hour 0-23, minute 0-59, second
+	// 0-59.9999999), which the CASE reproduces on both dialects. The result is TICKS (the storage form of
+	// a duration); a real `second` is scaled through the double domain and CAST back to the integer tick
+	// count (BIGINT, matching .NET's long ticks).
+	[Sql.Expression(
+		"(CASE WHEN {1} < 0 OR {1} > 23 OR {2} < 0 OR {2} > 59 OR {3} < 0 OR {3} >= 60 THEN NULL"
+		+ " ELSE CAST((CAST({0} AS DOUBLE) * 86400.0 + {1} * 3600.0 + {2} * 60.0 + {3}) * 10000000 AS BIGINT) END)",
+		ServerSideOnly = true, IsNullable = Sql.IsNullableType.Nullable)]
+	public static long? MakeTimespanTicks(long day, long hour, long minute, double second) =>
+		hour is < 0 or > 23 || minute is < 0 or > 59 || second is < 0 or >= 60
+			? null
+			: (long)Math.Round((day * 86400.0 + hour * 3600.0 + minute * 60.0 + second) * TimeSpan.TicksPerSecond);
+
+	// === tohex: the two's-complement hex rendering of an integer, LOWERCASE (kusto/query/tohex-function:
+	// tohex(256) = '100', tohex(-256) = 'ffffffffffffff00', tohex(256, 8) = '00000100'). Non-negative values
+	// print minimally or zero-padded to the compile-time minLength; NEGATIVE values print their full
+	// two's-complement width (16 digits for a long, 8 for an int). printf's own %x prints a MINUS SIGN for a
+	// negative argument, so the negative arm splits the value into two 32-bit halves and masks each: SQLite
+	// has no unsigned cast at all, and DuckDB's `>>` is a LOGICAL shift (measured: -256 >> 32 gave 0 there),
+	// so the high half goes through a FLOOR division, which is arithmetic on both. `format` is the
+	// compile-time literal ('%08x' / '%x'), so the padding is exact on both sides and needs no dialect arm.
+	[Sql.Expression(
+		"(CASE WHEN {0} < 0 THEN printf('%08x%08x', CAST(floor({0} / 4294967296.0) AS BIGINT) & 4294967295, {0} & 4294967295) ELSE printf({1}, {0}) END)",
+		ServerSideOnly = true, IsNullable = Sql.IsNullableType.Nullable)]
+	public static string? ToHexLong(long? v, string format) =>
+		v is { } x
+			? (x < 0
+				? unchecked((ulong)x).ToString("x16", CultureInfo.InvariantCulture)
+				: HexNonNegative(x, format))
+			: null;
+
+	[Sql.Expression(
+		"(CASE WHEN {0} < 0 THEN printf('%08x', {0} & 4294967295) ELSE printf({1}, {0}) END)",
+		ServerSideOnly = true, IsNullable = Sql.IsNullableType.Nullable)]
+	public static string? ToHexInt(long? v, string format) =>
+		v is { } x
+			? (x < 0
+				? unchecked((uint)x).ToString("x8", CultureInfo.InvariantCulture)
+				: HexNonNegative(x, format))
+			: null;
+
+	// The non-negative arm of tohex, mirrored exactly: '%x' is the minimal lowercase form, '%0Nx' zero-pads
+	// to N (never truncates).
+	static string HexNonNegative(long value, string printfFormat) =>
+		value.ToString(printfFormat.Length <= 2 ? "x" : "x" + printfFormat[1..^1], CultureInfo.InvariantCulture);
 
 	// The unified metric Value: COALESCE(ValueDouble, ValueLong) as a nullable double, so a Gauge/Sum
 	// point exposes ONE numeric column regardless of which arm (double / int64) carried the value. NULL
