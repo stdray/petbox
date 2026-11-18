@@ -207,19 +207,23 @@ public static partial class KqlTransformer
 	// SqlStage so the remaining stages compose over that row in the same SQL query. GROUP BY(x => 1) with the
 	// constant key NOT projected collapses to a BARE SQL aggregate (`SELECT COUNT(*) FROM …`), which SQL
 	// defines as exactly one row even over an empty table — measured on SQLite and DuckDb, so there is no
-	// default row to synthesize here. The terminal case keeps the cheaper SqlCount round trip above. ----
+	// default row to synthesize here. The stage is then re-rooted as an OPAQUE subquery (ReRootAsSubquery):
+	// without that opacity a ROW-CONSUMING follow-up folds into the aggregate and answers wrongly —
+	// `events | count | count` returned the table's row count (4) instead of 1, `count | summarize count()` the
+	// same. The terminal case keeps the cheaper SqlCount round trip above. ----
 	static SqlStage ComposeCount(SqlStage stage, DateTime now)
 	{
 		var x = Expr.Parameter(stage.ElementType, "x");
 		var grouped = DynGroupBy(stage.Query, stage.ElementType, typeof(int), Expr.Lambda(Expr.Constant(1), x));
 		var groupingType = typeof(IGrouping<,>).MakeGenericType(typeof(int), stage.ElementType);
 		var g = Expr.Parameter(groupingType, "g");
-		var resultType = EmitRowType([("C0", typeof(long))]);
+		var countType = EmitRowType([("C0", typeof(long))]);
 		var selector = Expr.Lambda(
-			Expr.MemberInit(Expr.New(resultType),
-				Expr.Bind(resultType.GetProperty("C0")!, Expr.Convert(Expr.Call(EnumM("Count", 1, stage.ElementType), g), typeof(long)))),
+			Expr.MemberInit(Expr.New(countType),
+				Expr.Bind(countType.GetProperty("C0")!, Expr.Convert(Expr.Call(EnumM("Count", 1, stage.ElementType), g), typeof(long)))),
 			g);
-		return MakeEmittedStage(DynSelect(grouped, groupingType, resultType, selector), resultType, [("Count", typeof(long))], now);
+		var projected = DynTake(DynSelect(grouped, groupingType, countType, selector), countType, 1);
+		return MakeEmittedStage(ReRootAsSubquery(projected, countType, 1), countType, [("Count", typeof(long))], now);
 	}
 
 	// ---- distinct: SELECT DISTINCT <resolved cols>. Resolves each target over the stage context (record
@@ -799,12 +803,9 @@ public static partial class KqlTransformer
 		var pre = BuildEmittedStage(stage.Query, stage.ElementType, param, subCols, distinct: false, now);
 		var arrayOrdinal = stage.Columns.Count; // the guarded array text is the last projected column
 
-		// upstream SQL + params (PUBLIC ToSqlQuery, reflective over the runtime emitted row type).
-		var qsql = ToSqlQueryReflective(pre.Query);
-		var upstreamSql = qsql.Sql;
-		var pars = qsql.Parameters;
-		foreach (var i in Enumerable.Range(0, pars.Count).OrderByDescending(i => ParamToken(pars[i]).Length))
-			upstreamSql = upstreamSql.Replace(ParamToken(pars[i]), "{" + i + "}");
+		// upstream SQL + params (PUBLIC ToSqlQuery, reflective over the runtime emitted row type). The shared
+		// renderer handles the brace escaping a raw string literal would otherwise lose (see RenderSubquery).
+		var (upstreamSql, pars) = RenderSubquery(ToSqlQueryReflective(pre.Query));
 
 		// OUTPUT columns: the exploded scalar (Elem) REPLACES the array column in-place, or APPENDS after all
 		// passthrough columns. Passthrough carries its sub storage type + original logical type; Elem is string.
@@ -869,8 +870,17 @@ public static partial class KqlTransformer
 			&& m.GetParameters()[0].ParameterType.IsGenericType
 			&& m.GetParameters()[0].ParameterType.GetGenericTypeDefinition() == typeof(IQueryable<>));
 
+	// INLINE every parameter into the rendered text. This is what makes the seam safe for user data: FromSql
+	// parses the statement with .NET COMPOSITE-FORMAT rules as soon as it has ANY parameter to bind (measured:
+	// zero parameters → braces pass through verbatim; one parameter → the whole text is AppendFormat't, so a
+	// literal `{OrderId}` from a log message throws FormatException and a `{0}` silently binds a parameter).
+	// Inlining means no parameter, hence no format pass, hence braces are plain data — and it is also the only
+	// form that stays correct when seams NEST (an inner seam's text is re-emitted by the outer one; were the
+	// inner text escaped for a parse, the outer parse would consume the escape and corrupt the value).
+	static readonly LinqToDB.SqlGenerationOptions InlineParameters = new() { InlineParameters = true };
+
 	static LinqToDB.QuerySql ToSqlQueryReflective(IQueryable query) =>
-		(LinqToDB.QuerySql)ToSqlQueryOpen.MakeGenericMethod(query.ElementType).Invoke(null, [query, null])!;
+		(LinqToDB.QuerySql)ToSqlQueryOpen.MakeGenericMethod(query.ElementType).Invoke(null, [query, InlineParameters])!;
 
 	// PUBLIC DataExtensions.FromSql<TEntity>(IDataContext, RawSqlString, params object?[]) — reflective over
 	// the runtime output row type; the DataParameter instances ride the params array so linq2db owns typing.
@@ -884,6 +894,65 @@ public static partial class KqlTransformer
 		RawSqlString raw = sql;
 		var args = pars.Cast<object?>().ToArray();
 		return (IQueryable)FromSqlOpen.MakeGenericMethod(rowType).Invoke(null, [dc, raw, args])!;
+	}
+
+	// Renders a composed subquery for FromSql. Every value is ALREADY inlined (see InlineParameters), so there is
+	// no placeholder to bind and no composite-format pass: braces that came into the SQL as user data (a string
+	// literal from a `where`) reach the database verbatim, and a nested seam's text is re-emitted unchanged.
+	// The DataParameter list is threaded through anyway so a caller that ever hands over a rendered WITH
+	// parameters keeps them bindable (the token remap is what FromSql's `{i}` form expects).
+	// EVERY FromSql seam goes through here (mv-expand, the window pre-stage, the no-`by` summarize/count re-root).
+	static (string Sql, IReadOnlyList<LinqToDB.Data.DataParameter> Parameters) RenderSubquery(LinqToDB.QuerySql qsql)
+	{
+		var sql = qsql.Sql;
+		foreach (var i in Enumerable.Range(0, qsql.Parameters.Count).OrderByDescending(i => ParamToken(qsql.Parameters[i]).Length))
+			sql = sql.Replace(ParamToken(qsql.Parameters[i]), "{" + i + "}", StringComparison.Ordinal);
+		return (sql, qsql.Parameters);
+	}
+
+	// Whether the query is ALREADY rooted on raw SQL (a FromSql seam): it is opaque for free, so there is no need
+	// to wrap it again (avoids needless nesting depth; correctness does not depend on it — the text is never
+	// format-parsed, see InlineParameters).
+	static bool HasRawSqlRoot(IQueryable query)
+	{
+		var finder = new RawSqlRootFinder();
+		finder.Visit(query.Expression);
+		return finder.Found;
+	}
+
+	sealed class RawSqlRootFinder : System.Linq.Expressions.ExpressionVisitor
+	{
+		public bool Found { get; private set; }
+
+		protected override System.Linq.Expressions.Expression VisitMethodCall(System.Linq.Expressions.MethodCallExpression node)
+		{
+			if (node.Method.DeclaringType == typeof(DataExtensions) && node.Method.Name == nameof(DataExtensions.FromSql))
+			{
+				Found = true;
+				return node;
+			}
+			return Found ? node : base.VisitMethodCall(node);
+		}
+	}
+
+	// Re-roots a freshly composed (single-row) subquery as an OPAQUE SQL source: ToSqlQuery → a CTE with a
+	// POSITIONAL column list → FromSql. Two jobs, both load-bearing:
+	//  - OPAQUENESS: the following operators must compose over a SUBQUERY rather than fold into the aggregate
+	//    expression. Without it a row-CONSUMING follow-up reads the aggregate itself — `events | count | count`
+	//    answered 4 (the table's row count) instead of 1, and `count | summarize count()` the same.
+	//  - SET-OPERATION SAFETY: linq2db's builder throws while merging a custom aggregate's projection behind a
+	//    UNION ALL (make_list / approximate dcount); with the aggregate behind a subquery both sides are plain.
+	static IQueryable ReRootAsSubquery(IQueryable query, Type rowType, int columnCount)
+	{
+		// Already a raw-SQL stage: opaque for free, so skip the extra nesting (see HasRawSqlRoot).
+		if (HasRawSqlRoot(query))
+			return query;
+		var (sql, pars) = RenderSubquery(ToSqlQueryReflective(query));
+		// The CTE column list pins the output NAMES: a bare aggregate renders without an alias (`SELECT COUNT(*)`),
+		// which would leave FromSql nothing to map onto the row type.
+		var cteCols = string.Join(", ", Enumerable.Range(0, columnCount).Select(i => "C" + i));
+		var dc = ((LinqToDB.Internal.Linq.IExpressionQuery)query).DataContext;
+		return FromSqlReflective(rowType, dc, $"( WITH sub({cteCols}) AS ( {sql} ) SELECT {cteCols} FROM sub )", pars);
 	}
 
 	// ---- join (SQL): the pre-SQL row-by-row join semantics, expressed as a SQL join on the composable
@@ -1487,22 +1556,11 @@ public static partial class KqlTransformer
 
 		// EXACTLY ONE ROW, by construction: Take(1) above collapses the correlated-subquery form's duplicate
 		// rows; then the Kusto empty-input default row is UNIONed in behind it, ordered so the REAL row wins when
-		// both exist, and capped to one. The aggregate row is re-rooted as a raw SQL subquery FIRST (the same
-		// proven ToSqlQuery→FromSql seam mv-expand/the window stage use) because joining the union straight onto
-		// the aggregate's own projection makes linq2db's set-operation builder throw while MERGING that
-		// projection (SetOperationBuilder → MergeProjectionHelper, a custom aggregate's reader-null wrapper) —
-		// a linq2db limitation, not a SQL one: with the aggregate behind a subquery both branches are plain.
-		var qsql = ToSqlQueryReflective(projected);
-		var aggSql = qsql.Sql;
-		var pars = qsql.Parameters;
-		foreach (var i in Enumerable.Range(0, pars.Count).OrderByDescending(i => ParamToken(pars[i]).Length))
-			aggSql = aggSql.Replace(ParamToken(pars[i]), "{" + i + "}");
-		var dc = ((LinqToDB.Internal.Linq.IExpressionQuery)projected).DataContext;
-		// The CTE column list gives the subquery FIXED output names (C0..Cn): a bare single-column aggregate
-		// renders without an alias (`SELECT COUNT(DISTINCT …)`), which would leave FromSql nothing to map.
-		var cteCols = string.Join(", ", Enumerable.Range(0, distinct.Count).Select(i => "C" + i));
-		var reRooted = FromSqlReflective(aggType, dc,
-			$"( WITH sub({cteCols}) AS ( {aggSql} ) SELECT {cteCols} FROM sub )", pars);
+		// both exist, and capped to one. The aggregate row is re-rooted as an opaque SQL subquery FIRST
+		// (ReRootAsSubquery) — needed both for the union (linq2db's set-operation builder throws while merging a
+		// custom aggregate's projection) and for correctness downstream (a following operator must read the ROW,
+		// not fold into the aggregate).
+		var reRooted = ReRootAsSubquery(projected, aggType, distinct.Count);
 
 		// Rank the real row ahead of the default row, then keep the first.
 		var resultType = EmitRowType(
@@ -2342,12 +2400,8 @@ public static partial class KqlTransformer
 		}).ToList();
 		var pre = BuildEmittedStage(stage.Query, stage.ElementType, x, subCols, distinct: false, now);
 
-		// upstream SQL + params (identical to the mv-expand splice: PUBLIC ToSqlQuery, token remap).
-		var qsql = ToSqlQueryReflective(pre.Query);
-		var upstreamSql = qsql.Sql;
-		var pars = qsql.Parameters;
-		foreach (var i in Enumerable.Range(0, pars.Count).OrderByDescending(i => ParamToken(pars[i]).Length))
-			upstreamSql = upstreamSql.Replace(ParamToken(pars[i]), "{" + i + "}");
+		// upstream SQL + params (identical to the mv-expand splice: PUBLIC ToSqlQuery, token remap, brace escape).
+		var (upstreamSql, pars) = RenderSubquery(ToSqlQueryReflective(pre.Query));
 
 		var m = subCols.Count;
 		var partition = keys.Count == 0

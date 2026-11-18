@@ -273,4 +273,119 @@ public sealed class KqlSummarizeCompositionTests
 		argMax.Should().Throw<UnsupportedKqlException>()
 			.WithMessage("*arg_max() cannot be wrapped in a scalar expression*");
 	}
+
+	// ---- P1-1: the ToSqlQuery→FromSql seam must never read USER TEXT as a composite-format string ----
+
+	// Braces in a log message are ordinary data (JSON fragments, template placeholders). The seam that re-roots a
+	// composed subquery as raw SQL parses .NET format rules, so an unescaped `{OrderId}` threw FormatException and
+	// an unescaped `{0}` silently bound that parameter — turning a match into no match. Every value below is run
+	// through the no-`by` summarize (the seam this branch added) on BOTH backends.
+	[Theory]
+	[InlineData("a { b")]
+	[InlineData("a } b")]
+	[InlineData("{{lit}}")]
+	[InlineData("Order {OrderId} done")]
+	[InlineData("x {0} y")]
+	public async Task BracesInAMessage_SurviveTheNoBySeam(string message)
+	{
+		var data = new[] { Rec(1, 2, message), Rec(2, 2, "plain") };
+		var (_, rows) = await RunBoth(data, $"events | where Message == '{message}' | summarize make_list(Message)");
+		rows.Should().HaveCount(1);
+		rows[0][0].Should().Be("[\"" + message + "\"]",
+			$"the summarize must see the row the where matched ({message})");
+	}
+
+	// The seam renders values INLINE (no parameter, hence no composite-format pass — see InlineParameters), so a
+	// value that is SQL-quote soup must survive too: a brace AND a doubled quote in one message.
+	[Fact]
+	public async Task QuotesAndBracesInAMessage_SurviveTheNoBySeam()
+	{
+		var data = new[] { Rec(1, 2, "O'Brien {x}"), Rec(2, 2, "plain") };
+		var (_, rows) = await RunBoth(data, "events | where Message == \"O'Brien {x}\" | summarize make_list(Message)");
+		rows.Should().HaveCount(1);
+		rows[0][0].Should().Be("[\"O'Brien {x}\"]");
+	}
+
+	// The same text through the WINDOW seam (arg_max's row pick re-roots the pre-stage the same way).
+	[Fact]
+	public async Task BracesInAMessage_SurviveTheWindowSeam()
+	{
+		var data = new[] { Rec(1, 1, "a { b"), Rec(2, 9, "Order {OrderId} done") };
+		var (_, rows) = await RunBoth(data,
+			"events | where Message == 'Order {OrderId} done' | summarize arg_max(Level, Message) | project Message");
+		rows.Should().HaveCount(1);
+		rows[0].Should().Equal("Order {OrderId} done");
+	}
+
+	// ... and through the mv-expand seam (same helper, same renderer).
+	[Fact]
+	public async Task BracesInAMessage_SurviveTheMvExpandSeam()
+	{
+		var data = new[]
+		{
+			new LogEntryRecord
+			{
+				Id = 1, Level = 2, Message = "a { b", MessageTemplate = "a { b", ServiceKey = "s",
+				PropertiesJson = """{"Tags":["t1"]}""", TimestampMs = 1,
+			},
+		};
+		var (_, rows) = await RunBoth(data, "events | where Message == 'a { b' | mv-expand Properties.Tags | project Id");
+		rows.Should().HaveCount(1);
+		rows[0].Should().Equal(1L);
+	}
+
+	// ---- P1-2: the composed count stage stays ONE ROW under row-CONSUMING follow-ups ----
+
+	// A filter over the count row must see the row (`where Count > 0` came back EMPTY over non-empty input).
+	[Fact]
+	public async Task Count_ComposesIntoWhere()
+	{
+		var (cols, rows) = await RunBoth(Data, "events | count | where Count > 0");
+		cols.Should().Equal("Count");
+		rows.Should().HaveCount(1);
+		rows[0].Should().Equal(4L);
+
+		var (_, empty) = await RunBoth([], "events | count | where Count > 0");
+		empty.Should().BeEmpty("over empty input the count row is 0, which the filter drops");
+	}
+
+	// A second `count` must count the ONE row it receives (it counted the underlying table: 4).
+	[Fact]
+	public async Task Count_ComposesIntoCount()
+	{
+		var (cols, rows) = await RunBoth(Data, "events | count | count");
+		cols.Should().Equal("Count");
+		rows.Should().HaveCount(1);
+		rows[0].Should().Equal(1L);
+
+		var (_, empty) = await RunBoth([], "events | count | count");
+		empty.Should().HaveCount(1);
+		empty[0][0].Should().Be(1L, "`count` over an empty table is one row of 0, so counting it yields 1");
+	}
+
+	// `summarize count()` over the count row: one row in, one row of 1 out.
+	[Fact]
+	public async Task Count_ComposesIntoSummarize()
+	{
+		var (_, rows) = await RunBoth(Data, "events | count | summarize count()");
+		rows.Should().HaveCount(1);
+		rows[0].Should().Equal(1L);
+
+		var (_, empty) = await RunBoth([], "events | count | summarize count()");
+		empty.Should().HaveCount(1);
+		empty[0].Should().Equal(1L);
+	}
+
+	// project does not consume rows, so it keeps the count and the following `count` still counts ONE row.
+	[Fact]
+	public async Task Count_ThenProject_ThenCount()
+	{
+		var (_, rows) = await RunBoth(Data, "events | count | project Count | count");
+		rows.Should().HaveCount(1);
+		rows[0].Should().Equal(1L);
+
+		var (_, empty) = await RunBoth([], "events | count | project Count | count");
+		empty.Should().HaveCount(1);
+		empty[0].Should().Equal(1L);
+	}
 }
