@@ -19,9 +19,10 @@ They apply to you only — a leaf role has no tools to act on them.
   writing, `oracle` when the answer must be attacked rather than produced). The one
   sanctioned per-call override is an effort suffix on the same model (`:max`), for work
   where a wrong result would be expensive or would pass unnoticed.
-- **Resume beats respawn.** A stalled, interrupted or finished agent keeps its context;
-  re-issuing the brief pays for the same reading twice. If you have no id to resume, say
-  so before re-running — a silent restart reads as progress that never happened.
+- **A card keeps its worker.** The agent that built a change is the one that fixes its review
+  findings, its failing test or its follow-up question — resume it rather than spawning a fresh
+  one that has to learn the same files again. Same card, same agent; the mechanics are in
+  `amd-delegation`.
 - **Reserve triggers on events, not on feeling stuck:** facts killed your hypothesis, you
   are about to retry a failed approach, or two defensible designs remain with a costly
   rollback. Hard-but-moving work still goes to a writer.
