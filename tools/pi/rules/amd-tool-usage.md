@@ -11,6 +11,10 @@
   that did not match leaves the file untouched while the script exits 0 and prints
   success. `edit` reporting "did not match" is not a reason to reach for a script — it is
   a reason to re-`read` the file and retry with the exact fragment.
+- **A program writing its own output is not this.** `bun build > dist/app.js`, a generator
+  emitting a file, a `> log` capture of a command's result: the tool wrote what the tool
+  computed, and no one retyped it. The prohibition is a hand-edit smuggled through a shell,
+  not output that lands in a file.
 - **The one exception: content that must not enter the transcript.** A password, a token,
   anything read out of a secrets file. `edit` and `write` put the file body into the tool
   call, and the tool call IS the transcript — so there a script is right: it reads the
@@ -23,6 +27,11 @@
   name the path or the key instead of the value, and keep it out of your answer, out of
   `echo`, out of a diff and out of a tool argument. Once printed it is in the transcript,
   and a transcript is not something you can retract from.
+- **Reading such a file is fine; dumping it is not.** The first bullet here says to use `read`
+  for file contents — for a secrets file that collides with this one, so do not `read` it whole.
+  Inspect the shape without printing a value: `grep -c .` for how many lines, `wc -l`, `cut -d= -f1`
+  for which keys exist. If you genuinely need the value, take it inside a script that uses it and
+  prints nothing; your answer names the path or the key, never the value.
 - A replacement bigger than a screenful — a whole section, or a paragraph with real
   newlines and quotes — is a `write` of the file, not a fight with `edit`'s exact match.
 - Make independent tool calls in parallel; dependent ones sequentially.
