@@ -21,6 +21,8 @@ public sealed class McpLogToolsFixture : IAsyncLifetime
 	public const string TestApiKey = "yb_key_test_mcp_log_xyz";
 	const string TestServiceKey = "kpvotes-net";
 	const string TestScopes = "logs:query,logs:ingest";
+	const string StartedMessage = "Service started";
+	const string BoomMessage = "Boom";
 
 	readonly string _baseDir;
 	HttpClient _http = null!;
@@ -100,8 +102,8 @@ public sealed class McpLogToolsFixture : IAsyncLifetime
 					ServiceKey = TestServiceKey,
 					Timestamp = DateTime.UtcNow.AddSeconds(-30),
 					Level = PetBox.Log.Core.Models.LogLevel.Information,
-					Message = "Service started",
-					MessageTemplate = "Service started",
+					Message = StartedMessage,
+					MessageTemplate = StartedMessage,
 					Properties = "{}",
 				},
 				new PetBox.Log.Core.Models.LogEntryCandidate
@@ -109,16 +111,16 @@ public sealed class McpLogToolsFixture : IAsyncLifetime
 					ServiceKey = TestServiceKey,
 					Timestamp = DateTime.UtcNow,
 					Level = PetBox.Log.Core.Models.LogLevel.Error,
-					Message = "Boom",
-					MessageTemplate = "Boom",
+					Message = BoomMessage,
+					MessageTemplate = BoomMessage,
 					// Cyrillic property value: the tool result must carry it literally, not \uXXXX.
 					Properties = "{\"city\":\"Москва\"}",
 				},
 			};
 			await pipeline.IngestAsync(TestProjectKey, LogNames.Default, records, default);
-			// Give the channel pipeline a moment to drain its writer loop.
-			await Task.Delay(500);
 		}
+
+		await WaitForSeededEventsAsync(TimeSpan.FromSeconds(5));
 
 		_http.DefaultRequestHeaders.Add("X-Api-Key", TestApiKey);
 		var transport = new HttpClientTransport(new HttpClientTransportOptions
@@ -127,6 +129,35 @@ public sealed class McpLogToolsFixture : IAsyncLifetime
 			AdditionalHeaders = new Dictionary<string, string> { ["X-Api-Key"] = TestApiKey },
 		}, _http);
 		Mcp = await McpTestClient.ConnectAsync(transport);
+	}
+
+	// Ingestion is asynchronous — ChannelIngestionPipeline enqueues and a background writer
+	// loop persists — so a returned IngestAsync does NOT mean the rows are queryable. Poll the
+	// log through ILogStore (the surface log_query reads) until both seeded rows are visible.
+	// This used to be a fixed 500 ms sleep, which a machine shared with other Cake gates
+	// outran: the first log_query then answered {"kind":"events","count":0,"events":[]} and
+	// LogQuery_CyrillicProperty failed, blaming Cyrillic serialization for an unflushed fixture.
+	async Task WaitForSeededEventsAsync(TimeSpan timeout)
+	{
+		var deadline = DateTime.UtcNow + timeout;
+		while (true)
+		{
+			using (var scope = Factory.Services.CreateScope())
+			{
+				var store = scope.ServiceProvider.GetRequiredService<ILogStore>();
+				using var db = store.NewEnsuredContext(TestProjectKey, LogNames.Default);
+				if (db.LogEntries.Count(e => e.Message == StartedMessage || e.Message == BoomMessage) == 2)
+					return;
+			}
+
+			if (DateTime.UtcNow >= deadline)
+				throw new Xunit.Sdk.XunitException(
+					$"ingestion did not flush within {timeout.TotalSeconds:0.#}s; expected the seeded "
+					+ $"'{BoomMessage}' and '{StartedMessage}' events to be queryable in "
+					+ $"{TestProjectKey}/{LogNames.Default}");
+
+			await Task.Delay(25);
+		}
 	}
 
 	// Per-test reset under the shared host: restore the ApiKey's scopes, which
