@@ -606,13 +606,17 @@ public static partial class KqlTransformer
 
 	// ---- join (SQL): reproduces ApplyJoin/StreamJoinRows semantics as a SQL join on the composable
 	// SqlStage. All kinds compose in SQL: kind=inner (Queryable.Join, no dedup), kind=innerunique (left
-	// window-dedup then inner join), kind=leftouter (GroupJoin+SelectMany+DefaultIfEmpty). A bare join (no
+	// window-dedup then inner join), kind=leftouter (GroupJoin+SelectMany+DefaultIfEmpty), kind=leftsemi /
+	// kind=leftanti (EXISTS over the right side, LEFT columns only). A bare join (no
 	// kind=) resolves to `defaultKind` — Inner by default (spec kql-join-default-inner), a deliberate
 	// deviation from Kusto's innerunique default; the knob rides through KqlTranslationOptions.DefaultJoinKind.
 	// The right side is compiled to a SqlStage via sqlRunSub; if it isn't fully SQL, the whole join falls
 	// back. Null join keys never match (KQL): inner pre-filters BOTH sides' null keys (also aligns
-	// EnumerableQuery with SQL, which would otherwise match null==null); leftouter filters ONLY the right
-	// (left null-key rows survive via DefaultIfEmpty, never matching a filtered right). ----
+	// EnumerableQuery with SQL, which would otherwise match null==null); leftouter/semi/anti filter ONLY the
+	// right (left null-key rows survive via DefaultIfEmpty, never matching a filtered right), and for
+	// leftsemi/leftanti that same rule decides the row: a null left key has NO match, so it is dropped by
+	// leftsemi and RETURNED by leftanti (Kusto: a null key never matches — it is not an error, it is a
+	// non-match; filtering the left side too would silently lose those rows from leftanti). ----
 	static SqlStage? ComposeJoin(SqlStage left, JoinOperator op, DateTime now, SqlSubqueryRunner sqlRunSub, KqlJoinDefault defaultJoinKind)
 	{
 		var kind = ParseJoinKind(op.Parameters, "join", MapJoinDefault(defaultJoinKind));
@@ -627,6 +631,10 @@ public static partial class KqlTransformer
 			JoinKind.InnerUnique => BuildInnerJoin(left, right, onClause, "join", now, dedupLeft: true),
 			JoinKind.Inner => BuildInnerJoin(left, right, onClause, "join", now, dedupLeft: false),
 			JoinKind.LeftOuter => BuildLeftOuterJoin(left, right, onClause, "join", excludeRightKeys: false, now),
+			// leftsemi / leftanti: LEFT rows that DO / DON'T have a match, projected LEFT columns only, each
+			// left row at most once (EXISTS, not a join — duplicate right keys cannot duplicate a left row).
+			JoinKind.LeftSemi => BuildSemiAntiJoin(left, right, onClause, "join", anti: false, now),
+			JoinKind.LeftAnti => BuildSemiAntiJoin(left, right, onClause, "join", anti: true, now),
 			_ => null,
 		};
 	}
@@ -731,6 +739,47 @@ public static partial class KqlTransformer
 
 		var joined = DynJoin(leftQ, rightQ, left.ElementType, right.ElementType, keyType, resultType, leftKey, rightKey, resultSel);
 		return MakeEmittedStage(joined, resultType, outCols.Select(c => (c.Name, c.LogicalType)).ToList(), now);
+	}
+
+	// leftsemi / leftanti: the "what is MISSING" questions ("services with no errors in 24h", "traces with no
+	// spans"). Both project the LEFT columns ONLY and emit each left row AT MOST ONCE — the match is decided
+	// by an EXISTS subquery over the right side (Queryable.Any), so a right side with duplicate keys can
+	// neither duplicate nor swallow a left row, and no identity column / dedup pass is needed.
+	// Null keys follow the documented Kusto rule (a null key never matches), so a left null-key row counts as
+	// UNMATCHED: absent from leftsemi, PRESENT in leftanti. Only the RIGHT side's null keys are pre-filtered
+	// (the leftouter rule) — filtering the left side too would silently drop those rows from leftanti.
+	static SqlStage? BuildSemiAntiJoin(SqlStage left, SqlStage right, JoinOnClause onClause, string opName, bool anti, DateTime now)
+	{
+		var lParam = Expr.Parameter(left.ElementType, "l");
+		var lctx = left.MakeContext(lParam);
+		var rParam = Expr.Parameter(right.ElementType, "r");
+		var rctx = right.MakeContext(rParam);
+
+		var keys = ResolveJoinKeysSql(onClause, left, lctx, right, rctx, opName);
+		if (keys is null)
+			return null;
+
+		var rightQ = FilterNonNullKeys(right.Query, right.ElementType, rParam, keys.Select(k => k.R).ToList());
+
+		// The EXISTS predicate: $left key(s) == $right key(s) — the left exprs ride in from the outer lambda.
+		Expr? match = null;
+		foreach (var k in keys)
+		{
+			var eq = Expr.Equal(k.L, k.R);
+			match = match is null ? eq : Expr.AndAlso(match, eq);
+		}
+		var anyMethod = typeof(Queryable).GetMethods()
+			.Single(m => m.Name == "Any" && m.GetParameters().Length == 2
+				&& m.GetParameters()[1].ParameterType.GetGenericArguments()[0].GetGenericArguments().Length == 2)
+			.MakeGenericMethod(right.ElementType);
+		var hasMatch = Expr.Call(anyMethod, Expr.Constant(rightQ), Expr.Quote(Expr.Lambda(match!, rParam)));
+
+		var pred = anti ? (Expr)Expr.Not(hasMatch) : hasMatch;
+		var filtered = DynWhere(left.Query, left.ElementType, Expr.Lambda(pred, lParam));
+
+		// LEFT columns only — no right column (and no collision suffix) reaches the output.
+		var outCols = left.Columns.Select(c => new SqlCol(c.Name, c.ClrType, lctx.ResolveColumn(c.Name))).ToList();
+		return BuildEmittedStage(filtered, left.ElementType, lParam, outCols, distinct: false, now);
 	}
 
 	// leftouter via GroupJoin + SelectMany + DefaultIfEmpty (probe C). Left columns are flattened into an

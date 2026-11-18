@@ -402,7 +402,7 @@ public static partial class KqlTransformer
 	// subquery over the SAME log (`events`/`spans`), composed by the same transformer against the same
 	// IQueryable source (TryComposeSubqueryStage). ---
 
-	enum JoinKind { InnerUnique, Inner, LeftOuter }
+	enum JoinKind { InnerUnique, Inner, LeftOuter, LeftSemi, LeftAnti }
 
 	static JoinKind ParseJoinKind(SyntaxList<NamedParameter> parameters, string opName, JoinKind defaultKind)
 	{
@@ -419,8 +419,10 @@ public static partial class KqlTransformer
 				"innerunique" => JoinKind.InnerUnique,
 				"inner" => JoinKind.Inner,
 				"leftouter" => JoinKind.LeftOuter,
+				"leftsemi" => JoinKind.LeftSemi,
+				"leftanti" => JoinKind.LeftAnti,
 				_ => throw new UnsupportedKqlException(
-					$"{opName} kind '{value}' not supported (supported: innerunique, inner, leftouter)"),
+					$"{opName} kind '{value}' not supported (supported: innerunique, inner, leftouter, leftsemi, leftanti)"),
 			};
 		}
 		return kind;
