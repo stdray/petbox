@@ -4,7 +4,14 @@ namespace PetBox.Log.Core.Query;
 
 public static class KqlCompletionService
 {
+	// The ceiling on ONE answer, not the plan for it: see ApplyPerKindBudget. It exists because the
+	// dropdown has to stay usable, and at a bare operand position the candidate set is 390 entries.
 	public const int MaxItems = 50;
+
+	// How many offers each KIND is guaranteed before any kind may spend the leftover slots. Sized to
+	// cover every small kind in the surface as measured today (columns 10, prefix forms 7, keywords 4,
+	// punctuation 5), so a family that teaches the language can never be crowded out by a catalog.
+	public const int PerKindReserved = 10;
 
 	static readonly HashSet<string> SupportedQueryPrefixes = new(StringComparer.Ordinal)
 	{
@@ -48,17 +55,69 @@ public static class KqlCompletionService
 			? query.Substring(editStart, editLength)
 			: "";
 
-		var filtered = info.Items
+		var candidates = info.Items
 			.Where(i => string.IsNullOrEmpty(prefix)
 				|| i.MatchText.StartsWith(prefix, StringComparison.OrdinalIgnoreCase))
 			.OrderBy(i => i.OrderText, StringComparer.Ordinal)
 			.Select(ToCompletionItem)
-			.Where(i => i is not null)
-			.Select(i => i!)
-			.Take(MaxItems)
+			.OfType<KqlCompletionItem>()
 			.ToList();
 
-		return new KqlCompletionsResponse(editStart, editLength, filtered);
+		return new KqlCompletionsResponse(editStart, editLength, ApplyPerKindBudget(candidates));
+	}
+
+	// The budget is per KIND, not a prefix of one alphabetical list. A single global Take let the
+	// 369-entry built-in function catalog eat the whole answer: measured at `events | extend X = `, the
+	// 50 slots were 10 columns + 35 functions + only the FIVE prefix forms that sort early enough,
+	// which hid `real()` and `timespan()` — registered, compilable, and never shown. So every kind is
+	// reserved its first PerKindReserved offers, then the leftover slots go to the same candidates in
+	// the same alphabetical order the dropdown shows (a big catalog gets what is left, small families
+	// get everything they have), and MaxItems still bounds the total. The FILTER, not this budget, is
+	// what hides a construct the engine cannot compile — `dynamic()`, `toscalar` and `guid()` are gone
+	// before a slot is handed out.
+	static List<KqlCompletionItem> ApplyPerKindBudget(List<KqlCompletionItem> candidates)
+	{
+		var reserved = new bool[candidates.Count];
+		var reservedPerKind = new Dictionary<string, int>(StringComparer.Ordinal);
+		for (var i = 0; i < candidates.Count; i++)
+		{
+			reservedPerKind.TryGetValue(candidates[i].Kind, out var alreadyReserved);
+			if (alreadyReserved >= PerKindReserved)
+				continue;
+
+			reservedPerKind[candidates[i].Kind] = alreadyReserved + 1;
+			reserved[i] = true;
+		}
+
+		var kept = new bool[candidates.Count];
+		var slots = MaxItems;
+
+		// First pass: everyone's reservation.
+		for (var i = 0; i < candidates.Count && slots > 0; i++)
+		{
+			if (!reserved[i])
+				continue;
+
+			kept[i] = true;
+			slots--;
+		}
+
+		// Second pass: what is left of MaxItems, first candidate first in the shown order.
+		for (var i = 0; i < candidates.Count && slots > 0; i++)
+		{
+			if (reserved[i])
+				continue;
+
+			kept[i] = true;
+			slots--;
+		}
+
+		var answer = new List<KqlCompletionItem>(Math.Min(MaxItems, candidates.Count));
+		for (var i = 0; i < candidates.Count; i++)
+			if (kept[i])
+				answer.Add(candidates[i]);
+
+		return answer;
 	}
 
 	static KqlCompletionItem? ToCompletionItem(Kusto.Language.Editor.CompletionItem i)

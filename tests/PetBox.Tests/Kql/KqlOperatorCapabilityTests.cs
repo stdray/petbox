@@ -274,13 +274,12 @@ public sealed class KqlOperatorCapabilityTests
 
 		// READ THIS BEFORE CHANGING THE EXPECTATION: the prefix catalog is only offered at a bare operand
 		// position — and that position is where Kusto.Language also offers the WHOLE function catalog (393
-		// candidates), so KqlCompletionService orders the filtered answer and then caps it at MaxItems = 50.
-		// Measured on this branch: `events | extend X = ` serves 10 columns + 35 functions + these FIVE prefix
-		// forms, i.e. the cap cuts `real()` and `timespan()` after `long()`. Being past the cap is NOT being
-		// filtered: both still compile (EverySupportedScalarPrefix_Compiles pins that) and both come back the
-		// moment the candidate list fits — typing `re` / `ti` answers them. So the end-to-end claim worth
-		// pinning is: what the cap DOES serve is exactly the compilable forms, the 2 shortfall is the cap's,
-		// and the 4 unmodelled forms below are the FILTER's doing (the raw catalog offers all four).
+		// candidates), i.e. far more than MaxItems = 50. The cap therefore reserves a budget PER KIND
+		// (KqlCompletionService.PerKindReserved) instead of cutting one alphabetical list, so the small
+		// prefix family is served in full and the two forms that used to sort behind the cap — `real()`
+		// and `timespan()` — are now offered. The end-to-end claim worth pinning is: what is served is
+		// exactly the compilable forms, and the 4 unmodelled forms below are the FILTER's doing, not the
+		// cap's (the raw catalog offers all eleven).
 		const string probe = "events | extend X = ";
 		var offered = Offered(probe, CompletionKind.ScalarPrefix);
 		offered.Should().BeEquivalentTo(["datetime()", "decimal()", "double()", "dynamic()", "guid()", "int()",
@@ -293,16 +292,14 @@ public sealed class KqlOperatorCapabilityTests
 			.Where(i => i.Kind == nameof(CompletionKind.ScalarPrefix))
 			.Select(i => i.DisplayText)
 			.ToList();
-		served.Should().BeEquivalentTo(["datetime()", "decimal()", "double()", "int()", "long()"],
-			$"'{probe}' serves the compilable prefix forms that fit under MaxItems = {KqlCompletionService.MaxItems}");
 
 		var compilable = offered.Where(KqlScalar.CanCompileScalarPrefix).ToList();
 		offered.Except(compilable, StringComparer.Ordinal).Should().BeEquivalentTo(
 			["dynamic()", "dynamic", "toscalar", "guid()"],
 			"the capability filter drops exactly the forms whose node kind the engine does not model");
-		served.Should().BeSubsetOf(compilable);
-		compilable.Except(served, StringComparer.Ordinal).Should().BeEquivalentTo(["real()", "timespan()"],
-			"these two compile but sit past the MaxItems cap at a bare operand position — dead OFFERS only there");
+		served.Should().BeEquivalentTo(compilable,
+			$"'{probe}' must serve the WHOLE compilable prefix family — the per-kind budget keeps it inside "
+			+ $"MaxItems = {KqlCompletionService.MaxItems} — and nothing else");
 	}
 
 	[Fact]
