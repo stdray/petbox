@@ -241,8 +241,8 @@ public sealed class SpanKqlTests
 	[Fact]
 	public async Task UnsupportedFunction_OverSpans_ThrowsPrecise()
 	{
-		var act = async () => await Run("spans | project X = strlen(Name)");
-		await act.Should().ThrowAsync<UnsupportedKqlException>().WithMessage("*strlen*not supported*");
+		var act = async () => await Run("spans | project X = bag_keys(Name)");
+		await act.Should().ThrowAsync<UnsupportedKqlException>().WithMessage("*bag_keys*not supported*");
 	}
 
 	[Fact]
