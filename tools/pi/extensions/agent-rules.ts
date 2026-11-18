@@ -22,6 +22,7 @@
 // Children do NOT need this extension: pi-subagents overrides the child system prompt, so a
 // section set here never reaches them; their preload comes from the `skills:` field.
 
+import type { Dirent } from "node:fs";
 import { existsSync, readFileSync, readdirSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
@@ -132,9 +133,117 @@ function declaresPetbox(pi: any, sessionCwd?: string): boolean {
 //
 // `prompt_mode: replace` also means a role with NO `skills:` line runs with no rules at all:
 // the same silent hole wearing a different hat, reported the same way.
-function missingRoleSkills(): string[] {
+//
+// The verdict has to agree with `skill-loader.ts`, or this becomes the failure it reports: a
+// name that resolves fine but is called missing is a warning nobody can act on, and the owner
+// learns to scroll past the ones that matter. So the shapes below mirror that loader — the same
+// roots, the same two layouts per root, and the same readings of the field's YAML forms.
+
+/**
+ * The skill roots `skill-loader.ts` searches, in its precedence order: project scope first
+ * (`<cwd>/.pi/skills`, `<cwd>/.agents/skills`), then user scope. A cwd is optional — a host that
+ * passes none still gets the user roots rather than no check at all.
+ */
+function skillRoots(sessionCwd?: string): string[] {
+	const roots: string[] = [];
+	if (typeof sessionCwd === "string" && sessionCwd.length > 0) {
+		roots.push(join(sessionCwd, ".pi", "skills"), join(sessionCwd, ".agents", "skills"));
+	}
+	roots.push(SKILLS_DIR, join(homedir(), ".agents", "skills"), join(homedir(), ".pi", "skills"));
+	return roots;
+}
+
+/**
+ * Every skill name those roots resolve: a flat `<root>/<name>.md`, or any `<name>/SKILL.md`
+ * directory below a root. Dot-directories and `node_modules` are skipped and a skill directory
+ * is not descended into (Pi: skills don't nest), exactly as the loader walks them.
+ */
+function installedSkills(roots: readonly string[]): Set<string> {
+	const names = new Set<string>();
+	for (const root of roots) {
+		let entries: Dirent[];
+		try {
+			entries = readdirSync(root, { withFileTypes: true });
+		} catch {
+			continue; // a project root that does not exist is the normal case, not a problem
+		}
+		for (const entry of entries) {
+			if (entry.isFile() && entry.name.endsWith(".md")) names.add(entry.name.slice(0, -3));
+		}
+		const queue = [root];
+		while (queue.length > 0) {
+			const current = queue.shift();
+			if (current === undefined) continue;
+			let children: Dirent[];
+			try {
+				children = readdirSync(current, { withFileTypes: true });
+			} catch {
+				continue;
+			}
+			for (const child of children) {
+				if (!child.isDirectory() || child.name.startsWith(".") || child.name === "node_modules") continue;
+				const path = join(current, child.name);
+				if (existsSync(join(path, "SKILL.md"))) names.add(child.name);
+				else queue.push(path);
+			}
+		}
+	}
+	return names;
+}
+
+/**
+ * The frontmatter block of a role file, or "" when there is none — pi's own fence rule: a leading
+ * `---`, closed by the next line starting one, BOM and CRLF tolerated. Only this block is a
+ * field; a body line that happens to start with `skills:` is prose.
+ */
+function frontmatterOf(raw: string): string {
+	const normalized = raw.replace(/^\uFEFF/, "").replace(/\r\n/g, "\n").replace(/\r/g, "\n");
+	if (!normalized.startsWith("---")) return "";
+	const end = normalized.indexOf("\n---", 3);
+	return end === -1 ? "" : normalized.slice(4, end);
+}
+
+/** One frontmatter field as YAML hands it over: an inline scalar, plus any block-list items. */
+type Field = { readonly inline: string; readonly items: readonly string[] };
+
+function unquote(value: string): string {
+	return value.replace(/^["']/, "").replace(/["']$/, "");
+}
+
+function field(frontmatter: string, key: string): Field | undefined {
+	const lines = frontmatter.split("\n");
+	for (let i = 0; i < lines.length; i++) {
+		const head = /^([A-Za-z_][\w-]*)[ \t]*:(.*)$/.exec(lines[i]);
+		if (!head || head[1] !== key) continue;
+		const items: string[] = [];
+		for (let j = i + 1; j < lines.length; j++) {
+			if (lines[j].trim() === "") continue;
+			const item = /^[ \t]*-[ \t]+(.*)$/.exec(lines[j]);
+			if (!item) break;
+			items.push(unquote(item[1].trim()));
+		}
+		return { inline: unquote(head[2].trim()), items };
+	}
+	return undefined;
+}
+
+/**
+ * The names a `skills:` field preloads, `undefined` for pi's "inherit all", `[]` for "none".
+ * All three YAML writings are accepted because the loader accepts all three: a CSV scalar, a
+ * flow list (`[a, b]`), and a block list on the lines below the key.
+ */
+function skillNames(value: Field | undefined): string[] | undefined | null {
+	if (!value) return null; // no field at all
+	const inline = value.inline;
+	const lower = inline.toLowerCase();
+	if (lower === "true") return undefined; // inherit all: pi's own "not configured" answer
+	if (lower === "false" || lower === "none") return [];
+	const scalar = inline.replace(/^\[/, "").replace(/\]$/, "");
+	return [...scalar.split(","), ...value.items].map((n) => unquote(n.trim())).filter((n) => n.length > 0);
+}
+
+function missingRoleSkills(sessionCwd?: string): string[] {
 	let roles: string[];
-	let fragments: Set<string>;
 	try {
 		roles = readdirSync(AGENTS_DIR)
 			.filter((f) => f.endsWith(".md"))
@@ -142,14 +251,11 @@ function missingRoleSkills(): string[] {
 	} catch (error) {
 		return [`cannot read ${AGENTS_DIR}: ${describe(error)}`];
 	}
-	try {
-		fragments = new Set(
-			readdirSync(SKILLS_DIR)
-				.filter((f) => f.endsWith(".md"))
-				.map((f) => f.slice(0, -3)),
-		);
-	} catch (error) {
-		return [`cannot read ${SKILLS_DIR}: ${describe(error)}`];
+	const roots = skillRoots(sessionCwd);
+	const installed = installedSkills(roots);
+	if (installed.size === 0) {
+		// Every role would now be reported name by name; one line naming the roots is the news.
+		return [`no skill fragment found under any skill root (${roots.join(", ")})`];
 	}
 	const problems: string[] = [];
 	for (const role of roles) {
@@ -160,24 +266,22 @@ function missingRoleSkills(): string[] {
 			problems.push(`${role}: ${describe(error)}`);
 			continue;
 		}
-		const line = /^skills:[ \t]*(.*)$/m.exec(raw);
-		if (!line) {
+		const frontmatter = frontmatterOf(raw);
+		// `enabled: false` is the owner disabling the role on purpose; its rules are moot.
+		if (field(frontmatter, "enabled")?.inline.toLowerCase() === "false") continue;
+		const value = field(frontmatter, "skills") ?? field(frontmatter, "inherit_skills");
+		const names = skillNames(value);
+		if (names === undefined) continue; // inherit all: every installed skill is preloaded
+		if (names === null) {
 			problems.push(`${role}: no skills: line, so the child preloads no rules`);
 			continue;
 		}
-		const value = line[1].trim();
-		if (value === "" || value === "false" || value === "none") {
-			problems.push(`${role}: skills: ${value === "" ? "" : value} preloads no rules`);
+		if (names.length === 0) {
+			problems.push(`${role}: skills: ${value?.inline ?? ""} preloads no rules`);
 			continue;
 		}
-		const names = value
-			.replace(/^\[/, "")
-			.replace(/\]$/, "")
-			.split(",")
-			.map((n) => n.trim())
-			.filter((n) => n.length > 0);
 		for (const name of names) {
-			if (!fragments.has(name)) problems.push(`${role}: skill "${name}" is not under ${SKILLS_DIR}`);
+			if (!installed.has(name)) problems.push(`${role}: skill "${name}" is not installed in any skill root`);
 		}
 	}
 	return problems;
@@ -190,6 +294,10 @@ export default function (pi: any) {
 	// One report per session, not one per turn: the same broken fragment must not re-warn on
 	// every `before_agent_start`.
 	let reported = false;
+	// And one COMPOSE per session: recomposing on a later call would replace the frozen text —
+	// the mid-transcript change this file exists to prevent — and, with `report` already spent,
+	// swallow whatever the second pass found.
+	let loaded = false;
 
 	// Why shout at all, when the old code deliberately stayed quiet: staying quiet is how a
 	// session ends up running with NO operating rules and no trace that it did. Before this, an
@@ -214,23 +322,31 @@ export default function (pi: any) {
 	};
 
 	const load = (ctx: any, sessionCwd?: string): void => {
-		const problems: string[] = [];
-		const always = compose(ALWAYS_PREFIX);
-		alwaysText = always.text;
-		problems.push(...always.problems);
-		// `declaresPetbox` swallows its own read and parse failures by design, so there is no
-		// outer catch left here to hide a broken compose.
-		petboxText = "";
-		if (declaresPetbox(pi, sessionCwd)) {
-			const petbox = compose(PETBOX_PREFIX);
-			petboxText = petbox.text;
-			problems.push(...petbox.problems);
+		if (loaded) return;
+		loaded = true;
+		try {
+			const problems: string[] = [];
+			const always = compose(ALWAYS_PREFIX);
+			alwaysText = always.text;
+			problems.push(...always.problems);
+			// `declaresPetbox` swallows its own read and parse failures by design; the paths it
+			// builds from a non-string cwd are not its own, and they throw.
+			petboxText = "";
+			if (declaresPetbox(pi, sessionCwd)) {
+				const petbox = compose(PETBOX_PREFIX);
+				petboxText = petbox.text;
+				problems.push(...petbox.problems);
+			}
+			// The children's half of the same question, asked from the only session that can still
+			// reach a human. Collected, not reported piecemeal: `report` fires once per session, so a
+			// second call would be swallowed and the role problems would never be heard.
+			problems.push(...missingRoleSkills(sessionCwd));
+			report(ctx, problems);
+		} catch (error) {
+			// Nothing may escape into the event handler: a throw from `before_agent_start` takes the
+			// turn with it, and a session that cannot be started is worse than one without rules.
+			report(ctx, [`cannot assemble the rule sections: ${describe(error)}`]);
 		}
-		// The children's half of the same question, asked from the only session that can still
-		// reach a human. Collected, not reported piecemeal: `report` fires once per session, so a
-		// second call would be swallowed and the role problems would never be heard.
-		problems.push(...missingRoleSkills());
-		report(ctx, problems);
 	};
 
 	pi.on("session_start", (_event: any, ctx: any) => load(ctx, ctx?.cwd));
@@ -238,7 +354,7 @@ export default function (pi: any) {
 	pi.on("before_agent_start", (event: any, ctx: any) => {
 		const options = event?.systemPromptOptions;
 		if (!options?.sections) return;
-		if (alwaysText === undefined) load(ctx, ctx?.cwd);
+		if (!loaded) load(ctx, ctx?.cwd);
 		if (alwaysText) options.sections[ALWAYS_SECTION] = alwaysText;
 		if (petboxText) options.sections[PETBOX_SECTION] = petboxText;
 	});
