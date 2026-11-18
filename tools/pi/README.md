@@ -18,6 +18,13 @@ tools/pi/rules/amd-*.md            ──▶  ~/.pi/agent/skills/amd-*.md
 
 Then restart pi: extensions load at startup, and `/reload` re-reads config but not new files.
 
+**Role files are merged, not copied.** `model:` and `thinking:` in a role's frontmatter are owned
+by the Roles panel, which writes them into the *installed* file (that is where the
+`*.md.bak-before-models-panel-*` files come from). A plain copy reverted the owner's model choice
+on every deploy, so `deploy.sh` keeps the installed pins for those two keys and the repo's own
+values are the baseline a fresh machine gets. Everything else in the file still comes from the
+repo.
+
 It is deliberately **not part of `petbox-wire`**: the kit owns the shared ladder (registry,
 transcript filters, protocol + canon rendering, budget), and these files only adapt pi's
 in-process session tree, prompt sections and subagent roles to it. Nothing in `petbox-wire

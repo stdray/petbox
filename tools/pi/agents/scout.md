@@ -2,7 +2,7 @@
 name: scout
 description: "Read-only recon: locate code, gather evidence, report findings — PetBox utility tier."
 tools: read, grep, find, ls, bash, powershell, codemode
-model: opencode-go/minimax-m3.1-flash-free
+model: opencode-go/hy4-flash-free
 thinking: low
 skills: amd-common, amd-tool-usage, amd-tool-schema, amd-loops, amd-verification, amd-codebases, amd-sources
 prompt_mode: replace
