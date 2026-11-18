@@ -76,7 +76,19 @@ install_role() {
   echo "  + ${dst#"$target"/}"
 }
 
-echo "pi config -> $target"
+# A STALE SOURCE TREE REVERTS EVERYTHING. This script copies whatever the calling checkout holds, so
+# running it from a checkout parked 48 commits behind main silently rolled the whole rule set back
+# to that state — and a deploy looks identical whether it installed the current rules or an old
+# copy of them. So the header names the commit it is about to install, and a tree behind the local
+# origin/main ref says so loudly. (Local ref, no network: fetch first, or the count is stale too.)
+source_sha="$(git -C "$here" rev-parse --short HEAD 2>/dev/null || echo "not-a-git-tree")"
+behind="$(git -C "$here" rev-list --count HEAD..origin/main 2>/dev/null || echo 0)"
+
+echo "pi config -> $target  (source $source_sha)"
+if [ "$behind" != 0 ]; then
+  echo "  !! source tree is $behind commit(s) behind origin/main — this install is NOT the current" \
+       "rule set; deploy from a worktree or from an up-to-date main"
+fi
 for f in "$here"/agents/*.md; do
   install_role "$f" "$target/agents/$(basename "$f")"
 done

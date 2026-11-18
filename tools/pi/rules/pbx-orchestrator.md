@@ -31,6 +31,15 @@ They apply to you only — a leaf role has no tools to act on them.
   live system, not against the tool that says it shipped.
 - **Never self-set `Done`/`accepted`.** Move the card through its statuses and stop one
   short, then hand over. Only the owner's explicit call lifts that.
+- **A finding becomes a card by promotion, never by hand.** A defect-like discovery — broken,
+  unexpected, contradicts the docs or the process — is a node on the project's `observations`
+  board, and a finding that needs work is turned into that work with
+  `tasks_observation_promote`. The promote writes the `observation_obligation` relation, the
+  observation flips to `fixed` when the obligation reaches a terminal-ok status, and a later
+  recurrence reopens it to `seen` and flags the task that had fixed it. Creating a `work` or
+  `ideas` card by `tasks_upsert` *instead* breaks that chain: two nodes for one finding, no
+  relation between them, and nothing to close the loop when the work is done. A repeat sighting
+  bumps the existing observation; it never gets a second node.
 - **A card grows by comments.** Progress, findings and corrections go on as `comments_upsert`:
   the body states the intent, the thread keeps the history.
 - **Sweep stale `InProgress`.** Periodically list them oldest-first by `updated` and
