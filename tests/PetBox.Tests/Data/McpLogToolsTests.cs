@@ -146,7 +146,10 @@ public sealed class McpLogToolsFixture : IAsyncLifetime
 			{
 				var store = scope.ServiceProvider.GetRequiredService<ILogStore>();
 				using var db = store.NewEnsuredContext(TestProjectKey, LogNames.Default);
-				if (db.LogEntries.Count(e => e.Message == StartedMessage || e.Message == BoomMessage) == 2)
+				// >= 1 EACH, not "== 2 total": a re-ingested duplicate would make an exact count
+				// unreachable and turn this guard into the timeout it exists to prevent.
+				if (db.LogEntries.Any(e => e.Message == StartedMessage)
+					&& db.LogEntries.Any(e => e.Message == BoomMessage))
 					return;
 			}
 
