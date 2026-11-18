@@ -334,7 +334,7 @@ public static partial class KqlTransformer
 				$"{opName}: '{element.Kind}' is not a column name or wildcard pattern "
 				+ "(use e.g. 'Message' or 'session*')");
 
-		var pattern = reference.SimpleName;
+		var pattern = StorageColumnName(columns, reference.SimpleName);
 		var isPattern = IsColumnPattern(pattern);
 		var matches = new List<int>();
 		for (var i = 0; i < columns.Count; i++)
@@ -350,6 +350,36 @@ public static partial class KqlTransformer
 			throw new UnsupportedKqlException($"{opName}: unknown column '{pattern}'");
 		return matches;
 	}
+
+	// The user-facing name of the VIRTUAL column that is not a column: `Properties`.
+	// KqlSchema advertises it (so completion offers it and `where Properties["k"] == …` works) and every
+	// scalar context resolves it against the stored JSON column that backs it — but a column SELECTION
+	// operator emits STORED columns, and the bag is stored as PropertiesJson (spans/metrics carry their
+	// AttributesJson under that same streamed name). Without this mapping `project-away Properties` — the one
+	// thing a user reaches for when the JSON blob is the noise they want gone — was the single place the
+	// advertised column did not exist.
+	//
+	// THE RULE THAT HOLDS NOW: in a column-selection list, `Properties` is an alias for the backing column
+	// (only when the current shape actually carries it, and never shadowing a real column of that name);
+	// it is not invented as an emitted column. So
+	//   project-away Properties      ≡ project-away PropertiesJson   → the bag is gone;
+	//   project-keep Id, Properties  → [Id, PropertiesJson]           → the bag stays under its STORED name
+	//     (naming it `Properties` instead would be a trap: the downstream bag lookup keys on the
+	//     PropertiesJson name, so Properties["k"] would stop resolving right after the keep that kept it);
+	//   and a later Properties["k"] resolves exactly as it does after the same PropertiesJson spelling —
+	//   it fails with "Properties.<key>: input has no PropertiesJson column" once the bag is gone.
+	// Bag KEYS are not aliased: `project city` reaches Properties.city through the bare-name fallback, but
+	// `project-away city` has no column to drop and stays the precise unknown-column error.
+	// The streamed name of the stored JSON-bag column (events' PropertiesJson, spans'/metrics'
+	// AttributesJson — all three are streamed under this one name, see the root specs).
+	const string PropertiesJsonColumn = "PropertiesJson";
+
+	static string StorageColumnName(IReadOnlyList<KqlColumn> columns, string name) =>
+		string.Equals(name, "Properties", StringComparison.OrdinalIgnoreCase)
+			&& FindColumnIndex(columns, PropertiesJsonColumn) >= 0
+			&& ResolveColumnIndexCI(columns, name) < 0 // a real column of that name still wins
+			? PropertiesJsonColumn
+			: name;
 
 	// A new emitted stage over a CHOSEN subset/order of the current stage's columns: each output column
 	// rides the storage expression the upstream stage already resolves for its SOURCE column (so a rename
@@ -422,7 +452,7 @@ public static partial class KqlTransformer
 					$"project-rename: '{named.Expression.Kind}' is not a column name — project-rename only renames "
 					+ "existing columns (use 'project' to compute a new one)");
 
-			var index = ResolveColumnIndexCI(stage.Columns, source.SimpleName);
+			var index = ResolveColumnIndexCI(stage.Columns, StorageColumnName(stage.Columns, source.SimpleName));
 			if (index < 0)
 				throw new UnsupportedKqlException($"project-rename: unknown column '{source.SimpleName}'");
 			renamedTo[index] = alias.Name.SimpleName;
