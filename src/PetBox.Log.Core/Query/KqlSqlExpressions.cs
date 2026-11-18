@@ -135,6 +135,15 @@ public static class KqlSqlExpressions
 	public static bool EndsWithCs(string? s, string needle) =>
 		s != null && s.EndsWith(needle, StringComparison.Ordinal);
 
+	// `=~` / `!~`: case-INSENSITIVE string equality — the same lower() fold as StartsWithI/EndsWithI
+	// (ASCII-only, documented there). SQLite's `=` on TEXT is BINARY/case-sensitive, so the fold is not
+	// optional. A NULL operand makes the SQL predicate NULL (row excluded), which IS Kusto's rule for both
+	// `=~` and `!~`; the negated spelling still goes through KqlScalar.Negated so the exclusion survives the
+	// NOT (see Negated's comment).
+	[Sql.Expression("(lower({0}) = lower({1}))", ServerSideOnly = true)]
+	public static bool EqualsI(string? s, string? other) =>
+		s != null && string.Equals(s, other, StringComparison.OrdinalIgnoreCase);
+
 	// --- `matches regex` (+ the lowered `has`/`has_cs`). SQLite has no built-in regex, so this maps to
 	// NATIVE per-dialect regex: sqlean's regexp_like on SQLite (loaded per connection by
 	// LoadSqleanRegexpInterceptor), DuckDB's regexp_matches. Both take (subject, pattern) and return a
@@ -161,6 +170,20 @@ public static class KqlSqlExpressions
 	// row. This explicit IS NOT NULL is what restores the rule for every negated string predicate.
 	[Sql.Expression("({0} IS NOT NULL)", ServerSideOnly = true, IsNullable = Sql.IsNullableType.NotNullable)]
 	public static bool IsNotNull(string? s) => s != null;
+
+	// The mirror of IsNotNull, backing KQL's isnull().
+	[Sql.Expression("({0} IS NULL)", ServerSideOnly = true, IsNullable = Sql.IsNullableType.NotNullable)]
+	public static bool IsNull(string? s) => s == null;
+
+	// KQL's isempty()/isnotempty(): "null OR empty string" — ONE shim per spelling rather than an
+	// OR/AND composed out of IsNotNull + `= ''`, because the composed form leans on SQL's NULL-propagating
+	// `=` for its answer (NULL = '' is NULL, and NOT(false) never sees it). The C# bodies are the in-memory
+	// half of the same shim, as everywhere else in this file.
+	[Sql.Expression("({0} IS NULL OR {0} = '')", ServerSideOnly = true, IsNullable = Sql.IsNullableType.NotNullable)]
+	public static bool IsEmpty(string? s) => string.IsNullOrEmpty(s);
+
+	[Sql.Expression("({0} IS NOT NULL AND {0} <> '')", ServerSideOnly = true, IsNullable = Sql.IsNullableType.NotNullable)]
+	public static bool IsNotEmpty(string? s) => !string.IsNullOrEmpty(s);
 
 	[Sql.Expression("upper({0})", ServerSideOnly = true, IsNullable = Sql.IsNullableType.IfAnyParameterNullable)]
 	public static string? ToUpper(string? s) => s?.ToUpperInvariant();
