@@ -598,6 +598,10 @@ static class KqlScalar
 		BinaryExpression b => Binary(b, ctx),
 		InExpression inx => In(inx, ctx),
 		BetweenExpression btw => Between(btw, ctx),
+		// has_any/has_all are their OWN node types (Left + a parenthesized ExpressionList), not a
+		// BinaryExpression — see HasList.
+		HasAnyExpression any => HasList(any.Left, any.Right, ctx, "has_any", all: false),
+		HasAllExpression all => HasList(all.Left, all.Right, ctx, "has_all", all: true),
 		FunctionCallExpression call => Call(call, ctx),
 		_ => throw new UnsupportedKqlException($"expression '{node.Kind}' not supported"),
 	};
@@ -657,7 +661,18 @@ static class KqlScalar
 		SyntaxKind.NotHasExpression => HasFn(b, ctx, "!has", caseInsensitive: true, negate: true),
 		SyntaxKind.HasCsExpression => HasFn(b, ctx, "has_cs", caseInsensitive: false),
 		SyntaxKind.NotHasCsExpression => HasFn(b, ctx, "!has_cs", caseInsensitive: false, negate: true),
+		SyntaxKind.HasPrefixExpression => HasAffix(b, ctx, "hasprefix", caseInsensitive: true, prefix: true),
+		SyntaxKind.NotHasPrefixExpression => HasAffix(b, ctx, "!hasprefix", caseInsensitive: true, prefix: true, negate: true),
+		SyntaxKind.HasPrefixCsExpression => HasAffix(b, ctx, "hasprefix_cs", caseInsensitive: false, prefix: true),
+		SyntaxKind.NotHasPrefixCsExpression => HasAffix(b, ctx, "!hasprefix_cs", caseInsensitive: false, prefix: true, negate: true),
+		SyntaxKind.HasSuffixExpression => HasAffix(b, ctx, "hassuffix", caseInsensitive: true, prefix: false),
+		SyntaxKind.NotHasSuffixExpression => HasAffix(b, ctx, "!hassuffix", caseInsensitive: true, prefix: false, negate: true),
+		SyntaxKind.HasSuffixCsExpression => HasAffix(b, ctx, "hassuffix_cs", caseInsensitive: false, prefix: false),
+		SyntaxKind.NotHasSuffixCsExpression => HasAffix(b, ctx, "!hassuffix_cs", caseInsensitive: false, prefix: false, negate: true),
 		SyntaxKind.MatchesRegexExpression => StringFn(b, ctx, "matches regex", nameof(KqlSqlExpressions.MatchesRegex)),
+		// `=~` / `!~` are string EQUALITY, not a comparison of the `==` family — see EqualsTilde.
+		SyntaxKind.EqualTildeExpression => EqualsTilde(b, ctx, negate: false),
+		SyntaxKind.BangTildeExpression => EqualsTilde(b, ctx, negate: true),
 		_ when IsComparison(b.Kind) => Comparison(b, ctx),
 		_ => throw new UnsupportedKqlException($"binary '{b.Kind}' not supported"),
 	};
@@ -680,9 +695,9 @@ static class KqlScalar
 	// `has` / `has_cs`: NO dedicated function — lower to a boundary regex over the SAME regexp shim
 	// `matches regex` uses (KqlSqlExpressions.MatchesRegex), so it rides that native per-dialect SQL on
 	// both dialects. The term is a required string literal, so the whole pattern is built at COMPILE time.
-	// `[^\p{L}\p{N}]` boundaries reproduce KQL's term-char rule (letters/digits are term chars, everything
-	// else — INCLUDING underscore — is a delimiter, which is why a plain `\b` would be wrong); `(?i)` gives
-	// `has` its case-insensitivity, `has_cs` omits it. An empty term matches nothing (Kusto semantics).
+	// TermStart/TermEnd reproduce KQL's term-char rule (letters/digits are term chars, everything else —
+	// INCLUDING underscore — is a delimiter, which is why a plain `\b` would be wrong); `(?i)` gives `has`
+	// its case-insensitivity, `has_cs` omits it. An empty term matches nothing (Kusto semantics).
 	static Expr HasFn(BinaryExpression b, ScalarContext ctx, string opName, bool caseInsensitive, bool negate = false)
 	{
 		var access = Compile(b.Left, ctx);
@@ -694,12 +709,91 @@ static class KqlScalar
 		// negation matches every NON-NULL value — Negated() adds the null exclusion.
 		if (term.Length == 0)
 			return negate ? Negated(Expr.Constant(false), access) : Expr.Constant(false);
-		var pattern = (caseInsensitive ? "(?i)" : "")
-			+ "(^|[^\\p{L}\\p{N}])" + Re2Escape(term) + "([^\\p{L}\\p{N}]|$)";
-		var mi = typeof(KqlSqlExpressions).GetMethod(nameof(KqlSqlExpressions.MatchesRegex))!;
-		var call = Expr.Call(mi, access, Expr.Constant(pattern));
+		var pattern = (caseInsensitive ? "(?i)" : "") + TermStart + Re2Escape(term) + TermEnd;
+		var call = Expr.Call(SqlMethod(nameof(KqlSqlExpressions.MatchesRegex)), access, Expr.Constant(pattern));
 		return negate ? Negated(call, access) : call;
 	}
+
+	// A Kusto TERM boundary, from datatypes-string-operators #What-is-a-term: "each string value is broken
+	// into maximal sequences of alphanumeric characters" — so letters/digits are term chars and everything
+	// else (underscore included) is a delimiter. One definition, shared by has / hasprefix / hassuffix /
+	// has_any / has_all; the regexes they build differ only in which side is anchored.
+	const string TermStart = "(^|[^\\p{L}\\p{N}])";
+	const string TermEnd = "([^\\p{L}\\p{N}]|$)";
+
+	// `hasprefix` / `hassuffix` (+ the `_cs` and `!` twins): Kusto's TERM-PREFIX / TERM-SUFFIX rule. Verified
+	// against the official docs (kusto/query/hasprefix-operator, hassuffix-operator and the operators table
+	// in datatypes-string-operators): "RHS is a term prefix / term suffix in LHS", illustrated by
+	// `"North America" hasprefix "ame"` and `"North America" hassuffix "ica"` — BOTH true. The needle is
+	// therefore a prefix/suffix of ANY term in the value, NOT of the first/last term only, which is exactly
+	// `has` (HasFn) with one of its two boundaries dropped: anchored on the term side, free on the other.
+	// Same vehicle (MatchesRegex), same empty-needle rule, same Negated() null rule as `has`.
+	// KNOWN approximation: a needle that itself contains a delimiter cannot be a prefix of an alnum term
+	// (Kusto would answer false); here the regex degrades to "substring that starts/ends at a term
+	// boundary" — the same class of approximation as the `has` family's multi-term needle.
+	static Expr HasAffix(BinaryExpression b, ScalarContext ctx, string opName, bool caseInsensitive, bool prefix, bool negate = false)
+	{
+		var access = Compile(b.Left, ctx);
+		if (access.Type != typeof(string))
+			throw new UnsupportedKqlException($"'{opName}' requires a string operand on the left, got {access.Type.Name}");
+		if (b.Right is not LiteralExpression { LiteralValue: string term })
+			throw new UnsupportedKqlException($"'{opName}' requires a string literal on the right");
+		if (term.Length == 0)
+			return negate ? Negated(Expr.Constant(false), access) : Expr.Constant(false);
+		var body = Re2Escape(term);
+		var pattern = (caseInsensitive ? "(?i)" : "") + (prefix ? TermStart + body : body + TermEnd);
+		var call = Expr.Call(SqlMethod(nameof(KqlSqlExpressions.MatchesRegex)), access, Expr.Constant(pattern));
+		return negate ? Negated(call, access) : call;
+	}
+
+	// `has_any` / `has_all`: the OR / AND of plain `has` over the list elements — Kusto: "Same as `has` but
+	// works on any/all of the elements" — so each term reuses the SAME term-boundary regex (and therefore
+	// the same element-escaped literal match). Both spellings are case-INsensitive (there is no `_cs` twin)
+	// and neither has a negated form; a null subject is pinned to FALSE by MatchesRegex, which is already
+	// the Kusto answer for an un-negated predicate, so no Negated() wrapper applies. An empty ELEMENT
+	// matches nothing (the `has` rule): dropped from `has_any`, fatal to `has_all`. An empty LIST is the
+	// OR/AND identity — false for has_any, vacuously TRUE for has_all.
+	static Expr HasList(Expression left, ExpressionList right, ScalarContext ctx, string opName, bool all)
+	{
+		var access = Compile(left, ctx);
+		if (access.Type != typeof(string))
+			throw new UnsupportedKqlException($"'{opName}' requires a string operand on the left, got {access.Type.Name}");
+		Expr? acc = null;
+		foreach (var element in right.Expressions)
+		{
+			if (element.Element is not LiteralExpression { LiteralValue: string term })
+				throw new UnsupportedKqlException($"'{opName}' requires a list of string literals");
+			if (term.Length == 0)
+			{
+				if (all)
+					return Expr.Constant(false);
+				continue;
+			}
+			var pattern = "(?i)" + TermStart + Re2Escape(term) + TermEnd;
+			var call = Expr.Call(SqlMethod(nameof(KqlSqlExpressions.MatchesRegex)), access, Expr.Constant(pattern));
+			acc = acc is null ? call : all ? Expr.AndAlso(acc, call) : Expr.OrElse(acc, call);
+		}
+		return acc ?? Expr.Constant(all);
+	}
+
+	// `=~` / `!~`: case-INSENSITIVE (in)equality — `=~` is NOT `==` (which is case-sensitive in Kusto, and
+	// stays that way through the comparison path). Both operands are strings compared by one lower()-folding
+	// shim, so the same ASCII-only fold as startswith/endswith applies. A null on EITHER side excludes the
+	// row in BOTH spellings (Kusto's null rule), which the shim gives `=~` for free (NULL predicate) but not
+	// `!~` through a bare NOT — hence the Negated() wrapper, with an explicit IS NOT NULL per string operand.
+	static Expr EqualsTilde(BinaryExpression b, ScalarContext ctx, bool negate)
+	{
+		var opName = negate ? "!~" : "=~";
+		var le = Compile(b.Left, ctx);
+		var re = Compile(b.Right, ctx);
+		if (le.Type != typeof(string) || re.Type != typeof(string))
+			throw new UnsupportedKqlException(
+				$"'{opName}' requires string operands, got {FriendlyTypeName(le.Type)} and {FriendlyTypeName(re.Type)}");
+		var call = Expr.Call(SqlMethod(nameof(KqlSqlExpressions.EqualsI)), le, re);
+		return negate ? Negated(call, le, re) : call;
+	}
+
+	static MethodInfo SqlMethod(string name) => typeof(KqlSqlExpressions).GetMethod(name)!;
 
 	// Backslash-escape the RE2/PCRE2 metacharacters so a literal `has`/`has_cs` term matches literally
 	// inside the generated boundary regex (a term like `a.b` or `a|b` must not act as a pattern). Covers
@@ -771,11 +865,17 @@ static class KqlScalar
 	// the `has` family lowers to MatchesRegex, whose SQL deliberately PINS a null subject to FALSE
 	// (IFNULL/COALESCE), so NOT(that FALSE) would flip to TRUE and wrongly KEEP the null row. Hence the
 	// explicit non-null operand check AND-ed in front, on top of NullGuard for nullable value operands.
-	static Expr Negated(Expr positive, Expr operand) => Expr.AndAlso(
-		operand.Type == typeof(string)
-			? Expr.Call(typeof(KqlSqlExpressions).GetMethod(nameof(KqlSqlExpressions.IsNotNull))!, operand)
-			: Expr.Constant(true),
-		NullGuard(Expr.Not(positive), operand));
+	static Expr Negated(Expr positive, params Expr[] operands)
+	{
+		// A STRING operand needs its own IS NOT NULL: the shim under the NOT may pin a null to FALSE
+		// (MatchesRegex does), which NOT() would flip to TRUE and wrongly keep the row. Value operands are
+		// covered by NullGuard below.
+		var guarded = NullGuard(Expr.Not(positive), operands);
+		foreach (var operand in operands)
+			if (operand.Type == typeof(string))
+				guarded = Expr.AndAlso(Expr.Call(SqlMethod(nameof(KqlSqlExpressions.IsNotNull)), operand), guarded);
+		return guarded;
+	}
 
 	static Expr Comparison(BinaryExpression b, ScalarContext ctx)
 	{
@@ -1123,6 +1223,15 @@ static class KqlScalarFunctions
 			["todouble"] = ToDoubleConv,
 			["tobool"] = ToBoolConv,
 			["todatetime"] = ToDateTimeConv,
+			// null / emptiness tests. Plain registry entries, not operators: each needs only the type of its
+			// ONE argument, so it composes anywhere a scalar does (`where isnull(Properties["x"])`,
+			// `extend E = isempty(Message)`). The negation is spelled as its own KQL function
+			// (isnotnull/isnotempty) and is NOT `not(isnull(...))` — Kusto's null rule makes the two
+			// equivalent here because both are total (never null-valued) predicates.
+			["isnull"] = (a, c) => IsNullFn(a, "isnull", negate: false),
+			["isnotnull"] = (a, c) => IsNullFn(a, "isnotnull", negate: true),
+			["isempty"] = (a, c) => IsEmptyFn(a, "isempty", negate: false),
+			["isnotempty"] = (a, c) => IsEmptyFn(a, "isnotempty", negate: true),
 		};
 
 	public static bool TryResolve(string name, out KqlScalarFunction fn) => Registry.TryGetValue(name, out fn!);
@@ -1498,6 +1607,35 @@ static class KqlScalarFunctions
 		: e.Type == typeof(int)
 			? Expr.Convert(e, typeof(long))
 			: throw new UnsupportedKqlException($"{what} requires an integer, got {e.Type.Name}");
+
+	// isnull/isnotnull: total predicates over ANY type. A nullable operand (todatetime/toint/…) tests
+	// HasValue, a string rides the IS [NOT] NULL shims, and a non-nullable value type can never be null —
+	// a compile-time constant, which is the honest answer rather than a redundant runtime check.
+	static Expr IsNullFn(IReadOnlyList<Expr> args, string fn, bool negate)
+	{
+		if (args.Count != 1)
+			throw new UnsupportedKqlException($"{fn}() takes exactly 1 argument, got {args.Count}");
+		var a = args[0];
+		if (KqlScalar.IsNullable(a.Type))
+		{
+			var hasValue = Expr.Property(a, "HasValue");
+			return negate ? hasValue : Expr.Not(hasValue);
+		}
+		if (a.Type == typeof(string))
+			return Expr.Call(SqlM(negate ? nameof(KqlSqlExpressions.IsNotNull) : nameof(KqlSqlExpressions.IsNull)), a);
+		return Expr.Constant(negate);
+	}
+
+	// isempty/isnotempty: "null or empty string" and its complement. Strings only — KQL's isempty is a
+	// string test (any other type is a user error worth naming, not an implicit coercion).
+	static Expr IsEmptyFn(IReadOnlyList<Expr> args, string fn, bool negate)
+	{
+		if (args.Count != 1)
+			throw new UnsupportedKqlException($"{fn}() takes exactly 1 argument, got {args.Count}");
+		if (args[0].Type != typeof(string))
+			throw new UnsupportedKqlException($"{fn}() requires a string argument, got {KqlScalar.FriendlyTypeName(args[0].Type)}");
+		return Expr.Call(SqlM(negate ? nameof(KqlSqlExpressions.IsNotEmpty) : nameof(KqlSqlExpressions.IsEmpty)), args[0]);
+	}
 
 	static MethodInfo SqlM(string name) => typeof(KqlSqlExpressions).GetMethod(name)!;
 
