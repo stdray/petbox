@@ -305,15 +305,25 @@ public sealed class KqlOperatorCapabilityTests
 	// DisplayText name → the call the compiler accepts for it.
 	static readonly (string Aggregate, string Call)[] Aggregates =
 	[
+		("arg_max", "arg_max(Level, Message)"),
+		("arg_min", "arg_min(Level, Message)"),
 		("count", "count()"),
 		("countif", "countif(Level > 1)"),
+		("count_distinct", "count_distinct(Level)"),
+		("count_distinctif", "count_distinctif(Level, Level > 1)"),
 		("sum", "sum(Level)"),
 		("min", "min(Level)"),
 		("max", "max(Level)"),
 		("avg", "avg(Level)"),
+		("minif", "minif(Level, Level > 1)"),
+		("maxif", "maxif(Level, Level > 1)"),
+		("avgif", "avgif(Level, Level > 1)"),
 		("dcount", "dcount(Level)"),
+		("dcountif", "dcountif(Level, Level > 1)"),
 		("make_list", "make_list(Level)"),
+		("make_list_if", "make_list_if(Level, Level > 1)"),
 		("make_set", "make_set(Level)"),
+		("make_set_if", "make_set_if(Level, Level > 1)"),
 		("percentile", "percentile(Level, 50)"),
 	];
 
@@ -353,7 +363,7 @@ public sealed class KqlOperatorCapabilityTests
 			KqlScalar.CanCompileAggregate(kept).Should().BeTrue($"'{kept}' has an arm in the aggregate switch");
 
 		foreach (var dropped in new[]
-			{ "make_bag(expr, [maxSize])", "arg_max(maximized, [returned], ...)", "stdev(expr)", "hll(expr, [accuracy])", "percentiles(expr, percentile, ...)" })
+			{ "make_bag(expr, [maxSize])", "stdev(expr)", "hll(expr, [accuracy])", "percentiles(expr, percentile, ...)", "sumif(expr, predicate)" })
 			KqlScalar.CanCompileAggregate(dropped).Should().BeFalse($"'{dropped}' has no arm in the aggregate switch");
 	}
 
