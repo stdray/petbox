@@ -37,8 +37,9 @@ from `src/common/default-agents.json`.
 | Path | What it is |
 |---|---|
 | `extensions/petbox-pi.ts` | session mirror + memory banner + recall nudge (see below) |
-| `extensions/agent-rules.ts` | assembles `rules/amd-*.md` into the `agent_rules` prompt section for the main session; reports an unreadable or missing fragment once to the log and the UI instead of dropping the whole section silently, and checks that every role's `skills:` resolves to an installed fragment |
+| `extensions/agent-rules.ts` | assembles `rules/amd-*.md` into the `agent_rules` prompt section for the main session; reports an unreadable or missing fragment once to the log and the UI instead of dropping the whole section silently, and checks that every role's `skills:` resolves to an installed fragment — in the same roots `pi-subagents` searches (the session's `.pi/skills` and `.agents/skills`, then the user scope), `<name>.md` or `<name>/SKILL.md` |
 | `extensions/pwsh-tool.ts` | the built-in PowerShell tool registered a second time as `pwsh` — see "Why a second PowerShell tool" below |
+| `extensions/session-id-status.ts` | one extra footer line: `sid:xxxxxxxx · up 12m · compact×2` |
 | `agents/*.md` | our five subagent roles: `worker`, `scout`, `oracle`, `reviewer`, `researcher` |
 | `rules/amd-*.md` | the operating rules, one topic per file (always injected) |
 | `rules/pbx-*.md` | PetBox-specific rules — injected only when the session declares a petbox MCP tool |
