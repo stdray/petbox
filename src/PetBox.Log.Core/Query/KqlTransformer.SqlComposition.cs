@@ -1198,6 +1198,15 @@ public static partial class KqlTransformer
 		_ => null,
 	};
 
+	// The aggregate functions the summarize compiler implements — the ONE data home for "which aggregates
+	// work". The switch in TrySummarizeAgg is the implementation; its default arm quotes THIS list, and
+	// KqlCompletionService reaches it through KqlScalar.CanCompileAggregate, so the completer cannot offer an
+	// aggregate the compiler rejects (and vice versa is pinned by KqlOperatorCapabilityTests). Deliberately
+	// absent: `percentiles` (it throws a bespoke "use one percentile(expr, P) per value" message), and every
+	// other Kusto aggregate — bag/series/window/arg/stdev/variance/take_any/hll/tdigest forms.
+	public static readonly IReadOnlyList<string> SupportedAggregates =
+		["count", "countif", "sum", "min", "max", "avg", "dcount", "make_list", "make_set", "percentile"];
+
 	static bool TrySummarizeAgg(SyntaxNode element, ScalarContext ctx, ParamExpr x, ParamExpr rowParam, SqlStage stage, DateTime now,
 		KqlTranslationOptions options, IReadOnlyDictionary<string, PercentileSlot>? pctlSlots,
 		out (string Name, Type Logical, Func<ParamExpr, Expr> Build) agg)
@@ -1417,7 +1426,7 @@ public static partial class KqlTransformer
 
 			default:
 				throw new UnsupportedKqlException(
-					$"aggregate '{fn}' not supported (supported: count, countif, sum, min, max, avg, dcount, make_list, make_set, percentile)");
+					$"aggregate '{fn}' not supported (supported: {string.Join(", ", SupportedAggregates)})");
 		}
 	}
 

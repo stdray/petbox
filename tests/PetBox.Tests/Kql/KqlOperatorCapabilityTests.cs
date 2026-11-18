@@ -91,11 +91,13 @@ public sealed class KqlOperatorCapabilityTests
 		"events | extend X = 1 ",
 	];
 
-	static List<string> OfferedOperators(string probe)
+	static List<string> OfferedOperators(string probe) => Offered(probe, CompletionKind.ScalarInfix);
+
+	static List<string> Offered(string probe, CompletionKind kind)
 	{
 		var service = new KustoCodeService(probe, KqlSchema.Globals);
 		return service.GetCompletionItems(probe.Length).Items
-			.Where(i => i.Kind == CompletionKind.ScalarInfix)
+			.Where(i => i.Kind == kind)
 			.Select(i => i.DisplayText)
 			.Distinct(StringComparer.Ordinal)
 			.ToList();
@@ -233,5 +235,137 @@ public sealed class KqlOperatorCapabilityTests
 		var act = async () => await KqlTestHost.ExecuteAsync(Rows,
 			KustoCode.Parse($"events | extend Y = {call}"), KqlBackend.Sqlite);
 		await act.Should().NotThrowAsync<UnsupportedKqlException>($"'{call}' is advertised by the completer");
+	}
+
+	// --- ScalarPrefix (`datetime()`, `toscalar`, …) ---
+	//
+	// A prefix form is offered only when the engine compiles the construct it inserts. Measured, not assumed:
+	// the typed-LITERAL forms parse into a LiteralExpression and compile; `dynamic`/`dynamic()`/`guid()`/
+	// `toscalar` reach Compile as node kinds the engine does not model at all and throw, so they are dropped.
+	// DisplayText → a filled-in expression of that form, which is what the round trip runs.
+	static readonly (string Prefix, string Expression)[] Prefixes =
+	[
+		("datetime()", "datetime(2020-01-01)"),
+		("timespan()", "timespan(1d)"),
+		("int()", "int('1')"),
+		("long()", "long('1')"),
+		("real()", "real('1')"),
+		("decimal()", "decimal('1')"),
+		("double()", "double('1')"),
+	];
+
+	// Offered by Kusto.Language, DROPPED by the filter BECAUSE the engine rejects them — pinning the exclusion
+	// as a measured claim rather than a comment (each message is the compiler's own).
+	[Theory]
+	[InlineData("dynamic('[1]')", "*DynamicExpression*")]
+	[InlineData("toscalar('x')", "*ToScalarExpression*")]
+	[InlineData("guid('x')", "*Guid*")]
+	public void DroppedScalarPrefixes_AreTheOnesTheEngineRejects(string expression, string message)
+	{
+		var act = () => KqlTestHost.Apply(Rows, KustoCode.Parse($"events | where {expression} == {expression}"), KqlBackend.Sqlite);
+		act.Should().Throw<UnsupportedKqlException>().WithMessage(message);
+	}
+
+	[Fact]
+	public void Completer_Offers_ExactlyTheCompilableScalarPrefixes()
+	{
+		KqlScalar.SupportedScalarPrefixes.Should().BeEquivalentTo(Prefixes.Select(p => p.Prefix),
+			"the compile table must exercise every supported prefix, one-for-one");
+
+		// Probed at a bare operand position — the only place Kusto.Language offers the prefix catalog at all (typing
+		// a name prefix like `date` already suppresses it). `extend X = ` is used rather than `where `: the filter
+		// leaves 49 items there and 50 in a `where`, and the cap guard in CompletedKinds would rightly refuse to
+		// compare a truncated answer.
+		const string probe = "events | extend X = ";
+		var offered = Offered(probe, CompletionKind.ScalarPrefix);
+		offered.Should().BeEquivalentTo(["datetime()", "decimal()", "double()", "dynamic()", "guid()", "int()",
+			"long()", "real()", "timespan()", "dynamic", "toscalar"],
+			$"'{probe}' offers these prefix forms (re-triage if Kusto.Language changes the catalog)");
+
+		CompletedKinds(probe, CompletionKind.ScalarPrefix).Should().BeEquivalentTo(offered.Intersect(Prefixes.Select(p => p.Prefix)),
+			$"'{probe}' must offer exactly the prefix forms the engine compiles — no `toscalar`, no `dynamic`, no `guid`");
+	}
+
+	[Fact]
+	public void EverySupportedScalarPrefix_Compiles()
+	{
+		foreach (var backend in KqlBackendConfig.Active)
+			foreach (var (prefix, expression) in Prefixes)
+			{
+				var act = () => KqlTestHost.Apply(Rows, KustoCode.Parse($"events | where {expression} == {expression}"), backend);
+				act.Should().NotThrow<UnsupportedKqlException>(
+					$"'{prefix}' is offered, so '{expression}' must compile on {backend}");
+			}
+	}
+
+	// --- AggregateFunction (`summarize`): the supported set lives next to the aggregate switch ---
+
+	const string SummarizeProbe = "events | summarize ";
+
+	// DisplayText name → the call the compiler accepts for it.
+	static readonly (string Aggregate, string Call)[] Aggregates =
+	[
+		("count", "count()"),
+		("countif", "countif(Level > 1)"),
+		("sum", "sum(Level)"),
+		("min", "min(Level)"),
+		("max", "max(Level)"),
+		("avg", "avg(Level)"),
+		("dcount", "dcount(Level)"),
+		("make_list", "make_list(Level)"),
+		("make_set", "make_set(Level)"),
+		("percentile", "percentile(Level, 50)"),
+	];
+
+	[Theory]
+	[InlineData("events | summarize co")]
+	[InlineData("events | summarize ma")]
+	[InlineData("events | summarize pe")]
+	[InlineData("events | summarize s")]
+	[InlineData("events | summarize a")]
+	public void Completer_Offers_ExactlyTheImplementedAggregates(string probe)
+	{
+		// Narrow prefixes (the unfiltered summarize position offers the whole 50+ aggregate catalog, which the
+		// MaxItems cap would otherwise truncate). Kusto.Language does NOT narrow the aggregate catalog itself,
+		// so the expectation applies the typed prefix the same way the service does. Equality proves the filter
+		// keeps exactly the implemented ones — neither an unsupported aggregate nor a supported one dropped.
+		var prefix = probe[(probe.LastIndexOf(' ') + 1)..];
+		var offered = Offered(probe, CompletionKind.AggregateFunction);
+		offered.Should().NotBeEmpty($"'{probe}' sits in an aggregate-name position");
+		var expected = offered
+			.Where(KqlScalar.CanCompileAggregate)
+			.Where(d => d.StartsWith(prefix, StringComparison.OrdinalIgnoreCase))
+			.ToList();
+		CompletedKinds(probe, CompletionKind.AggregateFunction).Should().BeEquivalentTo(expected,
+			$"'{probe}' must offer exactly the aggregates KqlTransformer implements");
+	}
+
+	[Fact]
+	public void AggregateAllowlist_Matches_TheCompileTable()
+	{
+		KqlTransformer.SupportedAggregates.Should().BeEquivalentTo(Aggregates.Select(a => a.Aggregate),
+			"the compile table must exercise every allowlisted aggregate, one-for-one");
+
+		Offered(SummarizeProbe, CompletionKind.AggregateFunction)
+			.Should().HaveCountGreaterThan(40, "Kusto.Language offers the whole aggregate catalog; the filter trims it");
+
+		foreach (var kept in new[] { "count()", "sum(expr)", "make_list(expr, [maxSize])", "percentile(expr, percentile)" })
+			KqlScalar.CanCompileAggregate(kept).Should().BeTrue($"'{kept}' has an arm in the aggregate switch");
+
+		foreach (var dropped in new[]
+			{ "make_bag(expr, [maxSize])", "arg_max(maximized, [returned], ...)", "stdev(expr)", "hll(expr, [accuracy])", "percentiles(expr, percentile, ...)" })
+			KqlScalar.CanCompileAggregate(dropped).Should().BeFalse($"'{dropped}' has no arm in the aggregate switch");
+	}
+
+	[Fact]
+	public async Task EverySupportedAggregate_Compiles()
+	{
+		foreach (var backend in KqlBackendConfig.Active)
+			foreach (var (aggregate, call) in Aggregates)
+			{
+				var act = async () => await KqlTestHost.ExecuteAsync(Rows, KustoCode.Parse($"events | summarize {call}"), backend);
+				await act.Should().NotThrowAsync<UnsupportedKqlException>(
+					$"aggregate '{aggregate}' is in the allowlist, so '{call}' must compile on {backend}");
+			}
 	}
 }

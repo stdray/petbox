@@ -618,13 +618,35 @@ static class KqlScalar
 
 	public static bool CanCompileOperator(string displayText) => SupportedInfixOperators.Contains(displayText);
 
-	// A completer function item's DisplayText is `name(args…)` ("tostring(value)", "now([offset])"); the
-	// engine's answer is the registry's, matched on the name up to the parenthesis.
-	public static bool CanCompileFunction(string displayText)
+	// ScalarPrefix completion items (`datetime()`, `toscalar`, …) are two different animals, so this set is
+	// NOT empty — it is exactly the typed-LITERAL forms. `datetime(…)`, `timespan(…)`, `int/long/real/…(…)`
+	// are parsed into a LiteralExpression and compiled by Literal(), so they work as offered. The rest reach
+	// Compile as node kinds the engine does not model at all: `dynamic()` → DynamicExpression, `toscalar` →
+	// ToScalarExpression, `guid()` → a Guid literal (no dynamic values, no to-scalar subquery, no guid type),
+	// and every one of them throws. Bare `dynamic` (a type name, not a call) goes with them — same missing
+	// dynamic model. Measured, not assumed: each form was run through the production path.
+	public static readonly IReadOnlySet<string> SupportedScalarPrefixes = new HashSet<string>(StringComparer.Ordinal)
+	{
+		"datetime()", "timespan()", "int()", "long()", "real()", "decimal()", "double()",
+	};
+
+	public static bool CanCompileScalarPrefix(string displayText) => SupportedScalarPrefixes.Contains(displayText);
+
+	// The aggregate functions the compiler implements. The list itself lives NEXT TO the aggregate switch it
+	// describes (KqlTransformer.SupportedAggregates, whose default arm quotes it) — this is only the
+	// completer-facing question, answered from that one home so the two cannot disagree.
+	public static bool CanCompileAggregate(string displayText) =>
+		KqlTransformer.SupportedAggregates.Contains(FunctionName(displayText), StringComparer.Ordinal);
+
+	// A completer DP: `name(args…)` ("tostring(value)", "now([offset])"); the engine's answer is the
+	// registry's, matched on the name up to the parenthesis.
+	public static bool CanCompileFunction(string displayText) =>
+		KqlScalarFunctions.TryResolve(FunctionName(displayText), out _);
+
+	static string FunctionName(string displayText)
 	{
 		var paren = displayText.IndexOf('(');
-		var name = paren > 0 ? displayText[..paren] : displayText;
-		return KqlScalarFunctions.TryResolve(name, out _);
+		return paren > 0 ? displayText[..paren] : displayText;
 	}
 
 	public static Expr Compile(Expression node, ScalarContext ctx) => node switch
@@ -770,9 +792,6 @@ static class KqlScalar
 	// therefore a prefix/suffix of ANY term in the value, NOT of the first/last term only, which is exactly
 	// `has` (HasFn) with one of its two boundaries dropped: anchored on the term side, free on the other.
 	// Same vehicle (MatchesRegex), same empty-needle rule, same Negated() null rule as `has`.
-	// KNOWN approximation: a needle that itself contains a delimiter cannot be a prefix of an alnum term
-	// (Kusto would answer false); here the regex degrades to "substring that starts/ends at a term
-	// boundary" — the same class of approximation as the `has` family's multi-term needle.
 	static Expr HasAffix(BinaryExpression b, ScalarContext ctx, string opName, bool caseInsensitive, bool prefix, bool negate = false)
 	{
 		var access = Compile(b.Left, ctx);
@@ -780,12 +799,25 @@ static class KqlScalar
 			throw new UnsupportedKqlException($"'{opName}' requires a string operand on the left, got {access.Type.Name}");
 		if (b.Right is not LiteralExpression { LiteralValue: string term })
 			throw new UnsupportedKqlException($"'{opName}' requires a string literal on the right");
-		if (term.Length == 0)
+		// A TERM is a maximal run of letters/digits (see TermStart), so a needle carrying ANY other character —
+		// `rate_l`, `a b`, `x-y` — can never be a prefix/suffix of one: the answer is a CONSTANT, not a match
+		// (the empty needle is the same arm). Leaving it to the regex would be a false positive: the anchored
+		// boundary would admit `rate_limit hasprefix 'rate_l'`, where '_' starts a new term.
+		if (term.Length == 0 || !IsTermRun(term))
 			return negate ? Negated(Expr.Constant(false), access) : Expr.Constant(false);
 		var body = Re2Escape(term);
 		var pattern = (caseInsensitive ? "(?i)" : "") + (prefix ? TermStart + body : body + TermEnd);
 		var call = Expr.Call(SqlMethod(nameof(KqlSqlExpressions.MatchesRegex)), access, Expr.Constant(pattern));
 		return negate ? Negated(call, access) : call;
+	}
+
+	// Is the whole needle a run of TERM chars (letters/digits, the `\p{L}\p{N}` the boundary fragments use)?
+	static bool IsTermRun(string term)
+	{
+		foreach (var c in term)
+			if (!char.IsLetterOrDigit(c))
+				return false;
+		return true;
 	}
 
 	// `has_any` / `has_all`: the OR / AND of plain `has` over the list elements — Kusto: "Same as `has` but

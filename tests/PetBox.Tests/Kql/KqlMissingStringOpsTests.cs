@@ -101,6 +101,25 @@ public sealed class KqlMissingStringOpsTests
 	public void HasPrefix_HasSuffix_EmptyNeedleMatchesNothing(string predicate, long[] expected) =>
 		ShouldMatch(AffixRows, predicate, expected);
 
+	// A TERM is a maximal run of letters/digits, so a needle holding ANY other character (`rate_l`'s
+	// underscore, a space, a hyphen) cannot be a prefix/suffix of one — the answer is a constant false, not a
+	// match. Left to the boundary regex this was a FALSE POSITIVE: `rate_limit hasprefix 'rate_l'` matched,
+	// because the needle's underscore was treated as part of the anchored text instead of starting a new term.
+	// The negation is the complement over non-null subjects (Negated keeps nulls out).
+	[Theory]
+	[InlineData("Message hasprefix 'rate'", new long[] { 3 })] // pure term chars: the real case, still works
+	[InlineData("Message hasprefix 'rate_l'", new long[] { })] // + a delimiter → not a term prefix
+	[InlineData("Message !hasprefix 'rate_l'", new long[] { 1, 2, 3 })] // …so its negation is everything
+	[InlineData("Message hasprefix_cs 'rate_'", new long[] { })]
+	[InlineData("Message hasprefix 'north am'", new long[] { })] // a space cannot begin a term's prefix
+	[InlineData("Message hassuffix 'limit exceeded'", new long[] { })]
+	[InlineData("Message hassuffix '_limit'", new long[] { })]
+	[InlineData("Message !hassuffix '_limit'", new long[] { 1, 2, 3 })]
+	[InlineData("Message hassuffix 'exceeded'", new long[] { 3 })] // pure term chars: the real case, still works
+	[InlineData("Message hassuffix 'eded'", new long[] { 3 })] // mid-term is fine: a term SUFFIX
+	public void HasPrefix_HasSuffix_NeedleContainingADelimiterMatchesNothing(string predicate, long[] expected) =>
+		ShouldMatch(AffixRows, predicate, expected);
+
 	// The null rule (the P1 from b59ec3a8): a NULL operand is excluded from the positive AND the negated
 	// spelling. The whole has* family lowers to MatchesRegex, whose SQL PINS a null subject to FALSE, so a
 	// bare NOT() would flip it to TRUE and KEEP the null row — every negated form must go through Negated().
@@ -109,6 +128,9 @@ public sealed class KqlMissingStringOpsTests
 	[InlineData("Properties[\"env\"] hasprefix 'pro'", new long[] { 3 })]
 	[InlineData("Properties[\"env\"] !hasprefix 'pro'", new long[] { 1 })]
 	[InlineData("Properties[\"env\"] !hasprefix_cs 'pro'", new long[] { 1 })]
+	// the delimiter-needle arm is a compile-time FALSE, so its negation must still exclude the null row
+	[InlineData("Properties[\"env\"] !hasprefix 'pro_d'", new long[] { 1, 3 })]
+	[InlineData("Properties[\"env\"] !hassuffix 'od_x'", new long[] { 1, 3 })]
 	[InlineData("Properties[\"env\"] hassuffix 'rod'", new long[] { 3 })]
 	[InlineData("Properties[\"env\"] !hassuffix 'rod'", new long[] { 1 })]
 	[InlineData("Properties[\"env\"] !hassuffix_cs 'rod'", new long[] { 1 })]

@@ -69,15 +69,19 @@ public static class KqlCompletionService
 	}
 
 	// The ONLY filter, and it asks the COMPILER, never a copy of its knowledge: a pipeline prefix against
-	// the operator allowlist here, a scalar infix operator against KqlScalar.CanCompileOperator, a built-in
-	// function against the scalar-function registry (KqlScalar.CanCompileFunction). An item the engine
-	// cannot compile must not be advertised — offering `hasprefix` before the compiler learned it was the
-	// reported defect. Everything else (columns, tables, keywords, types) is offered unfiltered.
+	// the operator allowlist here; a scalar infix operator, a prefix form, a built-in function and an
+	// aggregate function against KqlScalar, which in turn defers to the compiler's own data homes
+	// (SupportedInfixOperators/SupportedScalarPrefixes, KqlScalarFunctions.Registry,
+	// KqlTransformer.SupportedAggregates). An item the engine cannot compile must not be advertised —
+	// offering `hasprefix`, or `toscalar`, before the compiler learned it was the reported defect.
+	// Everything else (columns, tables, keywords, types) is offered unfiltered.
 	static bool IsSupported(Kusto.Language.Editor.CompletionItem i) => i.Kind switch
 	{
 		CompletionKind.QueryPrefix => SupportedQueryPrefixes.Contains(i.DisplayText),
 		CompletionKind.ScalarInfix => KqlScalar.CanCompileOperator(i.DisplayText),
+		CompletionKind.ScalarPrefix => KqlScalar.CanCompileScalarPrefix(i.DisplayText),
 		CompletionKind.BuiltInFunction => KqlScalar.CanCompileFunction(i.DisplayText),
+		CompletionKind.AggregateFunction => KqlScalar.CanCompileAggregate(i.DisplayText),
 		_ => true,
 	};
 }
