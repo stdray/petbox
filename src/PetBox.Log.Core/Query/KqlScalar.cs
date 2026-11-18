@@ -857,13 +857,43 @@ static class KqlScalar
 		return guarded;
 	}
 
+	// The two KqlSqlExpressions shims In() reaches by name — the EXISTING SQL-translatable, dual-dialect,
+	// nullable-aware ones (no new shim is introduced by the `~` support): ToLower is `lower({0})`, IsNotNull is
+	// `({0} IS NOT NULL)`. Resolved once here because KqlScalar has no SqlM helper of its own (that one lives
+	// on KqlScalarFunctions) and a reflection `!` is not the house style.
+	static readonly MethodInfo LowerSql = SqlShim(nameof(KqlSqlExpressions.ToLower));
+	static readonly MethodInfo IsNotNullSql = SqlShim(nameof(KqlSqlExpressions.IsNotNull));
+
+	static MethodInfo SqlShim(string name) =>
+		typeof(KqlSqlExpressions).GetMethod(name)
+		?? throw new InvalidOperationException($"{nameof(KqlSqlExpressions)}.{name} is missing");
+
 	static Expr In(InExpression inx, ScalarContext ctx)
 	{
+		// Kusto's `in~` (InCsExpression) and `!in~` (NotInCsExpression) are the CASE-INSENSITIVE membership
+		// spellings. READ THIS BEFORE "FIXING" THE NAME: on every OTHER operator the `_cs` suffix means
+		// case-SENSITIVE (`contains_cs`, `has_cs`), but Kusto.Language names the tilde forms with a `Cs` that
+		// means the OPPOSITE — it is Kusto's own historical spelling of the `~` form. So `in~` without case
+		// folding is silently ordinal and returns wrong rows with no error. Do not invert this.
+		// The fold is `lower()`, hence ASCII-ONLY on SQLite — which is what Kusto documents for the `~`
+		// operators ("case-insensitive operators are currently supported only for ASCII text"). DuckDB's
+		// `lower()` folds Unicode too, and the `(?i)` regex lowering of `has` folds it on BOTH backends, so
+		// the engine is ASCII-only in some places and Unicode-wide in others: observations/
+		// kql-case-folding-differs-by-mechanism-and-backend.
+		var fold = inx.Kind is SyntaxKind.InCsExpression or SyntaxKind.NotInCsExpression;
 		var negate = inx.Kind is SyntaxKind.NotInExpression or SyntaxKind.NotInCsExpression;
 		var le = Compile(inx.Left, ctx);
 		var elements = inx.Right.Expressions.Select(e => Compile(e.Element, ctx)).ToList();
 		if (elements.Count == 0)
 			return Expr.Constant(negate);
+
+		// A STRING left has no HasValue for NullGuard to test, so the NEGATED spellings need an explicit non-null
+		// check: measured, the negated membership SQL KEEPS a null-operand row (`Properties["env"] !in ('prod')`
+		// returned [1,2] where Kusto gives [1]; the tilde twin had the same defect), which is exactly the Kusto
+		// null rule the `!has` family already had to restore via Negated(). Applies to `!in` AND `!in~` — a null
+		// operand matches nothing, and its negation matches nothing either. Case folding stays `~`-only.
+		var stringOperand = NonNullable(le.Type) == typeof(string);
+		var stringFold = fold && stringOperand;
 
 		Expr? acc = null;
 		foreach (var element in elements)
@@ -873,13 +903,21 @@ static class KqlScalar
 			// `Start in (datetime(...))` work identically pre- and post-split.
 			var (nl, nr) = NormalizeInstants(le, element, ctx);
 			var (l, r) = UnifyComparable(nl, nr, SyntaxKind.EqualExpression);
+			// Fold BOTH sides, but only for string membership: `1 in~ (1)` or a datetime in~ a list are
+			// order-equality either way, so the plain path is the CORRECT one for non-strings (and for
+			// `in` / `!in`, which are ordinal by definition and stay so).
+			if (stringFold)
+				(l, r) = (Expr.Call(LowerSql, l), Expr.Call(LowerSql, r));
 			var eq = Expr.Equal(l, r, liftToNull: false, method: null);
 			acc = acc is null ? eq : Expr.OrElse(acc, eq);
 		}
 		Expr result = negate ? Expr.Not(acc!) : acc!;
-		// A null left operand matches nothing, and its negation is still excluded — so both `in` and `!in`
-		// yield false for a null left (Kusto null semantics; see Compare's NOTE on two-valued logic).
-		return NullGuard(result, le);
+		// NullGuard excludes a null operand whose type carries HasValue (the nullable value operands); a STRING
+		// left gets the explicit IS NOT NULL above instead. For membership the rule is Kusto's: a null left
+		// matches nothing, and its negation matches nothing either — the positive spelling already drops the row
+		// on its own (`NULL = 'x'` is NULL), the negated one needed the guard.
+		result = NullGuard(result, le);
+		return negate && stringOperand ? Expr.AndAlso(Expr.Call(IsNotNullSql, le), result) : result;
 	}
 
 	static Expr Between(BetweenExpression btw, ScalarContext ctx)
