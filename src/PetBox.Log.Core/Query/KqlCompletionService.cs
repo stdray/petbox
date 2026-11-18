@@ -5,7 +5,7 @@ namespace PetBox.Log.Core.Query;
 public static class KqlCompletionService
 {
 	// The ceiling on ONE answer, not the plan for it: see ApplyPerKindBudget. It exists because the
-	// dropdown has to stay usable, and at a bare operand position the candidate set is 390 entries.
+	// dropdown has to stay usable, and at a bare operand position the candidate set is 393 entries.
 	public const int MaxItems = 50;
 
 	// How many offers each KIND is guaranteed before any kind may spend the leftover slots. Sized to
