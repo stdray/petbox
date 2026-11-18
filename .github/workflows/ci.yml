@@ -391,18 +391,31 @@ jobs:
             # on /health (same probe the CI image smoke uses, but against the running
             # container). Fail the deploy — with logs — if it never comes up, so a broken
             # image that boots-but-doesn't-serve is caught instead of silently "deployed".
+            #
+            # BUDGET: 180 s, not 30. Compose publishes the port immediately, but Kestrel inside
+            # only answers AFTER the startup migrator chain finishes — and that chain walks EVERY
+            # project file, sequentially (Tasks: relations backfill, node identity, link kinds,
+            # delivery rename, terminal blocker edges; 35 projects on this instance). Measured
+            # 2026-11-18 (tag run 44342730521): the 30 s budget expired while those migrators were
+            # still writing, this step exited 1 with "health check FAILED", and prod was already
+            # serving the tagged commit. A probe has to OUTLAST startup, not race it; a genuinely
+            # broken image still fails, just after honestly waiting. See
+            # observations/deploy-health-budget-blames-a-successful-deploy.
             healthy=false
-            for i in $(seq 1 30); do
+            probe_started=$(date +%s)
+            for i in $(seq 1 180); do
               sleep 1
               if curl -fsS --max-time 2 -o /dev/null http://localhost:8083/health; then
-                echo "post-deploy health OK after ${i}s"
+                echo "post-deploy health OK after $(( $(date +%s) - probe_started ))s"
                 healthy=true
                 break
               fi
             done
             if [ "$healthy" != "true" ]; then
-              echo "post-deploy health check FAILED — dumping last 100 log lines"
-              docker compose logs --tail 100 petbox || true
+              # -t: container-side timestamps. Without them the dumped migrator lines share the
+              # action's own print time and "which migrator was slow" cannot be answered at all.
+              echo "post-deploy health check FAILED after $(( $(date +%s) - probe_started ))s — dumping last 100 log lines"
+              docker compose logs -t --tail 100 petbox || true
               exit 1
             fi
             docker system prune -a -f
