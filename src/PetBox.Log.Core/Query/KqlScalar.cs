@@ -882,12 +882,13 @@ static class KqlScalar
 		if (elements.Count == 0)
 			return Expr.Constant(negate);
 
-		// A STRING left has no HasValue for NullGuard to test, so the `~` spellings need the explicit
-		// non-null check: measured, the negated membership SQL KEEPS a null-operand row (`Properties["env"]
-		// !in ('PROD')` returns the row whose `env` is missing), which is exactly the Kusto null rule the
-		// `!has` family already had to restore via Negated(). Applied to the `~` spelling ONLY — `in` / `!in`
-		// keep the tree they compiled before this change.
-		var stringFold = fold && NonNullable(le.Type) == typeof(string);
+		// A STRING left has no HasValue for NullGuard to test, so the NEGATED spellings need an explicit non-null
+		// check: measured, the negated membership SQL KEEPS a null-operand row (`Properties["env"] !in ('prod')`
+		// returned [1,2] where Kusto gives [1]; the tilde twin had the same defect), which is exactly the Kusto
+		// null rule the `!has` family already had to restore via Negated(). Applies to `!in` AND `!in~` — a null
+		// operand matches nothing, and its negation matches nothing either. Case folding stays `~`-only.
+		var stringOperand = NonNullable(le.Type) == typeof(string);
+		var stringFold = fold && stringOperand;
 
 		Expr? acc = null;
 		foreach (var element in elements)
@@ -899,17 +900,19 @@ static class KqlScalar
 			var (l, r) = UnifyComparable(nl, nr, SyntaxKind.EqualExpression);
 			// Fold BOTH sides, but only for string membership: `1 in~ (1)` or a datetime in~ a list are
 			// order-equality either way, so the plain path is the CORRECT one for non-strings (and for
-			// `in` / `!in`, which are ordinal by definition — byte-for-byte unchanged).
+			// `in` / `!in`, which are ordinal by definition and stay so).
 			if (stringFold)
 				(l, r) = (Expr.Call(LowerSql, l), Expr.Call(LowerSql, r));
 			var eq = Expr.Equal(l, r, liftToNull: false, method: null);
 			acc = acc is null ? eq : Expr.OrElse(acc, eq);
 		}
 		Expr result = negate ? Expr.Not(acc!) : acc!;
-		// A null left operand matches nothing, and its negation is still excluded — so both `in` and `!in`
-		// yield false for a null left (Kusto null semantics; see Compare's NOTE on two-valued logic).
+		// NullGuard excludes a null operand whose type carries HasValue (the nullable value operands); a STRING
+		// left gets the explicit IS NOT NULL above instead. For membership the rule is Kusto's: a null left
+		// matches nothing, and its negation matches nothing either — the positive spelling already drops the row
+		// on its own (`NULL = 'x'` is NULL), the negated one needed the guard.
 		result = NullGuard(result, le);
-		return negate && stringFold ? Expr.AndAlso(Expr.Call(IsNotNullSql, le), result) : result;
+		return negate && stringOperand ? Expr.AndAlso(Expr.Call(IsNotNullSql, le), result) : result;
 	}
 
 	static Expr Between(BetweenExpression btw, ScalarContext ctx)

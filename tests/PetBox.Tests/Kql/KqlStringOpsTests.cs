@@ -202,11 +202,13 @@ public sealed class KqlStringOpsTests
 		}
 	}
 
-	// A null left operand is excluded from BOTH spellings — `in~` folds the operand with lower(), and the
-	// json_extract NULL must survive that fold as NULL rather than becoming a match. Row 2 carries no `env`
-	// property, so it belongs in NEITHER list (same seeding style as NegatedStringOperators_ExcludeNullOperands).
+	// A null left operand is excluded from BOTH spellings of BOTH membership operators (Kusto: a null matches
+	// nothing, and its negation matches nothing either). `in` gets that for free (`NULL = 'x'` is NULL, so the row
+	// drops), while the NEGATED spellings need the explicit IS NOT NULL that Negated() also gives the `!has`
+	// family — before it, `!in` returned the null row too. Row 2 carries no `env` property, so it belongs in
+	// NEITHER list (same seeding style as NegatedStringOperators_ExcludeNullOperands).
 	[Fact]
-	public void InTilde_ExcludesNullOperands()
+	public void MembershipOperators_ExcludeNullOperands()
 	{
 		LogEntryRecord[] rows =
 		[
@@ -217,9 +219,17 @@ public sealed class KqlStringOpsTests
 
 		(string Predicate, long[] Expected)[] cases =
 		[
+			// ordinal: only the exact-cased row matches, so 'PROD' matches nothing — the tilde pair is where the
+			// casing stops mattering.
+			("in ('prod')", [3]),
 			("in~ ('PROD')", [3]),
+			("!in ('prod')", [1]),
 			("!in~ ('PROD')", [1]),
+			("in ('PROD')", []),
+			("!in ('PROD')", [1, 3]),
+			("in ('nothing-matches-this')", []),
 			("in~ ('nothing-matches-this')", []),
+			("!in ('nothing-matches-this')", [1, 3]),
 			("!in~ ('nothing-matches-this')", [1, 3]),
 		];
 
