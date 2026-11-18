@@ -414,6 +414,10 @@ public static partial class KqlTransformer
 			if (!string.Equals(name, "kind", StringComparison.Ordinal))
 				throw new UnsupportedKqlException($"{opName} parameter '{name}' not supported (only 'kind' is supported)");
 			var value = (p.Expression as LiteralExpression)?.LiteralValue?.ToString();
+			// One spelling per kind: Kusto ALSO documents `anti`/`leftantisemi` as aliases of `leftanti` (and
+			// `rightsemi`/`rightanti`/`fullouter`, which stay unsupported). Aliases are refused BY DESIGN and
+			// must not be added for these two alone — no kind here accepts one (innerunique/inner/leftouter
+			// don't either), so the error below stays the complete list of what works.
 			kind = value switch
 			{
 				"innerunique" => JoinKind.InnerUnique,

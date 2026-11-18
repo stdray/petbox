@@ -8,7 +8,7 @@ namespace PetBox.Tests.Kql;
 // Every case runs over KqlBackendConfig.Active, so a dialect that composes the EXISTS subquery differently
 // goes red here. The one SQL path builds both kinds the same way (Queryable.Any over the null-key-filtered
 // right side, see ComposeJoin/BuildSemiAntiJoin) — the multi-backend loop is what proves the two providers
-// agree, since the old in-memory StreamJoinRows fallback no longer exists (spec kql-single-path-impl).
+// agree; the in-memory row-by-row join fallback is gone (spec kql-single-path-impl, SQL is the sole path).
 //
 // NULL-KEY RULE PINNED HERE (Kusto's, not SQL's accident): a null join key never matches anything — including
 // another null key. So a left row whose key is null is UNMATCHED: absent from leftsemi, PRESENT in leftanti.
@@ -224,6 +224,42 @@ public sealed class KqlJoinSemiAntiTests
 			var semiIds = Ids(semiCols, semiRows);
 			semiIds.Should().NotBeEmpty($"the fixture must make this a real comparison on {backend}");
 			semiIds.Should().BeEquivalentTo(Ids(inCols, inRows), $"leftsemi ≡ where <key> in (...) on {backend}");
+		}
+	}
+
+	// --- a by-less aggregate stays green AFTER a semi/anti join (it is TERMINAL over the emitted stage, via
+	// SqlCount / SqlSummarizeNoBy — a different path from anything the join itself composes) ---
+
+	[Fact]
+	public async Task ByLessAggregate_AfterSemiAndAnti_StaysGreen()
+	{
+		// semi: every left row of Rows matches an error row → 5. anti: svc-b (Id3,Id4) + svc-c (Id5) → 3.
+		foreach (var kql in new[]
+		{
+			"events | join kind=leftsemi (events | where Level == 4) on ServiceKey | summarize count()",
+			"events | join kind=leftsemi (events | where Level == 4) on ServiceKey | count",
+		})
+		{
+			await ForEachBackend(Rows, kql, (cols, rows, backend) =>
+			{
+				cols.Should().HaveCount(1, $"a by-less aggregate yields exactly one column on {backend}");
+				rows.Should().ContainSingle();
+				((long)rows[0][0]!).Should().Be(5, $"'{kql}' on {backend}");
+			});
+		}
+
+		foreach (var kql in new[]
+		{
+			"events | join kind=leftanti (events | where ServiceKey == 'svc-a') on ServiceKey | summarize count()",
+			"events | join kind=leftanti (events | where ServiceKey == 'svc-a') on ServiceKey | count",
+		})
+		{
+			await ForEachBackend(Rows, kql, (cols, rows, backend) =>
+			{
+				cols.Should().HaveCount(1, $"a by-less aggregate yields exactly one column on {backend}");
+				rows.Should().ContainSingle();
+				((long)rows[0][0]!).Should().Be(3, $"'{kql}' on {backend}");
+			});
 		}
 	}
 

@@ -604,14 +604,15 @@ public static partial class KqlTransformer
 		return (IQueryable)FromSqlOpen.MakeGenericMethod(rowType).Invoke(null, [dc, raw, args])!;
 	}
 
-	// ---- join (SQL): reproduces ApplyJoin/StreamJoinRows semantics as a SQL join on the composable
+	// ---- join (SQL): the pre-SQL row-by-row join semantics, expressed as a SQL join on the composable
 	// SqlStage. All kinds compose in SQL: kind=inner (Queryable.Join, no dedup), kind=innerunique (left
 	// window-dedup then inner join), kind=leftouter (GroupJoin+SelectMany+DefaultIfEmpty), kind=leftsemi /
 	// kind=leftanti (EXISTS over the right side, LEFT columns only). A bare join (no
 	// kind=) resolves to `defaultKind` — Inner by default (spec kql-join-default-inner), a deliberate
 	// deviation from Kusto's innerunique default; the knob rides through KqlTranslationOptions.DefaultJoinKind.
-	// The right side is compiled to a SqlStage via sqlRunSub; if it isn't fully SQL, the whole join falls
-	// back. Null join keys never match (KQL): inner pre-filters BOTH sides' null keys (also aligns
+	// The right side is compiled to a SqlStage via sqlRunSub; if it isn't fully SQL, ComposeJoin returns null
+	// and the operator is refused as unsupported — there is no in-memory fallback to fall back TO. Null join
+	// keys never match (KQL): inner pre-filters BOTH sides' null keys (also aligns
 	// EnumerableQuery with SQL, which would otherwise match null==null); leftouter/semi/anti filter ONLY the
 	// right (left null-key rows survive via DefaultIfEmpty, never matching a filtered right), and for
 	// leftsemi/leftanti that same rule decides the row: a null left key has NO match, so it is dropped by
@@ -699,8 +700,9 @@ public static partial class KqlTransformer
 	// inner (dedupLeft=false) or innerunique (dedupLeft=true — dedup the LEFT by key, keeping the first row
 	// per key, via GroupBy(key).Select(g => OrderBy(identity).First()); linq2db translates that to a
 	// ROW_NUMBER() OVER (PARTITION BY key ORDER BY identity)=1 dedup and EnumerableQuery keeps the same
-	// first-in-input-order row, so both providers agree, matching today's StreamJoinRows innerunique. The
-	// explicit identity order is REQUIRED — a bare First() picks arbitrarily over real SQLite, see DedupByKey).
+	// first-in-input-order row, so both providers agree — and that is the row Kusto's innerunique keeps (its
+	// first-encountered row per key). The explicit identity order is REQUIRED — a bare First() picks
+	// arbitrarily over real SQLite, see DedupByKey).
 	static SqlStage? BuildInnerJoin(SqlStage left, SqlStage right, JoinOnClause onClause, string opName, DateTime now, bool dedupLeft)
 	{
 		var lParam = Expr.Parameter(left.ElementType, "l");
