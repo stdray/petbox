@@ -17,8 +17,9 @@ namespace PetBox.Tests.Kql;
 //     WILDCARD PATTERN matched ("how to order the columns when a wildcard pattern is used"); they are not a
 //     row sort and not a position modifier for a single column.
 //   * unmatched columns go LAST, in source order; a column matched by two specifiers lands at the FIRST.
-//   * `Properties` is a VIRTUAL column (the dynamic bag): a column-selection list accepts it as an alias of
-//     the stored PropertiesJson column that backs it, never as an emitted name.
+//   * `Properties` is a VIRTUAL column (the dynamic bag): where a column NAME is resolved to the shape — a
+//     column-selection list, or a bare column reference inside `project` — it is an alias of the stored
+//     PropertiesJson column that backs it, never an emitted name of its own.
 // Every one of those has a case below.
 public sealed class KqlProjectColumnOperatorTests
 {
@@ -507,21 +508,79 @@ public sealed class KqlProjectColumnOperatorTests
 		AssertSpanColumnsAsync("spans | project-away KindName, StatusName, Properties",
 			"SpanId", "TraceId", "ParentSpanId", "Name", "Kind", "Start", "End", "Duration", "Status", "StatusDescription");
 
-	// ---- the `project` side of the same name, pinned so the divergence is on the record ----
+	// ---- the `project` side of the same name: the SILENT half of the defect ----
 	//
-	// `project Properties` goes through the bare-name Properties fallback, so it yields the bag KEY named
-	// "Properties" — a nullable string column, null for every row here — NOT the bag. That is why the
-	// column-selection family aliases it to the stored column instead of copying `project`. The documented
-	// projection form is `Name = Properties["key"]`, which works (and matches Kusto).
+	// `project Properties` used to answer the bag KEY named "Properties" — a nullable string column, null on
+	// every row — so a user asking for the bag got a column of nulls and would conclude their rows carry no
+	// properties. That is the bad class: not a refusal, a wrong answer. It now resolves through the same
+	// VirtualBagColumnIndex alias as the column-selection family, so the pin is that the bag text comes back
+	// and NEVER null.
 	[Fact]
-	public async Task Project_BareProperties_IsTheBagKeyFallback_NotTheBag()
+	public async Task Project_Properties_ReturnsTheBag_NotAColumnOfNulls()
 	{
 		foreach (var backend in KqlBackendConfig.Active)
 		{
 			var (cols, rows) = await RunBagAsync("events | project Properties", backend);
-			cols.Select(c => c.Name).Should().Equal(["Properties"], $"on {backend}");
+			// The STORED name: the shape's bag lookup keys on it, so this is what keeps Properties["k"]
+			// resolving after the projection that asked for the bag (next case).
+			cols.Select(c => c.Name).Should().Equal(["PropertiesJson"], $"on {backend}");
 			cols[0].ClrType.Should().Be<string>($"on {backend}");
-			rows.Should().OnlyContain(r => r[0] == null, $"it is the null bag key 'Properties', not the bag — on {backend}");
+			var values = rows.Select(r => (string?)r[0]).ToList();
+			values.Should().NotContainNulls($"the bag must never come back as a column of nulls — on {backend}");
+			values.Should().Contain("""{"city":"Paris","Tool":"curl"}""", $"on {backend}");
+		}
+	}
+
+	[Fact]
+	public async Task Project_Properties_WithOtherColumns()
+	{
+		foreach (var backend in KqlBackendConfig.Active)
+		{
+			var (cols, rows) = await RunBagAsync("events | project Properties, Id", backend);
+			cols.Select(c => c.Name).Should().Equal(["PropertiesJson", "Id"], $"on {backend}");
+			rows.Select(r => (string?)r[0]).Should().NotContainNulls($"on {backend}");
+		}
+	}
+
+	// The reason the emitted name is the STORED one: the projection that asked for the bag must not be the
+	// thing that makes the bag unaddressable.
+	[Fact]
+	public async Task Project_Properties_LeavesTheBagAddressable()
+	{
+		foreach (var backend in KqlBackendConfig.Active)
+		{
+			var (_, rows) = await RunBagAsync(
+				"events | project Properties | where Properties[\"city\"] == \"Paris\"", backend);
+			rows.Should().ContainSingle($"on {backend}");
+		}
+	}
+
+	// `project Properties` and `project PropertiesJson` are the same projection — the alias is not a second,
+	// subtly different column.
+	[Fact]
+	public async Task Project_Properties_MatchesTheStoredSpelling()
+	{
+		foreach (var backend in KqlBackendConfig.Active)
+		{
+			var (aliasCols, aliasRows) = await RunBagAsync("events | project Properties", backend);
+			var (storedCols, storedRows) = await RunBagAsync("events | project PropertiesJson", backend);
+			aliasCols.Select(c => c.Name).Should().Equal(storedCols.Select(c => c.Name).ToArray(), $"on {backend}");
+			aliasRows.Select(r => (string?)r[0]).Should().Equal(
+				storedRows.Select(r => (string?)r[0]).ToArray(), $"on {backend}");
+		}
+	}
+
+	// The explicit alias keeps the user's name — same as `Bag = PropertiesJson` always did.
+	[Fact]
+	public async Task Project_NamedProperties_KeepsTheAliasAndReturnsTheBag()
+	{
+		foreach (var backend in KqlBackendConfig.Active)
+		{
+			var (cols, rows) = await RunBagAsync("events | project Bag = Properties", backend);
+			cols.Select(c => c.Name).Should().Equal(["Bag"], $"on {backend}");
+			var values = rows.Select(r => (string?)r[0]).ToList();
+			values.Should().NotContainNulls($"on {backend}");
+			values.Should().Contain("""{"city":"Paris","Tool":"curl"}""", $"on {backend}");
 		}
 	}
 
