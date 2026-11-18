@@ -875,6 +875,11 @@ static class KqlScalar
 		// case-SENSITIVE (`contains_cs`, `has_cs`), but Kusto.Language names the tilde forms with a `Cs` that
 		// means the OPPOSITE — it is Kusto's own historical spelling of the `~` form. So `in~` without case
 		// folding is silently ordinal and returns wrong rows with no error. Do not invert this.
+		// The fold is `lower()`, hence ASCII-ONLY on SQLite — which is what Kusto documents for the `~`
+		// operators ("case-insensitive operators are currently supported only for ASCII text"). DuckDB's
+		// `lower()` folds Unicode too, and the `(?i)` regex lowering of `has` folds it on BOTH backends, so
+		// the engine is ASCII-only in some places and Unicode-wide in others: observations/
+		// kql-case-folding-differs-by-mechanism-and-backend.
 		var fold = inx.Kind is SyntaxKind.InCsExpression or SyntaxKind.NotInCsExpression;
 		var negate = inx.Kind is SyntaxKind.NotInExpression or SyntaxKind.NotInCsExpression;
 		var le = Compile(inx.Left, ctx);
