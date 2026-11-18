@@ -1303,7 +1303,10 @@ public static partial class KqlTransformer
 		// Kusto's count_distinct is exact by definition, so it never takes the approximate arm. A null argument
 		// is not a value (COUNT(DISTINCT) skips NULL natively; the explicit IS NOT NULL filter is the one the
 		// bare dcount arm already carried). An all-false group counts 0 — Kusto's count_distinctif returns 0,
-		// not null, because the count itself is well defined over no rows.
+		// not null, because the count itself is well defined over no rows. NOTE that Kusto's own dcountif(match)
+		// documentation tips that it "might return an error" when no rows pass the predicate: we deliberately
+		// DEVIATE and pin 0 there, because the engine's rule for an unsupported/divergent option is to DEGRADE
+		// to the reference behaviour, never to error (spec/kql-semantic-options).
 		(string Name, Type Logical, Func<ParamExpr, Expr> Build) ExactDistinct(Expression argSyntax, Expr? pred)
 		{
 			var arg = Storage(argSyntax, ctx);
@@ -1868,6 +1871,12 @@ public static partial class KqlTransformer
 		//    and DuckDB disagree on bare-NULL placement), which makes equal maxima resolve to the FIRST row in
 		//    input order — `events`' first column is its monotonic identity Id — and keeps the two backends
 		//    bit-identical instead of leaving ties to each engine's sorter.
+		// A tie on EVERY projected column is the only case the ordering cannot settle, and it needs no
+		// settling: the row PICK there is genuinely the engine's choice, but every returned expression is a
+		// pure function of the projected columns, so any row that ties on all of them carries VALUE-IDENTICAL
+		// results — the answer stays deterministic as values even when the picked row is not. Read the
+		// guarantee as "which row the engine picks" (pinned where the projection keeps a unique column),
+		// never as "which values come out" (pinned always).
 		var tieBreak = n == 0
 			? ""
 			: ", " + string.Join(", ", Enumerable.Range(0, n).Select(i => $"(sub.C{i} IS NULL), sub.C{i}"));
