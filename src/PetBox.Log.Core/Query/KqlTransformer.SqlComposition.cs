@@ -83,22 +83,30 @@ public static partial class KqlTransformer
 		KqlResult? counted = null;
 		for (; composed < postOps.Count; composed++)
 		{
+			// `count` emits exactly ONE row: TERMINAL when it is the last op (one COUNT round trip, the same
+			// { Count: long } result as ever), and COMPOSABLE when anything follows it — `| count | project Count`
+			// runs the later stages over that row in the SAME SQL query (ComposeCount).
 			if (postOps[composed] is CountOperator)
 			{
-				counted = SqlCount(stage);
-				composed++;
-				break;
+				if (composed + 1 == postOps.Count)
+				{
+					counted = SqlCount(stage);
+					composed++;
+					break;
+				}
+				stage = ComposeCount(stage, now);
+				continue;
 			}
-			// A no-`by` summarize is TERMINAL like count: a bare aggregate that always yields ONE row
-			// (Kusto's empty-input one-default-row rule). Null → the operator is REFUSED, like any other.
+			// A no-`by` summarize is ONE row too, and likewise composes: SqlSummarizeNoBy returns a one-row
+			// SqlStage (the Kusto empty-input default row is built INTO the query) instead of terminating, so a
+			// following project/extend/where/order/take/summarize threads over that row like over any other
+			// stage. That is the whole fix: no later operator needs to be special-cased. Null → REFUSED.
 			if (postOps[composed] is SummarizeOperator { ByClause: null } noBy)
 			{
-				var r = SqlSummarizeNoBy(stage, noBy, now, options);
-				if (r is null)
+				if (SqlSummarizeNoBy(stage, noBy, now, options) is not { } oneRow)
 					break;
-				counted = r;
-				composed++;
-				break;
+				stage = oneRow;
+				continue;
 			}
 			var next = postOps[composed] switch
 			{
@@ -194,6 +202,25 @@ public static partial class KqlTransformer
 
 	// Fully-qualified linq2db LongCountAsync (binds the IQueryable overload, not the BCL IAsyncEnumerable one).
 	static Task<long> LongCountGeneric<TE>(IQueryable<TE> query, CancellationToken ct) => AsyncExtensions.LongCountAsync(query, ct);
+
+	// ---- count, COMPOSING form (ops follow it): the same one-row { Count: long } shape, emitted as a
+	// SqlStage so the remaining stages compose over that row in the same SQL query. GROUP BY(x => 1) with the
+	// constant key NOT projected collapses to a BARE SQL aggregate (`SELECT COUNT(*) FROM …`), which SQL
+	// defines as exactly one row even over an empty table — measured on SQLite and DuckDb, so there is no
+	// default row to synthesize here. The terminal case keeps the cheaper SqlCount round trip above. ----
+	static SqlStage ComposeCount(SqlStage stage, DateTime now)
+	{
+		var x = Expr.Parameter(stage.ElementType, "x");
+		var grouped = DynGroupBy(stage.Query, stage.ElementType, typeof(int), Expr.Lambda(Expr.Constant(1), x));
+		var groupingType = typeof(IGrouping<,>).MakeGenericType(typeof(int), stage.ElementType);
+		var g = Expr.Parameter(groupingType, "g");
+		var resultType = EmitRowType([("C0", typeof(long))]);
+		var selector = Expr.Lambda(
+			Expr.MemberInit(Expr.New(resultType),
+				Expr.Bind(resultType.GetProperty("C0")!, Expr.Convert(Expr.Call(EnumM("Count", 1, stage.ElementType), g), typeof(long)))),
+			g);
+		return MakeEmittedStage(DynSelect(grouped, groupingType, resultType, selector), resultType, [("Count", typeof(long))], now);
+	}
 
 	// ---- distinct: SELECT DISTINCT <resolved cols>. Resolves each target over the stage context (record
 	// or emitted), so `distinct A` works after a project too. Dedup happens in SQL; the in-memory buffer cap
@@ -1308,10 +1335,9 @@ public static partial class KqlTransformer
 
 	// ---- summarize (WITH `by`): GROUP BY the resolved keys, project keys + aggregates. The DB groups
 	// (no in-memory group table / dcount set exists any more), and the result composes further in SQL.
-	// no-`by` summarize (bounded to one row incl. the Kusto empty-input default-row rule) is TERMINAL over the
-	// stage — SqlSummarizeNoBy, not a composable step. Any aggregate that cannot be translated (or a deferred
-	// case: string min/max collation) makes this return null, and the summarize is REFUSED — it does not run
-	// anywhere else. ----
+	// no-`by` summarize (a bare aggregate — also a composable stage, see SqlSummarizeNoBy) is refused here.
+	// Any aggregate that cannot be translated (or a deferred case: string min/max collation) makes this return
+	// null, and the summarize is REFUSED — it does not run anywhere else. ----
 	static SqlStage? ComposeSummarize(SqlStage stage, SummarizeOperator op, DateTime now, KqlTranslationOptions options)
 	{
 		if (op.ByClause is null)
@@ -1385,11 +1411,22 @@ public static partial class KqlTransformer
 		return MakeEmittedStage(projected, resultType, outCols.Select(c => (c.Name, c.Logical)).ToList(), now);
 	}
 
-	// no-`by` summarize: a BARE aggregate. GroupBy(constant) yields one row over non-empty input and ZERO
-	// over empty; Kusto requires ONE default row over empty (count()→0, sum/avg/min/max→null, dcount/countif
-	// →0), so a 0-row result synthesizes the per-aggregate defaults. Terminal (returns a KqlResult, not a
-	// composable stage). An aggregate that cannot be translated → null, and the summarize is REFUSED.
-	static KqlResult? SqlSummarizeNoBy(SqlStage stage, SummarizeOperator op, DateTime now, KqlTranslationOptions options)
+	// no-`by` summarize: a BARE aggregate whose result is exactly ONE ROW — so it is a COMPOSABLE step, not a
+	// terminal, and every later operator (project/extend/where/order/take/another summarize) threads over that
+	// row like over any other stage. TWO measured linq2db facts make the one-row guarantee real on SQLite AND
+	// DuckDb:
+	//  - a constant GroupBy whose key is NOT projected collapses to a BARE SQL aggregate (`SELECT COUNT(*) …`),
+	//    which SQL defines as one row even over an EMPTY table — count/sum/avg/min/max/dcount already have it;
+	//  - a CUSTOM aggregate (make_list/make_set, the approximate dcount) instead renders as a CORRELATED
+	//    SUBQUERY over the whole table, which yields one IDENTICAL row per input row and ZERO rows over empty
+	//    input. Hence the guards below: Take(1) collapses the duplicate rows, the Kusto empty-input default row
+	//    (count→0, make_list/make_set→"[]", everything else→null) is UNIONed in behind an ordering column, and
+	//    Take(1) again keeps the real row when both exist — exactly one row, always.
+	// The default row has to be part of the QUERY, not appended to the materialized result: it must flow
+	// THROUGH the later stages (`… | summarize count() | project count_` over an empty table is one row of 0,
+	// and `| extend r = count_ * 2` is one row of 0 too). An aggregate that cannot be translated → null, and
+	// the summarize is REFUSED.
+	static SqlStage? SqlSummarizeNoBy(SqlStage stage, SummarizeOperator op, DateTime now, KqlTranslationOptions options)
 	{
 		var x = Expr.Parameter(stage.ElementType, "x");
 		var ctx = stage.MakeContext(x);
@@ -1405,68 +1442,129 @@ public static partial class KqlTransformer
 		if (pcts.Count > 0 || argCalls.Count > 0)
 			(stage, _, pctlSlots, argSlots, x, ctx) = ApplyWindowStage(stage, [], pcts, argCalls, x, ctx, now);
 
-		var aggs = new List<(string Name, Type Logical, Func<ParamExpr, Expr> Build, object? Default)>();
+		// `Fn` is carried alongside so the empty-input default can tell make_list/make_set (the empty JSON array)
+		// from every other ref-typed result (null).
+		var aggs = new List<(string Name, Type Logical, Func<ParamExpr, Expr> Build, string? Fn)>();
 		foreach (var element in op.Aggregates)
 		{
-			var emitted = new List<(string Name, Type Logical, Func<ParamExpr, Expr> Build)>();
 			if (ArgCallNode(element.Element) is { } argCall)
-				emitted.AddRange(ArgAggs(argCall, x, argSlots));
+				aggs.AddRange(ArgAggs(argCall, x, argSlots).Select(a => (a.Name, a.Logical, a.Build, (string?)argCall.Name.SimpleName)));
 			else if (!TrySummarizeAgg(element.Element, ctx, x, rowParam, stage, now, options, pctlSlots, out var agg))
 				return null;
 			else
-				emitted.Add(agg);
-
-			foreach (var col in emitted)
-			{
-				// Empty-group default: a non-nullable value-type result (count/countif/dcount → long) defaults to
-				// its zero (0); a nullable/ref result (sum/avg/min/max/arg_*) defaults to null. Matches the pre-SQL
-				// summarize's fresh-accumulator fold. make_list/make_set (and their _if forms) are the exception:
-				// their ref-type (string) result is a JSON array, and Kusto yields an EMPTY array over empty input —
-				// the literal "[]", not null.
-				var def = KqlScalar.IsNullable(col.Logical) || !col.Logical.IsValueType
-					? null
-					: Activator.CreateInstance(col.Logical);
-				if (AggFnName(element.Element) is "make_list" or "make_set" or "make_list_if" or "make_set_if")
-					def = "[]";
-				aggs.Add((col.Name, col.Logical, col.Build, def));
-			}
+				aggs.Add((agg.Name, agg.Logical, agg.Build, AggFnName(element.Element)));
 		}
 
 		// GroupBy(x => 1) → a single constant group. Select the aggregates over it.
+		// linq2db DEDUPLICATES identical select expressions (the same fact ApplyWindowStage's AddOrReuse handles),
+		// so two aggregates compiling to ONE tree — `dcount(x)` vs `count_distinct(x)` — collapse to a single
+		// emitted column. Mirror that here, or the positional column list below would name a column the SQL does
+		// not emit: one emitted ordinal per DISTINCT expression, reused by every element that compiled to it.
 		var grouped = DynGroupBy(stage.Query, stage.ElementType, typeof(int), Expr.Lambda(Expr.Constant(1), x));
 		var groupingType = typeof(IGrouping<,>).MakeGenericType(typeof(int), stage.ElementType);
 		var g = Expr.Parameter(groupingType, "g");
-		var binds = aggs.Select(a => a.Build(g)).ToList();
-		var resultType = EmitRowType(binds.Select((e, i) => ($"C{i}", e.Type)).ToList());
+		var exprs = aggs.Select(a => a.Build(g)).ToList();
+		var distinct = new List<(Expr Storage, string? Fn)>();
+		var ords = new int[exprs.Count];
+		var seen = new Dictionary<string, int>(StringComparer.Ordinal);
+		for (var i = 0; i < exprs.Count; i++)
+		{
+			var key = exprs[i].ToString();
+			if (!seen.TryGetValue(key, out var ord))
+			{
+				ord = distinct.Count;
+				distinct.Add((exprs[i], aggs[i].Fn));
+				seen[key] = ord;
+			}
+			ords[i] = ord;
+		}
+		var aggType = EmitRowType(distinct.Select((d, i) => ($"C{i}", d.Storage.Type)).ToList());
 		var resultSel = Expr.Lambda(
-			Expr.MemberInit(Expr.New(resultType),
-				binds.Select((e, i) => (MemberBinding)Expr.Bind(resultType.GetProperty($"C{i}")!, e)).ToArray()),
+			Expr.MemberInit(Expr.New(aggType),
+				distinct.Select((d, i) => (MemberBinding)Expr.Bind(aggType.GetProperty($"C{i}")!, d.Storage)).ToArray()),
 			g);
-		var projected = DynSelect(grouped, groupingType, resultType, resultSel);
-		// Cap to a single row. A standard SQL aggregate over the constant group already yields ≤1 row, so
-		// this is a no-op for count/sum/min/max/avg/dcount(exact). But a CUSTOM aggregate (make_list/make_set,
-		// dcount approx) renders as a CORRELATED SUBQUERY whose outer, over a constant group key, linq2db does
-		// NOT collapse — it emits `SELECT (…agg…) FROM <all rows>`, one identical whole-table-aggregate row per
-		// input row. Take(1) collapses that to the ONE Kusto result row; empty input still yields 0 rows, so the
-		// NoByRows default synthesis (count→0, make_list/make_set→"[]", others→null) is untouched.
-		projected = DynTake(projected, resultType, 1);
+		var projected = DynTake(DynSelect(grouped, groupingType, aggType, resultSel), aggType, 1);
 
-		var inner = MakeEmittedStage(projected, resultType, aggs.Select(a => (a.Name, a.Logical)).ToList(), now);
-		return new KqlResult(inner.Columns, NoByRows(Materialize(inner), aggs.Select(a => a.Default).ToArray()));
+		// EXACTLY ONE ROW, by construction: Take(1) above collapses the correlated-subquery form's duplicate
+		// rows; then the Kusto empty-input default row is UNIONed in behind it, ordered so the REAL row wins when
+		// both exist, and capped to one. The aggregate row is re-rooted as a raw SQL subquery FIRST (the same
+		// proven ToSqlQuery→FromSql seam mv-expand/the window stage use) because joining the union straight onto
+		// the aggregate's own projection makes linq2db's set-operation builder throw while MERGING that
+		// projection (SetOperationBuilder → MergeProjectionHelper, a custom aggregate's reader-null wrapper) —
+		// a linq2db limitation, not a SQL one: with the aggregate behind a subquery both branches are plain.
+		var qsql = ToSqlQueryReflective(projected);
+		var aggSql = qsql.Sql;
+		var pars = qsql.Parameters;
+		foreach (var i in Enumerable.Range(0, pars.Count).OrderByDescending(i => ParamToken(pars[i]).Length))
+			aggSql = aggSql.Replace(ParamToken(pars[i]), "{" + i + "}");
+		var dc = ((LinqToDB.Internal.Linq.IExpressionQuery)projected).DataContext;
+		// The CTE column list gives the subquery FIXED output names (C0..Cn): a bare single-column aggregate
+		// renders without an alias (`SELECT COUNT(DISTINCT …)`), which would leave FromSql nothing to map.
+		var cteCols = string.Join(", ", Enumerable.Range(0, distinct.Count).Select(i => "C" + i));
+		var reRooted = FromSqlReflective(aggType, dc,
+			$"( WITH sub({cteCols}) AS ( {aggSql} ) SELECT {cteCols} FROM sub )", pars);
+
+		// Rank the real row ahead of the default row, then keep the first.
+		var resultType = EmitRowType(
+			distinct.Select((d, i) => ($"C{i}", d.Storage.Type)).Append((OrdProp, typeof(long))).ToList());
+		var r = Expr.Parameter(aggType, "r");
+		var rank = DynSelect(reRooted, aggType, resultType, Expr.Lambda(
+			Expr.MemberInit(Expr.New(resultType),
+				distinct.Select((d, i) => (MemberBinding)Expr.Bind(resultType.GetProperty($"C{i}")!, Expr.Property(r, $"C{i}")))
+					.Append(Expr.Bind(resultType.GetProperty(OrdProp)!, Expr.Constant(0L))).ToArray()),
+			r));
+		var o = Expr.Parameter(resultType, "o");
+		var oneRow = DynTake(
+			DynOrderBy(
+				DynConcat(rank, resultType, DefaultRow(resultType, distinct)),
+				resultType, Expr.Lambda(Expr.Property(o, OrdProp), o), typeof(long), descending: false, isThen: false),
+			resultType, 1);
+
+		// Finally hand back ONE column per summarize element (a shared emitted column is read twice) so the stage's
+		// logical schema maps positionally, and drop the ordering column.
+		var outType = EmitRowType(aggs.Select((a, i) => ($"C{i}", distinct[ords[i]].Storage.Type)).ToList());
+		var f = Expr.Parameter(resultType, "f");
+		var final = DynSelect(oneRow, resultType, outType, Expr.Lambda(
+			Expr.MemberInit(Expr.New(outType),
+				aggs.Select((a, i) => (MemberBinding)Expr.Bind(outType.GetProperty($"C{i}")!, ColumnValue(f, i, ords, aggs))).ToArray()),
+			f));
+
+		return MakeEmittedStage(final, outType, aggs.Select(a => (a.Name, a.Logical)).ToList(), now);
 	}
 
-	// Yields the bare-aggregate row, or the synthesized default row when the group was empty (0 rows).
-	static async IAsyncEnumerable<object?[]> NoByRows(KqlResult inner, object?[] defaultRow,
-		[EnumeratorCancellation] CancellationToken ct = default)
+	// One summarize element's value off the one-row stage. make_list/make_set (and their _if forms) are pinned to
+	// Kusto's EMPTY JSON array, never null: the aggregate builder wraps them in COALESCE, but that COALESCE does
+	// not survive into the emitted SQL (measured — the SQLite statement carries none), and DuckDb's list aggregate
+	// over zero rows is NULL, so the pin is repeated where the column is READ — the last word either backend gets.
+	static Expr ColumnValue(ParamExpr row, int i, IReadOnlyList<int> ords, IReadOnlyList<(string Name, Type Logical, Func<ParamExpr, Expr> Build, string? Fn)> aggs)
 	{
-		var any = false;
-		await foreach (var row in inner.Rows.WithCancellation(ct).ConfigureAwait(false))
+		Expr value = Expr.Property(row, $"C{ords[i]}");
+		return aggs[i].Fn is "make_list" or "make_set" or "make_list_if" or "make_set_if"
+			? Expr.Coalesce(value, Expr.Constant("[]"))
+			: value;
+	}
+
+	// The name of the hidden discriminator column: 0 on the aggregate row, 1 on the empty-input default row.
+	// NEVER part of the logical schema (MakeEmittedStage maps C0..Cn only).
+	const string OrdProp = "Ord";
+
+	// The Kusto empty-input default row, in the STORAGE domain of the emitted type: a non-nullable value-type
+	// result (count/countif/dcount/count_distinct → long) defaults to its zero; a nullable/ref result
+	// (sum/avg/min/max/arg_*) to null; make_list/make_set (and their _if forms) are the exception — their
+	// ref-typed (string) result is a JSON array and Kusto yields the EMPTY array, the literal "[]".
+	static object DefaultRow(Type rowType, IReadOnlyList<(Expr Storage, string? Fn)> distinct)
+	{
+		var row = Activator.CreateInstance(rowType)!;
+		for (var i = 0; i < distinct.Count; i++)
 		{
-			any = true;
-			yield return row;
+			var storage = distinct[i].Storage.Type;
+			object? def = distinct[i].Fn is "make_list" or "make_set" or "make_list_if" or "make_set_if"
+				? "[]"
+				: storage.IsValueType && !KqlScalar.IsNullable(storage) ? Activator.CreateInstance(storage) : null;
+			rowType.GetProperty($"C{i}")!.SetValue(row, def);
 		}
-		if (!any)
-			yield return defaultRow;
+		rowType.GetProperty(OrdProp)!.SetValue(row, 1L);
+		return row;
 	}
 
 	static bool TrySummarizeKey(SyntaxNode element, SqlStage stage, ScalarContext ctx, ParamExpr x, ParamExpr rowParam, DateTime now, out SqlCol key)
@@ -1550,6 +1648,17 @@ public static partial class KqlTransformer
 			_ => throw new UnsupportedKqlException($"summarize aggregate '{element.Kind}' not supported"),
 		};
 		var fn = call.Name.SimpleName;
+
+		// A SCALAR OVER AN AGGREGATE (`round(avg(Level), 1)`, `tostring(count())`, `round(percentile(x, 99), 0)`):
+		// the aggregate is NOT the root of the element, so the switch below would report the WRAPPING function as
+		// an unknown aggregate ("aggregate 'round' not supported (supported: …)" — a confusing message, because
+		// round IS a supported scalar). Resolve it the other way round: compile the aggregate(s) inside the tree
+		// to their group-level SQL expressions and the wrapping scalar OVER them — which is exactly the SQL the
+		// query needs (`ROUND(AVG(Level), 1)`), with no per-function aggregate twin. An element that names no
+		// aggregate at all falls through to the switch and keeps its supported-list error.
+		if (!IsSupportedAggregate(fn) && ContainsAggregate(call))
+			return TryScalarOverAggregate(call, name, ctx, x, rowParam, stage, now, options, pctlSlots, out agg);
+
 		var args = call.ArgumentList.Expressions;
 		var source = x.Type;
 
@@ -1886,6 +1995,98 @@ public static partial class KqlTransformer
 		}
 	}
 
+	// Is this function name one of the aggregates the switch above implements? The set itself has ONE home —
+	// SupportedAggregates (whose default arm quotes it, and which KqlScalar.CanCompileAggregate reads).
+	static bool IsSupportedAggregate(string fn) => SupportedAggregates.Contains(fn, StringComparer.Ordinal);
+
+	// Every function call in a summarize ELEMENT: the element's own root call (through an `alias = …`) plus every
+	// call nested inside its scalar tree. A nested call is a first-class aggregate for the window pre-stagers —
+	// `round(percentile(x, 99), 0)` must be staged exactly like a root `percentile(x, 99)`, or the percentile
+	// would look unstaged and take the DuckDb-native arm on SQLite.
+	static IEnumerable<FunctionCallExpression> FunctionCalls(SyntaxNode element)
+	{
+		var root = AggCallNode(element);
+		if (root is not null)
+			yield return root;
+		foreach (var call in element.GetDescendants<FunctionCallExpression>())
+			if (!ReferenceEquals(call, root))
+				yield return call;
+	}
+
+	// Whether a summarize ELEMENT carries an aggregate anywhere inside its scalar tree (`round(avg(x), 1)`).
+	static bool ContainsAggregate(SyntaxNode element) =>
+		FunctionCalls(element).Any(c => IsSupportedAggregate(c.Name.SimpleName));
+
+	// A SCALAR OVER AN AGGREGATE, compiled to one group-level expression builder. The recursion walks ONLY the
+	// spine from the scalar root down to each aggregate: at an aggregate call it substitutes that aggregate's own
+	// SQL expression, at a scalar function call it applies the SAME KqlScalarFunctions delegate the ordinary scalar
+	// compiler uses, and an aggregate-FREE subtree goes straight through KqlScalar.Compile — so no scalar semantics
+	// are duplicated here and `round(avg(Level), 1)` needs no `roundavg` twin.
+	//
+	// The LOGICAL (output-column) type is derived by the same recursion run in the semantic row domain: each
+	// aggregate stands in as a NON-NULLABLE parameter of its logical type and the delegates are the context-aware
+	// ones, which is the same authority LogicalTypeOf uses for any computed column. (Nullability at VALUE time —
+	// an empty group — is carried by the SQL expression, not by this type; and a scalar that demands a
+	// non-nullable STORAGE operand, e.g. startofday over an aggregate, is still refused by the storage scalar
+	// compiler exactly as it is for any other nullable computed column — pre-existing, unchanged here.)
+	static bool TryScalarOverAggregate(FunctionCallExpression call, string name, ScalarContext ctx, ParamExpr x,
+		ParamExpr rowParam, SqlStage stage, DateTime now, KqlTranslationOptions options,
+		IReadOnlyDictionary<string, PercentileSlot>? pctlSlots,
+		out (string Name, Type Logical, Func<ParamExpr, Expr> Build) agg)
+	{
+		agg = default;
+		var logicalCtx = new RowScalarContext(rowParam, stage.Columns) { UtcNow = now };
+
+		// null = an aggregate inside is not SQL-translatable → the summarize is REFUSED (same contract as the
+		// ordinary aggregate path).
+		Func<ParamExpr, Expr>? BuildNode(Expression node, bool logical)
+		{
+			if (node is FunctionCallExpression c && IsSupportedAggregate(c.Name.SimpleName))
+			{
+				if (c.Name.SimpleName is "arg_max" or "arg_min")
+					throw new UnsupportedKqlException(
+						$"{c.Name.SimpleName}() cannot be wrapped in a scalar expression: it returns one column per argument");
+				if (!TrySummarizeAgg(c, ctx, x, rowParam, stage, now, options, pctlSlots, out var inner))
+					return null;
+				// The stand-in is NON-NULLABLE: it types the scalar over the aggregate's COLUMN type. Whether the
+				// aggregate is null at value time (an empty group) is carried by the SQL expression itself, and a
+				// context-aware scalar (startofday/todatetime/…) expects the non-nullable logical shape here.
+				return logical ? _ => Expr.Parameter(KqlScalar.NonNullable(inner.Logical), "agg") : inner.Build;
+			}
+			if (node is ParenthesizedExpression paren)
+				return BuildNode(paren.Expression, logical);
+			if (!ContainsAggregate(node))
+			{
+				var e = KqlScalar.Compile(node, logical ? logicalCtx : ctx);
+				return _ => e;
+			}
+			if (node is not FunctionCallExpression scalar)
+				throw new UnsupportedKqlException(
+					$"aggregate inside '{node.Kind}' is not supported; an aggregate in a summarize element may only be the "
+					+ "element itself or an argument of a scalar function (e.g. round(avg(Level), 1))");
+			if (!KqlScalarFunctions.TryResolve(scalar.Name.SimpleName, out var fn))
+				throw new UnsupportedKqlException($"function '{scalar.Name.SimpleName}' not supported");
+			var builders = new List<Func<ParamExpr, Expr>>();
+			foreach (var a in scalar.ArgumentList.Expressions)
+			{
+				if (BuildNode(a.Element, logical) is not { } b)
+					return null;
+				builders.Add(b);
+			}
+			var sctx = logical ? logicalCtx : ctx;
+			return g => fn(builders.Select(b => b(g)).ToList(), sctx);
+		}
+
+		var build = BuildNode(call, logical: false);
+		var logicalBuild = BuildNode(call, logical: true);
+		if (build is null || logicalBuild is null)
+			return false;
+		// The grouping parameter is irrelevant in the logical pass; a fresh one just types the tree.
+		var probe = Expr.Parameter(typeof(IGrouping<,>).MakeGenericType(typeof(int), x.Type), "g");
+		agg = (name, logicalBuild(probe).Type, build);
+		return true;
+	}
+
 	// One SQLite percentile window slot: the pre-stage row properties carrying the percentile ARG value and
 	// its per-partition ROW_NUMBER (nulls-last, value-ascending) and non-null COUNT — shared by every
 	// percentile over the same argument expression.
@@ -2052,29 +2253,31 @@ public static partial class KqlTransformer
 
 	// Collects the DISTINCT percentile() argument expressions of a summarize (keyed by source text), each
 	// compiled to its storage form over the CURRENT stage — the inputs ApplyWindowStage turns into windowed
-	// arg/rn/cnt columns. Validates arity/P here too, so a bad percentile errors eagerly even before the
-	// pre-stage is built. Empty when the summarize has no percentile aggregate.
+	// arg/rn/cnt columns. Every call in the element is considered, INCLUDING one nested inside a scalar over an
+	// aggregate (`round(percentile(x, 99), 0)`): an unstaged percentile would take the DuckDb-native arm on
+	// SQLite. Validates arity/P here too, so a bad percentile errors eagerly even before the pre-stage is built.
+	// Empty when the summarize has no percentile aggregate.
 	static List<(string Key, Expr Storage)> CollectPercentileArgs(
 		SummarizeOperator op, ScalarContext ctx, ParamExpr rowParam, SqlStage stage, DateTime now)
 	{
 		var result = new List<(string Key, Expr Storage)>();
 		var seen = new HashSet<string>(StringComparer.Ordinal);
 		foreach (var element in op.Aggregates)
-		{
-			var call = AggCallNode(element.Element);
-			if (call is null || call.Name.SimpleName != "percentile")
-				continue;
-			var args = call.ArgumentList.Expressions;
-			if (args.Count != 2)
-				throw new UnsupportedKqlException($"percentile() takes exactly 2 arguments (expr, percentile), got {args.Count}");
-			PercentileLiteral(args[1].Element);
-			var key = PercentileArgKey(args[0].Element);
-			if (!seen.Add(key))
-				continue;
-			if (!TryCompileStorage(args[0].Element, ctx, out var storage))
-				continue; // unreachable (TryCompileStorage throws or succeeds); keeps the call-shape uniform
-			result.Add((key, storage));
-		}
+			foreach (var call in FunctionCalls(element.Element))
+			{
+				if (call.Name.SimpleName != "percentile")
+					continue;
+				var args = call.ArgumentList.Expressions;
+				if (args.Count != 2)
+					throw new UnsupportedKqlException($"percentile() takes exactly 2 arguments (expr, percentile), got {args.Count}");
+				PercentileLiteral(args[1].Element);
+				var key = PercentileArgKey(args[0].Element);
+				if (!seen.Add(key))
+					continue;
+				if (!TryCompileStorage(args[0].Element, ctx, out var storage))
+					continue; // unreachable (TryCompileStorage throws or succeeds); keeps the call-shape uniform
+				result.Add((key, storage));
+			}
 		return result;
 	}
 
@@ -2320,6 +2523,21 @@ public static partial class KqlTransformer
 			.Single(m => m.Name == "Take" && m.GetParameters().Length == 2 && m.GetParameters()[1].ParameterType == typeof(int))
 			.MakeGenericMethod(elementType);
 		return source.Provider.CreateQuery(Expr.Call(method, source.Expression, Expr.Constant(count)));
+	}
+
+	// UNION ALL with a constant row (linq2db renders it as a literal SELECT branch). The value is placed into an
+	// ARRAY of the stage's element type — the type the Concat overload is closed over.
+	static IQueryable DynConcat(IQueryable source, Type elementType, object? value)
+	{
+		var method = typeof(Queryable).GetMethods()
+			.Single(m => m.Name == "Concat" && m.GetParameters().Length == 2
+				&& m.GetParameters()[1].ParameterType.IsGenericType
+				&& m.GetParameters()[1].ParameterType.GetGenericTypeDefinition() == typeof(IEnumerable<>))
+			.MakeGenericMethod(elementType);
+		var typed = Array.CreateInstance(elementType, 1);
+		typed.SetValue(value, 0);
+		var constants = Expr.Constant(typed, typeof(IEnumerable<>).MakeGenericType(elementType));
+		return source.Provider.CreateQuery(Expr.Call(method, source.Expression, constants));
 	}
 
 	// OrderBy/ThenBy(+Descending). For a STRING key, uses the 3-arg IComparer overload with
