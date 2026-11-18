@@ -105,6 +105,44 @@ public sealed class KqlStringOpsTests
 		Ids("events | where Message !contains \"crash\"").Should().BeEquivalentTo([1L, 3L, 4L]);
 	}
 
+	// A null operand is excluded from BOTH the positive and the negated spelling (Kusto null rule). The
+	// has family does NOT get that for free: it lowers to MatchesRegex, which PINS a null subject to FALSE
+	// in SQL (IFNULL/COALESCE), so a bare NOT(...) would flip it to TRUE and KEEP the null row — which is
+	// why Negated() AND-s in an explicit IS NOT NULL. Row 2 carries no `env` property, so json_extract
+	// yields NULL for it and it must appear in NEITHER list.
+	[Fact]
+	public void NegatedStringOperators_ExcludeNullOperands()
+	{
+		LogEntryRecord[] rows =
+		[
+			new() { Id = 1, Message = "dev row", PropertiesJson = """{"env":"dev"}""" },
+			new() { Id = 2, Message = "no env property", PropertiesJson = """{"other":"x"}""" },
+			new() { Id = 3, Message = "prod row", PropertiesJson = """{"env":"prod"}""" },
+		];
+
+		(string Predicate, long[] Expected)[] cases =
+		[
+			("has 'prod'", [3]),
+			("!has 'prod'", [1]),
+			("!has 'dev'", [3]),
+			("!has_cs 'prod'", [1]),
+			("!contains 'prod'", [1]),
+			("!contains_cs 'prod'", [1]),
+			("!startswith 'prod'", [1]),
+			("!endswith 'prod'", [1]),
+			("!has ''", [1, 3]),
+		];
+
+		foreach (var backend in KqlBackendConfig.Active)
+			foreach (var (predicate, expected) in cases)
+			{
+				var kql = $"events | where Properties[\"env\"] {predicate}";
+				KqlTestHost.Apply(rows, Parse(kql), backend).Select(r => r.Id).ToList()
+					.Should().BeEquivalentTo(expected,
+						$"'Properties[\"env\"] {predicate}' on {backend} must return exactly {string.Join(",", expected)} — the null-env row is excluded from both spellings");
+			}
+	}
+
 	// `!in` / `!between` parse to their own kinds and were wired by reading Kind inside In()/Between();
 	// `not(...)` is a function. Before this fix NEITHER route could negate a string predicate other than
 	// through not(), so pin that a negated spelling resolves WITHOUT falling into the generic

@@ -690,8 +690,8 @@ static class KqlScalar
 			throw new UnsupportedKqlException($"'{opName}' requires a string operand on the left, got {access.Type.Name}");
 		if (b.Right is not LiteralExpression { LiteralValue: string term })
 			throw new UnsupportedKqlException($"'{opName}' requires a string literal on the right");
-		// An empty term matches nothing (Kusto semantics); its negation therefore matches everything —
-		// still excluding a null operand, which is why this goes through Negated rather than Expr.Constant.
+		// An empty `has` term matches NOTHING in Kusto (it is not an empty-substring match), so its
+		// negation matches every NON-NULL value — Negated() adds the null exclusion.
 		if (term.Length == 0)
 			return negate ? Negated(Expr.Constant(false), access) : Expr.Constant(false);
 		var pattern = (caseInsensitive ? "(?i)" : "")
@@ -767,9 +767,15 @@ static class KqlScalar
 
 	// `!<op>` is NOT plain `not(<op>)`: Kusto excludes a null operand from BOTH the positive and the
 	// negated spelling (a null matches nothing, and its negation matches nothing either) — exactly the
-	// `!in` / `!between` rule implemented in In()/Between(). NullGuard is a no-op on a non-nullable
-	// operand and short-circuits in memory, so the underlying call never sees a null string.
-	static Expr Negated(Expr positive, Expr operand) => NullGuard(Expr.Not(positive), operand);
+	// `!in` / `!between` rule implemented in In()/Between(). It CANNOT be left to the shim under the NOT:
+	// the `has` family lowers to MatchesRegex, whose SQL deliberately PINS a null subject to FALSE
+	// (IFNULL/COALESCE), so NOT(that FALSE) would flip to TRUE and wrongly KEEP the null row. Hence the
+	// explicit non-null operand check AND-ed in front, on top of NullGuard for nullable value operands.
+	static Expr Negated(Expr positive, Expr operand) => Expr.AndAlso(
+		operand.Type == typeof(string)
+			? Expr.Call(typeof(KqlSqlExpressions).GetMethod(nameof(KqlSqlExpressions.IsNotNull))!, operand)
+			: Expr.Constant(true),
+		NullGuard(Expr.Not(positive), operand));
 
 	static Expr Comparison(BinaryExpression b, ScalarContext ctx)
 	{
