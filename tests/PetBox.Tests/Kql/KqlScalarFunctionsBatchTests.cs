@@ -208,6 +208,36 @@ public sealed class KqlScalarFunctionsBatchTests
 	}
 
 	[Fact]
+	public async Task IsNaN_SeesARealNaN_OnTheDialectThatCanHoldOne()
+	{
+		// NaN is the one value the two dialects represent DIFFERENTLY, so this case is asserted per backend
+		// instead of cross-checked:
+		//   * SQLite cannot store NaN at all (measured: CAST('nan' AS DOUBLE) is 0.0), so todouble('nan')
+		//     arrives as NULL and isnan() is truthfully false for it — there is no NaN to see;
+		//   * DuckDB DOES hold a real NaN, and `NaN <> NaN` is FALSE there (its total order deliberately
+		//     breaks IEEE-754: 'NaN' = 'NaN' is true), which is why DuckDB has its own NATIVE isnan() arm
+		//     rather than the SQLite `x <> x` trick. Before that arm existed this returned false for a value
+		//     that IS NaN, and no test could tell.
+		const string projection = "NaN = isnan(todouble('nan')), Null = isnull(todouble('nan')), "
+			+ "NotNaN = isnan(1.5), NoValue = isnan(tolong('x')), Raw = todouble('nan')";
+
+		var sqlite = await Cells(projection, KqlBackend.Sqlite);
+		sqlite[0].Should().Be(false, "SQLite cannot hold a NaN — the value is null, not NaN");
+		sqlite[1].Should().Be(true, "todouble('nan') is a malformed value on SQLite and yields null");
+		sqlite[2].Should().Be(false);
+		sqlite[3].Should().Be(false);
+		sqlite[4].Should().BeNull();
+
+		var duck = await Cells(projection, KqlBackend.DuckDb);
+		duck[0].Should().Be(true, "DuckDB holds a real NaN and its native isnan() must see it");
+		duck[1].Should().Be(false);
+		duck[2].Should().Be(false);
+		duck[3].Should().Be(false, "a null operand stays a total predicate");
+		duck[4].Should().BeOfType<double>().Which.Should().Be(double.NaN,
+			"the projected value IS a real NaN — the case above is not vacuous");
+	}
+
+	[Fact]
 	public async Task Math_NullableOperands_PropagateNull()
 	{
 		// Every math scalar is TOTAL: a null operand (a malformed/missing bag value through toint/todouble)
