@@ -690,7 +690,7 @@ static class KqlScalar
 	{
 		long l => Expr.Constant(l),
 		int i => Expr.Constant((long)i),
-		double d => Expr.Constant(d),
+		double d => FiniteReal(d),
 		decimal m => Expr.Constant((double)m),
 		bool b => Expr.Constant(b),
 		string s => Expr.Constant(s, typeof(string)),
@@ -777,7 +777,8 @@ static class KqlScalar
 	// both dialects. The term is a required string literal, so the whole pattern is built at COMPILE time.
 	// TermStart/TermEnd reproduce KQL's term-char rule (letters/digits are term chars, everything else —
 	// INCLUDING underscore — is a delimiter, which is why a plain `\b` would be wrong); `(?i)` gives `has`
-	// its case-insensitivity, `has_cs` omits it. An empty term matches nothing (Kusto semantics).
+	// its case-insensitivity, `has_cs` omits it. A needle that is not a whole TERM matches nothing (Kusto
+	// semantics) — see the constant arm below, shared with HasAffix/HasList.
 	static Expr HasFn(BinaryExpression b, ScalarContext ctx, string opName, bool caseInsensitive, bool negate = false)
 	{
 		var access = Compile(b.Left, ctx);
@@ -785,9 +786,13 @@ static class KqlScalar
 			throw new UnsupportedKqlException($"'{opName}' requires a string operand on the left, got {access.Type.Name}");
 		if (b.Right is not LiteralExpression { LiteralValue: string term })
 			throw new UnsupportedKqlException($"'{opName}' requires a string literal on the right");
-		// An empty `has` term matches NOTHING in Kusto (it is not an empty-substring match), so its
-		// negation matches every NON-NULL value — Negated() adds the null exclusion.
-		if (term.Length == 0)
+		// RHS of `has` is a WHOLE TERM in LHS, and a TERM is a maximal run of letters/digits (see TermStart),
+		// so a needle carrying ANY other character — `a b`, `rate_l`, `x-y` — can never be one: the answer is a
+		// CONSTANT, not a match (the empty needle is the same arm). Leaving it to the regex is a FALSE POSITIVE
+		// wherever the needle's own delimiters happen to line up with the value's boundaries — measured before
+		// this rule: `"x a b y" has 'a b'` and `"rate_l rate_limit" has 'rate_l'` were both TRUE, where Kusto
+		// says false. The negation still needs Negated() so a NULL value stays excluded.
+		if (term.Length == 0 || !IsTermRun(term))
 			return negate ? Negated(Expr.Constant(false), access) : Expr.Constant(false);
 		var pattern = (caseInsensitive ? "(?i)" : "") + TermStart + Re2Escape(term) + TermEnd;
 		var call = Expr.Call(SqlMethod(nameof(KqlSqlExpressions.MatchesRegex)), access, Expr.Constant(pattern));
@@ -828,6 +833,8 @@ static class KqlScalar
 	}
 
 	// Is the whole needle a run of TERM chars (letters/digits, the `\p{L}\p{N}` the boundary fragments use)?
+	// THE one predicate behind the "a needle that is not a term matches nothing" arm of every term operator
+	// (`has`, `hasprefix`/`hassuffix`, `has_any`/`has_all`) — do not grow a second one.
 	static bool IsTermRun(string term)
 	{
 		foreach (var c in term)
@@ -840,8 +847,7 @@ static class KqlScalar
 	// works on any/all of the elements" — so each term reuses the SAME term-boundary regex (and therefore
 	// the same element-escaped literal match). Both spellings are case-INsensitive (there is no `_cs` twin)
 	// and neither has a negated form; a null subject is pinned to FALSE by MatchesRegex, which is already
-	// the Kusto answer for an un-negated predicate, so no Negated() wrapper applies. An empty ELEMENT
-	// matches nothing (the `has` rule): dropped from `has_any`, fatal to `has_all`. An empty LIST is the
+	// the Kusto answer for an un-negated predicate, so no Negated() wrapper applies. An empty LIST is the
 	// OR/AND identity — false for has_any, vacuously TRUE for has_all.
 	static Expr HasList(Expression left, ExpressionList right, ScalarContext ctx, string opName, bool all)
 	{
@@ -853,7 +859,13 @@ static class KqlScalar
 		{
 			if (element.Element is not LiteralExpression { LiteralValue: string term })
 				throw new UnsupportedKqlException($"'{opName}' requires a list of string literals");
-			if (term.Length == 0)
+			// An element that is empty OR carries a non-term character can never be a whole TERM (the same
+			// constant-false element `has` gives), and the per-element rule is PINNED here:
+			//   * `has_all` — every element must match, so one impossible element makes the WHOLE predicate
+			//     false (the row is excluded): return at once.
+			//   * `has_any` — that element matches nothing, so it is DROPPED and the remaining elements still
+			//     can match; an all-impossible list falls through to the `false` identity below.
+			if (term.Length == 0 || !IsTermRun(term))
 			{
 				if (all)
 					return Expr.Constant(false);
@@ -912,7 +924,7 @@ static class KqlScalar
 		var t = CommonValueType([l.Type, r.Type]);
 		l = RealGuard(ConvertToValue(l, t));
 		r = RealGuard(ConvertToValue(r, t));
-		return b.Kind switch
+		var node = b.Kind switch
 		{
 			SyntaxKind.AddExpression => Expr.Add(l, r),
 			SyntaxKind.SubtractExpression => Expr.Subtract(l, r),
@@ -921,7 +933,92 @@ static class KqlScalar
 			SyntaxKind.ModuloExpression => Expr.Modulo(l, r),
 			_ => throw new UnsupportedKqlException($"arithmetic '{b.Kind}' not supported"),
 		};
+		RefuseNonFiniteConstant(node);
+		return node;
 	}
+
+	// --- non-finite reals: NO SQL literal can express one. ---
+	// linq2db folds an all-constant expression ITSELF at SQL-generation time and prints a double with
+	// double.ToString(), so a NaN/±Infinity reaches the statement as a BARE IDENTIFIER. Measured on
+	// work/kql-nan-infinity-constants: `todouble(Message) == 0.0/0.0` rendered `... = NaN` and
+	// `todouble(Message) > 1.0/0.0` rendered `... > Infinity`, so SQLite answered `SQLite Error 1: 'no such
+	// column: NaN'` — a raw binder message where a KQL-level answer belongs; a `1e400` LITERAL (which
+	// Kusto.Language parses straight to +Infinity) did the same through Literal().
+	//
+	// The fix is a COMPILE-TIME refusal, uniform across dialects on purpose. The other honest shape —
+	// constant-folding the COMPARISON (`x == NaN` is false, `x != NaN` is true) — cannot be done without
+	// picking one dialect's answer: SQLite holds no NaN at all, while DuckDB holds a real one and its TOTAL
+	// ORDER makes `NaN = NaN` TRUE (KqlSqlExpressions.IsNaNFn needed a per-dialect arm for exactly this).
+	// The scalar compiler has no dialect to branch on — it emits ONE tree for both stores and per-dialect
+	// differences live in the [Sql.Expression(ProviderName.X)] arms of KqlSqlExpressions — so a fold here
+	// would silently contradict one of them. A refusal is true on both. The spelled-out alternative is the
+	// one the engine already supports: isnan()/isinf() over a value.
+	static UnsupportedKqlException NonFiniteReal(string what, double value) =>
+		new($"{what}: {RealName(value)} has no SQL literal — use isnan()/isinf() to test a VALUE instead");
+
+	static string RealName(double value) => double.IsNaN(value) ? "NaN" : value > 0 ? "+Infinity" : "-Infinity";
+
+	// A double LITERAL constant (`1e400` is +Infinity before any arithmetic runs).
+	static Expr FiniteReal(double value) => double.IsFinite(value)
+		? Expr.Constant(value)
+		: throw NonFiniteReal("this real literal overflows", value);
+
+	// Refuse an arithmetic node that CONSTANT-FOLDS to NaN/±Infinity — the value linq2db is about to print as
+	// an identifier (see above). Only the REAL domain can land there, so an integer tree is left alone
+	// (KQL's `/` on two integers IS integer division). Runs on the WRAPPED node because RealGuard's identity
+	// casts are part of what linq2db evaluates through — ConstantDouble is the walker that sees through them.
+	static void RefuseNonFiniteConstant(Expr node)
+	{
+		if (NonNullable(node.Type) == typeof(double) && ConstantDouble(node) is { } value && !double.IsFinite(value))
+			throw NonFiniteReal($"'{ArithmeticOpName(node.NodeType)}' on constant operands", value);
+	}
+
+	static string ArithmeticOpName(System.Linq.Expressions.ExpressionType type) => type switch
+	{
+		System.Linq.Expressions.ExpressionType.Add => "+",
+		System.Linq.Expressions.ExpressionType.Subtract => "-",
+		System.Linq.Expressions.ExpressionType.Multiply => "*",
+		System.Linq.Expressions.ExpressionType.Divide => "/",
+		System.Linq.Expressions.ExpressionType.Modulo => "%",
+		_ => type.ToString(),
+	};
+
+	// The COMPILE-TIME value of an expression, when it has one: a numeric constant, the Convert chain a typed
+	// conversion adds (`todouble(1)` is Convert(Convert(1, double), double?)), the identity real-domain guard,
+	// or another REAL arithmetic node (so `(1.0-1.0)/0.0` — the natural way to write a NaN — is seen through).
+	// Anything else is null and the guard stays silent: a column; a ServerSideOnly [Sql.Expression] shim
+	// (ParseDouble & co. THROW in C#, so linq2db cannot fold those either — measured: `todouble('1')/todouble(
+	// '0')` stays real SQL); and any integer-typed node, whose own arithmetic follows integer rules.
+	static double? ConstantDouble(Expr e) => e switch
+	{
+		System.Linq.Expressions.ConstantExpression { Value: double d } => d,
+		System.Linq.Expressions.ConstantExpression { Value: long l } => l,
+		System.Linq.Expressions.ConstantExpression { Value: int i } => i,
+		System.Linq.Expressions.UnaryExpression { NodeType: System.Linq.Expressions.ExpressionType.Convert } u
+			=> ConstantDouble(u.Operand),
+		System.Linq.Expressions.UnaryExpression { NodeType: System.Linq.Expressions.ExpressionType.Negate } u
+			=> ConstantDouble(u.Operand) is { } v ? -v : null,
+		System.Linq.Expressions.MethodCallExpression { Arguments.Count: 1 } call when IsRealGuard(call.Method)
+			=> ConstantDouble(call.Arguments[0]),
+		System.Linq.Expressions.BinaryExpression b when NonNullable(b.Type) == typeof(double) => FoldReal(b),
+		_ => null,
+	};
+
+	static double? FoldReal(System.Linq.Expressions.BinaryExpression b) =>
+		ConstantDouble(b.Left) is { } l && ConstantDouble(b.Right) is { } r
+			? b.NodeType switch
+			{
+				System.Linq.Expressions.ExpressionType.Add => l + r,
+				System.Linq.Expressions.ExpressionType.Subtract => l - r,
+				System.Linq.Expressions.ExpressionType.Multiply => l * r,
+				System.Linq.Expressions.ExpressionType.Divide => l / r,
+				System.Linq.Expressions.ExpressionType.Modulo => l % r,
+				_ => null,
+			}
+			: null;
+
+	static bool IsRealGuard(MethodInfo method) => method.DeclaringType == typeof(KqlSqlExpressions)
+		&& method.Name is nameof(KqlSqlExpressions.AsReal) or nameof(KqlSqlExpressions.AsRealN);
 
 	// Pin a double-typed arithmetic operand to the SQL REAL domain. linq2db prints a double constant with an
 	// integral value as a bare integer (`100.0` → `100`) and ELIDES Expr.Convert, so SQLite/DuckDB — dynamically
