@@ -56,6 +56,74 @@ public sealed class KqlStringOpsTests
 		Ids("events | where Message has_cs 'BOOM'").Should().BeEquivalentTo([4L]);
 	}
 
+	// `!contains` and friends are SEPARATE Kusto.Language kinds (NotContainsExpression, NotHasCsExpression, …),
+	// not a negation NODE — so each positive spelling needs its own compiled arm. A forgotten twin surfaced
+	// as `binary 'NotContainsExpression' not supported` on a plain `where Message !contains "rejected"`
+	// (work kql-negated-string-operators-unsupported), which is why every spelling is pinned here against
+	// the COMPLEMENT of its positive form on all active backends: no null operand exists in the seed, so
+	// Kusto's null rule makes the two sets exactly disjoint and jointly exhaustive.
+	[Theory]
+	[InlineData("contains 'art'", "!contains 'art'")]
+	[InlineData("contains 'ART'", "!contains 'ART'")]
+	[InlineData("contains_cs 'Earth'", "!contains_cs 'Earth'")]
+	[InlineData("startswith 'crash'", "!startswith 'crash'")]
+	[InlineData("startswith_cs 'crash'", "!startswith_cs 'crash'")]
+	[InlineData("endswith 'normalized'", "!endswith 'normalized'")]
+	[InlineData("endswith_cs 'normalized'", "!endswith_cs 'normalized'")]
+	[InlineData("has 'restart'", "!has 'restart'")]
+	[InlineData("has_cs 'BOOM'", "!has_cs 'BOOM'")]
+	[InlineData("contains 'nothing-matches-this'", "!contains 'nothing-matches-this'")]
+	public void NegatedStringOperators_AreTheExactComplement(string positive, string negated)
+	{
+		foreach (var backend in KqlBackendConfig.Active)
+		{
+			var matching = KqlTestHost.Apply(Rows, Parse($"events | where Message {positive}"), backend)
+				.Select(r => r.Id).ToList();
+			var excluded = KqlTestHost.Apply(Rows, Parse($"events | where Message {negated}"), backend)
+				.Select(r => r.Id).ToList();
+
+			excluded.Should().BeEquivalentTo(
+				Rows.Select(r => r.Id).Except(matching),
+				$"'!{positive}' on {backend} must return exactly what '{positive}' does not");
+		}
+	}
+
+	// An empty `has` term matches NOTHING in Kusto (it is not an empty-substring match), so its negation
+	// matches every non-null value — a compile-time constant in HasFn, and the one arm where a naive
+	// `Expr.Not` of that constant would also have to stay null-aware.
+	[Fact]
+	public void NegatedHas_WithEmptyTerm_MatchesEverything()
+	{
+		Ids("events | where Message has ''").Should().BeEmpty();
+		Ids("events | where Message !has ''").Should().BeEquivalentTo([1L, 2L, 3L, 4L]);
+	}
+
+	// The reported repro, verbatim: double-quoted term, negated contains, on the ACTIVE backend.
+	[Fact]
+	public void NotContains_ReportedQuery_ReturnsTheNonMatchingRows()
+	{
+		Ids("events | where Message !contains \"crash\"").Should().BeEquivalentTo([1L, 3L, 4L]);
+	}
+
+	// `!in` / `!between` parse to their own kinds and were wired by reading Kind inside In()/Between();
+	// `not(...)` is a function. Before this fix NEITHER route could negate a string predicate other than
+	// through not(), so pin that a negated spelling resolves WITHOUT falling into the generic
+	// "binary '<Kind>' not supported" arm.
+	[Theory]
+	[InlineData("!contains 'a'")]
+	[InlineData("!contains_cs 'a'")]
+	[InlineData("!startswith 'a'")]
+	[InlineData("!startswith_cs 'a'")]
+	[InlineData("!endswith 'a'")]
+	[InlineData("!endswith_cs 'a'")]
+	[InlineData("!has 'a'")]
+	[InlineData("!has_cs 'a'")]
+	public void NegatedStringOperators_DoNotThrowUnsupported(string predicate)
+	{
+		var act = () => KqlTestHost.Apply(Rows, Parse($"events | where Message {predicate}"), KqlBackend.Sqlite);
+		act.Should().NotThrow<UnsupportedKqlException>();
+	}
+
 	[Fact]
 	public void MatchesRegex_Filters()
 	{

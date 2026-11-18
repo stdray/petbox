@@ -638,14 +638,25 @@ static class KqlScalar
 			or SyntaxKind.ModuloExpression => Arithmetic(b, ctx),
 		// contains = substring; has = whole-term (lowered to a boundary regex, see HasFn). startswith/
 		// endswith and the case-sensitive _cs variants translate to fixed-length substring compares.
+		// The `!`-prefixed spellings are SEPARATE SyntaxKinds in Kusto.Language (`!contains` is
+		// NotContainsExpression, not a negation node), so every positive arm needs its negated twin
+		// listed here — an omission is not a wrong answer, it is `binary '<Kind>' not supported`.
 		SyntaxKind.ContainsExpression => StringMatch(b, ctx, caseSensitive: false),
+		SyntaxKind.NotContainsExpression => StringMatch(b, ctx, caseSensitive: false, negate: true),
 		SyntaxKind.ContainsCsExpression => StringMatch(b, ctx, caseSensitive: true),
+		SyntaxKind.NotContainsCsExpression => StringMatch(b, ctx, caseSensitive: true, negate: true),
 		SyntaxKind.StartsWithExpression => StringFn(b, ctx, "startswith", nameof(KqlSqlExpressions.StartsWithI)),
+		SyntaxKind.NotStartsWithExpression => StringFn(b, ctx, "!startswith", nameof(KqlSqlExpressions.StartsWithI), negate: true),
 		SyntaxKind.StartsWithCsExpression => StringFn(b, ctx, "startswith_cs", nameof(KqlSqlExpressions.StartsWithCs)),
+		SyntaxKind.NotStartsWithCsExpression => StringFn(b, ctx, "!startswith_cs", nameof(KqlSqlExpressions.StartsWithCs), negate: true),
 		SyntaxKind.EndsWithExpression => StringFn(b, ctx, "endswith", nameof(KqlSqlExpressions.EndsWithI)),
+		SyntaxKind.NotEndsWithExpression => StringFn(b, ctx, "!endswith", nameof(KqlSqlExpressions.EndsWithI), negate: true),
 		SyntaxKind.EndsWithCsExpression => StringFn(b, ctx, "endswith_cs", nameof(KqlSqlExpressions.EndsWithCs)),
+		SyntaxKind.NotEndsWithCsExpression => StringFn(b, ctx, "!endswith_cs", nameof(KqlSqlExpressions.EndsWithCs), negate: true),
 		SyntaxKind.HasExpression => HasFn(b, ctx, "has", caseInsensitive: true),
+		SyntaxKind.NotHasExpression => HasFn(b, ctx, "!has", caseInsensitive: true, negate: true),
 		SyntaxKind.HasCsExpression => HasFn(b, ctx, "has_cs", caseInsensitive: false),
+		SyntaxKind.NotHasCsExpression => HasFn(b, ctx, "!has_cs", caseInsensitive: false, negate: true),
 		SyntaxKind.MatchesRegexExpression => StringFn(b, ctx, "matches regex", nameof(KqlSqlExpressions.MatchesRegex)),
 		_ when IsComparison(b.Kind) => Comparison(b, ctx),
 		_ => throw new UnsupportedKqlException($"binary '{b.Kind}' not supported"),
@@ -654,7 +665,7 @@ static class KqlScalar
 	// A `column <op> 'literal'` string predicate backed by a KqlSqlExpressions method (which carries
 	// both the SQLite translation and the in-memory body). Left must be string-typed, right a string
 	// literal (KQL requires a constant term/pattern for these operators).
-	static Expr StringFn(BinaryExpression b, ScalarContext ctx, string opName, string method)
+	static Expr StringFn(BinaryExpression b, ScalarContext ctx, string opName, string method, bool negate = false)
 	{
 		var access = Compile(b.Left, ctx);
 		if (access.Type != typeof(string))
@@ -662,7 +673,8 @@ static class KqlScalar
 		if (b.Right is not LiteralExpression { LiteralValue: string needle })
 			throw new UnsupportedKqlException($"'{opName}' requires a string literal on the right");
 		var mi = typeof(KqlSqlExpressions).GetMethod(method)!;
-		return Expr.Call(mi, access, Expr.Constant(needle));
+		var call = Expr.Call(mi, access, Expr.Constant(needle));
+		return negate ? Negated(call, access) : call;
 	}
 
 	// `has` / `has_cs`: NO dedicated function — lower to a boundary regex over the SAME regexp shim
@@ -671,19 +683,22 @@ static class KqlScalar
 	// `[^\p{L}\p{N}]` boundaries reproduce KQL's term-char rule (letters/digits are term chars, everything
 	// else — INCLUDING underscore — is a delimiter, which is why a plain `\b` would be wrong); `(?i)` gives
 	// `has` its case-insensitivity, `has_cs` omits it. An empty term matches nothing (Kusto semantics).
-	static Expr HasFn(BinaryExpression b, ScalarContext ctx, string opName, bool caseInsensitive)
+	static Expr HasFn(BinaryExpression b, ScalarContext ctx, string opName, bool caseInsensitive, bool negate = false)
 	{
 		var access = Compile(b.Left, ctx);
 		if (access.Type != typeof(string))
 			throw new UnsupportedKqlException($"'{opName}' requires a string operand on the left, got {access.Type.Name}");
 		if (b.Right is not LiteralExpression { LiteralValue: string term })
 			throw new UnsupportedKqlException($"'{opName}' requires a string literal on the right");
+		// An empty term matches nothing (Kusto semantics); its negation therefore matches everything —
+		// still excluding a null operand, which is why this goes through Negated rather than Expr.Constant.
 		if (term.Length == 0)
-			return Expr.Constant(false);
+			return negate ? Negated(Expr.Constant(false), access) : Expr.Constant(false);
 		var pattern = (caseInsensitive ? "(?i)" : "")
 			+ "(^|[^\\p{L}\\p{N}])" + Re2Escape(term) + "([^\\p{L}\\p{N}]|$)";
 		var mi = typeof(KqlSqlExpressions).GetMethod(nameof(KqlSqlExpressions.MatchesRegex))!;
-		return Expr.Call(mi, access, Expr.Constant(pattern));
+		var call = Expr.Call(mi, access, Expr.Constant(pattern));
+		return negate ? Negated(call, access) : call;
 	}
 
 	// Backslash-escape the RE2/PCRE2 metacharacters so a literal `has`/`has_cs` term matches literally
@@ -737,7 +752,7 @@ static class KqlScalar
 				: nameof(KqlSqlExpressions.AsReal))!,
 			e);
 
-	static Expr StringMatch(BinaryExpression b, ScalarContext ctx, bool caseSensitive)
+	static Expr StringMatch(BinaryExpression b, ScalarContext ctx, bool caseSensitive, bool negate = false)
 	{
 		var access = Compile(b.Left, ctx);
 		if (access.Type != typeof(string))
@@ -746,8 +761,15 @@ static class KqlScalar
 			throw new UnsupportedKqlException("contains/has requires a string literal");
 		var method = typeof(string).GetMethod(nameof(string.Contains), [typeof(string), typeof(StringComparison)])!;
 		var comparison = caseSensitive ? StringComparison.Ordinal : StringComparison.OrdinalIgnoreCase;
-		return Expr.Call(access, method, Expr.Constant(needle), Expr.Constant(comparison));
+		var call = Expr.Call(access, method, Expr.Constant(needle), Expr.Constant(comparison));
+		return negate ? Negated(call, access) : call;
 	}
+
+	// `!<op>` is NOT plain `not(<op>)`: Kusto excludes a null operand from BOTH the positive and the
+	// negated spelling (a null matches nothing, and its negation matches nothing either) — exactly the
+	// `!in` / `!between` rule implemented in In()/Between(). NullGuard is a no-op on a non-nullable
+	// operand and short-circuits in memory, so the underlying call never sees a null string.
+	static Expr Negated(Expr positive, Expr operand) => NullGuard(Expr.Not(positive), operand);
 
 	static Expr Comparison(BinaryExpression b, ScalarContext ctx)
 	{
