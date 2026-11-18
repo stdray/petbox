@@ -1,4 +1,5 @@
 using Kusto.Language;
+using PetBox.Log.Core.Tracing;
 
 namespace PetBox.Tests.Kql;
 
@@ -16,6 +17,9 @@ namespace PetBox.Tests.Kql;
 //     WILDCARD PATTERN matched ("how to order the columns when a wildcard pattern is used"); they are not a
 //     row sort and not a position modifier for a single column.
 //   * unmatched columns go LAST, in source order; a column matched by two specifiers lands at the FIRST.
+//   * `Properties` is a VIRTUAL column (the dynamic bag): where a column NAME is resolved to the shape — a
+//     column-selection list, or a bare column reference inside `project` — it is an alias of the stored
+//     PropertiesJson column that backs it, never an emitted name of its own.
 // Every one of those has a case below.
 public sealed class KqlProjectColumnOperatorTests
 {
@@ -38,6 +42,31 @@ public sealed class KqlProjectColumnOperatorTests
 
 	static Task<(IReadOnlyList<KqlColumn> Columns, List<object?[]> Rows)> RunAsync(string kql, KqlBackend backend) =>
 		KqlTestHost.ExecuteAsync(Rows, Parse(kql), backend);
+
+	// Rows whose bag carries REAL keys, so a Properties["k"] lookup has something to find (Rows' bag is {}).
+	static readonly LogEntryRecord[] BagRows =
+	[
+		new() { Id = 1, TimestampMs = 100, Level = (int)LogLevel.Information, Message = "hello", ServiceKey = "svc-a", PropertiesJson = """{"city":"Paris","Tool":"curl"}""" },
+		new() { Id = 2, TimestampMs = 200, Level = (int)LogLevel.Error, Message = "boom", ServiceKey = "svc-b", PropertiesJson = "{}" },
+	];
+
+	static Task<(IReadOnlyList<KqlColumn> Columns, List<object?[]> Rows)> RunBagAsync(string kql, KqlBackend backend) =>
+		KqlTestHost.ExecuteAsync(BagRows, Parse(kql), backend);
+
+	// The spans root carries the same two computed name columns plus the same streamed bag name.
+	static readonly SpanRecord[] SpanRows =
+	[
+		new() { SpanId = "s1", TraceId = "t1", Name = "op", Kind = 1, StatusCode = 2, StartUnixNs = 1_000_000, EndUnixNs = 6_000_000, AttributesJson = """{"k":"v"}""" },
+	];
+
+	static async Task AssertSpanColumnsAsync(string kql, params string[] expected)
+	{
+		foreach (var backend in KqlBackendConfig.Active)
+		{
+			var (cols, _) = await KqlTestHost.ExecuteSpansAsync(SpanRows, Parse(kql), backend);
+			cols.Select(c => c.Name).Should().Equal(expected, $"'{kql}' on {backend}");
+		}
+	}
 
 	static async Task AssertColumnsAsync(string kql, params string[] expected)
 	{
@@ -373,6 +402,196 @@ public sealed class KqlProjectColumnOperatorTests
 			var (cols, rows) = await RunAsync("events | project-by-names Message, Id | where Id >= 3", backend);
 			cols.Select(c => c.Name).Should().Equal(["Message", "Id"], $"on {backend}");
 			rows.Select(r => (long)r[1]!).Should().BeEquivalentTo([3L, 4L], $"on {backend}");
+		}
+	}
+
+	// ---- the VIRTUAL `Properties` column: the bag is STORED as PropertiesJson ----
+	//
+	// KqlSchema advertises `Properties` (completion offers it, `where Properties["k"] == …` works), but the row
+	// shape carries it as PropertiesJson — so before this rule the two operators whose whole job is column
+	// membership were the only places the advertised column did not exist, on exactly the query a user writes
+	// to get rid of the giant JSON blob. The rule: a column-selection list accepts `Properties` as an ALIAS of
+	// the backing column and never emits it under the alias.
+
+	// Measured on the deployed build (ffdda0b) as "unknown column 'Properties'" — red before the fix.
+	[Fact]
+	public Task ProjectAway_Properties_DropsTheBag() =>
+		AssertColumnsAsync("events | project-away Properties",
+			"Id", "ServiceKey", "Timestamp", "Level", "LevelName", "Message", "MessageTemplate", "Exception");
+
+	[Fact]
+	public Task ProjectAway_Properties_IsCaseInsensitive() =>
+		AssertColumnsAsync("events | project-away properties",
+			"Id", "ServiceKey", "Timestamp", "Level", "LevelName", "Message", "MessageTemplate", "Exception");
+
+	// The alias must not be a second, subtly different operator: same columns out, same error afterwards.
+	[Fact]
+	public async Task ProjectAway_Properties_AndPropertiesJson_SelectTheSameColumns()
+	{
+		foreach (var backend in KqlBackendConfig.Active)
+		{
+			var (aliasCols, aliasRows) = await RunBagAsync("events | project-away Properties", backend);
+			var (storedCols, storedRows) = await RunBagAsync("events | project-away PropertiesJson", backend);
+			aliasCols.Select(c => c.Name).Should().Equal(storedCols.Select(c => c.Name).ToArray(), $"on {backend}");
+			aliasRows.Should().HaveCount(storedRows.Count, $"on {backend}");
+		}
+	}
+
+	// The bag stays under its STORED name — emitting the column as `Properties` would be a trap, because the
+	// downstream bag lookup keys on the PropertiesJson name (see the addressability case below).
+	[Fact]
+	public async Task ProjectKeep_Properties_KeepsTheBag_UnderItsStoredName()
+	{
+		foreach (var backend in KqlBackendConfig.Active)
+		{
+			var (cols, rows) = await RunBagAsync("events | project-keep Id, Properties", backend);
+			cols.Select(c => c.Name).Should().Equal(["Id", "PropertiesJson"], $"on {backend}");
+			rows.Single(r => (long)r[0]! == 1)[1].Should()
+				.Be("""{"city":"Paris","Tool":"curl"}""", $"the kept bag is the stored JSON text on {backend}");
+		}
+	}
+
+	// ...and the keep that kept the bag must not be the thing that breaks Properties["k"].
+	[Fact]
+	public async Task ProjectKeep_Properties_LeavesTheBagAddressable()
+	{
+		foreach (var backend in KqlBackendConfig.Active)
+		{
+			var (_, rows) = await RunBagAsync(
+				"events | project-keep Id, Properties | where Properties[\"city\"] == \"Paris\"", backend);
+			rows.Select(r => (long)r[0]!).Should().Equal([1L], $"on {backend}");
+		}
+	}
+
+	// THE pinned after-away rule: dropping the bag drops the LOOKUPS with it, with the SAME precise error the
+	// stored spelling has always produced — never a null map, never a silent empty bag, never a fallback.
+	[Theory]
+	[InlineData("events | project-away Properties")]
+	[InlineData("events | project-away PropertiesJson")]
+	public Task ProjectAway_Bag_DropsTheBagLookupsToo(string kql) =>
+		AssertThrowsAsync(kql + " | where Properties[\"Tool\"] != \"\"", "input has no PropertiesJson column");
+
+	// The rest of the family speaks the same alias (one resolution rule, five operators).
+	[Fact]
+	public Task ProjectByNames_Properties_UsesItsStoredName() =>
+		AssertColumnsAsync("events | project-by-names Properties, Id", "PropertiesJson", "Id");
+
+	[Fact]
+	public Task ProjectReorder_Properties_MovesTheBag() =>
+		AssertColumnsAsync("events | project-reorder Properties, Id",
+			"PropertiesJson", "Id", "ServiceKey", "Timestamp", "Level", "LevelName", "Message", "MessageTemplate", "Exception");
+
+	[Fact]
+	public Task ProjectRename_Properties_RenamesTheBag() =>
+		AssertColumnsAsync("events | project-rename P = Properties",
+			"Id", "ServiceKey", "Timestamp", "Level", "LevelName", "Message", "MessageTemplate", "Exception", "P");
+
+	// ---- the OTHER pseudo columns: the inventory that says Properties was the only hole ----
+	//
+	// LevelName, Exception and PropertiesJson are REAL columns of the events shape (the name form of Level,
+	// the exception text, the stored bag); KindName/StatusName are the same on spans. None of them is virtual,
+	// so away/keep have always seen them — which is exactly why the hole was `Properties` alone.
+	[Theory]
+	[InlineData("events | project-away LevelName, Exception, PropertiesJson",
+		new[] { "Id", "ServiceKey", "Timestamp", "Level", "Message", "MessageTemplate" })]
+	[InlineData("events | project-keep LevelName, Exception, PropertiesJson",
+		new[] { "LevelName", "Exception", "PropertiesJson" })]
+	public Task PseudoColumns_Events_AreRealColumns(string kql, string[] expected) => AssertColumnsAsync(kql, expected);
+
+	[Fact]
+	public Task PseudoColumns_Spans_AreRealColumns() =>
+		AssertSpanColumnsAsync("spans | project-keep KindName, StatusName, PropertiesJson",
+			"KindName", "StatusName", "PropertiesJson");
+
+	[Fact]
+	public Task PseudoColumns_Spans_AreRemovableToo() =>
+		AssertSpanColumnsAsync("spans | project-away KindName, StatusName, Properties",
+			"SpanId", "TraceId", "ParentSpanId", "Name", "Kind", "Start", "End", "Duration", "Status", "StatusDescription");
+
+	// ---- the `project` side of the same name: the SILENT half of the defect ----
+	//
+	// `project Properties` used to answer the bag KEY named "Properties" — a nullable string column, null on
+	// every row — so a user asking for the bag got a column of nulls and would conclude their rows carry no
+	// properties. That is the bad class: not a refusal, a wrong answer. It now resolves through the same
+	// VirtualBagColumnIndex alias as the column-selection family, so the pin is that the bag text comes back
+	// and NEVER null.
+	[Fact]
+	public async Task Project_Properties_ReturnsTheBag_NotAColumnOfNulls()
+	{
+		foreach (var backend in KqlBackendConfig.Active)
+		{
+			var (cols, rows) = await RunBagAsync("events | project Properties", backend);
+			// The STORED name: the shape's bag lookup keys on it, so this is what keeps Properties["k"]
+			// resolving after the projection that asked for the bag (next case).
+			cols.Select(c => c.Name).Should().Equal(["PropertiesJson"], $"on {backend}");
+			cols[0].ClrType.Should().Be<string>($"on {backend}");
+			var values = rows.Select(r => (string?)r[0]).ToList();
+			values.Should().NotContainNulls($"the bag must never come back as a column of nulls — on {backend}");
+			values.Should().Contain("""{"city":"Paris","Tool":"curl"}""", $"on {backend}");
+		}
+	}
+
+	[Fact]
+	public async Task Project_Properties_WithOtherColumns()
+	{
+		foreach (var backend in KqlBackendConfig.Active)
+		{
+			var (cols, rows) = await RunBagAsync("events | project Properties, Id", backend);
+			cols.Select(c => c.Name).Should().Equal(["PropertiesJson", "Id"], $"on {backend}");
+			rows.Select(r => (string?)r[0]).Should().NotContainNulls($"on {backend}");
+		}
+	}
+
+	// The reason the emitted name is the STORED one: the projection that asked for the bag must not be the
+	// thing that makes the bag unaddressable.
+	[Fact]
+	public async Task Project_Properties_LeavesTheBagAddressable()
+	{
+		foreach (var backend in KqlBackendConfig.Active)
+		{
+			var (_, rows) = await RunBagAsync(
+				"events | project Properties | where Properties[\"city\"] == \"Paris\"", backend);
+			rows.Should().ContainSingle($"on {backend}");
+		}
+	}
+
+	// `project Properties` and `project PropertiesJson` are the same projection — the alias is not a second,
+	// subtly different column.
+	[Fact]
+	public async Task Project_Properties_MatchesTheStoredSpelling()
+	{
+		foreach (var backend in KqlBackendConfig.Active)
+		{
+			var (aliasCols, aliasRows) = await RunBagAsync("events | project Properties", backend);
+			var (storedCols, storedRows) = await RunBagAsync("events | project PropertiesJson", backend);
+			aliasCols.Select(c => c.Name).Should().Equal(storedCols.Select(c => c.Name).ToArray(), $"on {backend}");
+			aliasRows.Select(r => (string?)r[0]).Should().Equal(
+				storedRows.Select(r => (string?)r[0]).ToArray(), $"on {backend}");
+		}
+	}
+
+	// The explicit alias keeps the user's name — same as `Bag = PropertiesJson` always did.
+	[Fact]
+	public async Task Project_NamedProperties_KeepsTheAliasAndReturnsTheBag()
+	{
+		foreach (var backend in KqlBackendConfig.Active)
+		{
+			var (cols, rows) = await RunBagAsync("events | project Bag = Properties", backend);
+			cols.Select(c => c.Name).Should().Equal(["Bag"], $"on {backend}");
+			var values = rows.Select(r => (string?)r[0]).ToList();
+			values.Should().NotContainNulls($"on {backend}");
+			values.Should().Contain("""{"city":"Paris","Tool":"curl"}""", $"on {backend}");
+		}
+	}
+
+	[Fact]
+	public async Task Project_BagAccess_WorksThroughTheNamedForm()
+	{
+		foreach (var backend in KqlBackendConfig.Active)
+		{
+			var (cols, rows) = await RunBagAsync("events | project City = Properties[\"city\"]", backend);
+			cols.Select(c => c.Name).Should().Equal(["City"], $"on {backend}");
+			rows.Select(r => (string?)r[0]).Should().Contain("Paris", $"on {backend}");
 		}
 	}
 

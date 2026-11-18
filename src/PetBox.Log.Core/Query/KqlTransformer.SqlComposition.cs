@@ -263,13 +263,42 @@ public static partial class KqlTransformer
 				_ => throw new UnsupportedKqlException(
 					$"project expression '{element.Element.Kind}' not supported (use a column ref or 'name = expression')"),
 			};
-			if (!TryCompileStorage(exprSyntax, storageCtx, out var storage))
-				return null; // never taken: TryCompileStorage THROWS on a non-translatable expr rather than returning false
-			var logicalType = KqlScalar.Compile(exprSyntax, new RowScalarContext(rowParam, working) { UtcNow = now }).Type;
-			working.Add(new KqlColumn(name, logicalType));
-			if (!inputNames.Contains(name))
-				defined[name] = storage;
-			cols.Add(new(name, logicalType, storage));
+
+			// A bare `Properties` COLUMN REFERENCE — alone (`project Properties`) or as the right side of a
+			// projection (`project Bag = Properties`) — is the virtual bag, so it resolves to the stored column
+			// that backs it, through the SAME alias the column-selection family uses (VirtualBagColumnIndex).
+			// Falling through to the scalar compiler's bare-name fallback answered a bag KEY lookup instead: a
+			// nullable string column named after what was asked for, NULL on every row — a silently wrong answer
+			// to "give me the bag", which the user reads as "my rows have no properties".
+			// EMITTED NAME: a bare reference keeps the STORED name (`project Properties` ≡ `project PropertiesJson`),
+			// because the emitted shape's bag lookup is keyed on the PropertiesJson name — emitting the JSON text
+			// as a column called `Properties` would make `project Properties | where Properties["k"] == …` fail
+			// right after the projection that asked for the bag. `name = Properties` keeps the user's name, which
+			// is what an alias means here (byte-identical to `name = PropertiesJson`, which already worked).
+			// To project a KEY, `project City = Properties["city"]` remains the form.
+			var bagIndex = exprSyntax is NameReference reference
+				? VirtualBagColumnIndex(stage.Columns, reference.SimpleName)
+				: -1;
+			Expr storage;
+			Type logicalType;
+			var emitted = name;
+			if (bagIndex >= 0)
+			{
+				var bag = stage.Columns[bagIndex];
+				emitted = element.Element is SimpleNamedExpression ? name : bag.Name;
+				logicalType = bag.ClrType;
+				storage = baseCtx.ResolveColumn(bag.Name);
+			}
+			else
+			{
+				if (!TryCompileStorage(exprSyntax, storageCtx, out storage))
+					return null; // never taken: TryCompileStorage THROWS on a non-translatable expr rather than returning false
+				logicalType = KqlScalar.Compile(exprSyntax, new RowScalarContext(rowParam, working) { UtcNow = now }).Type;
+			}
+			working.Add(new KqlColumn(emitted, logicalType));
+			if (!inputNames.Contains(emitted))
+				defined[emitted] = storage;
+			cols.Add(new(emitted, logicalType, storage));
 		}
 
 		return BuildEmittedStage(stage.Query, stage.ElementType, param, cols, distinct: false, now);
@@ -334,7 +363,7 @@ public static partial class KqlTransformer
 				$"{opName}: '{element.Kind}' is not a column name or wildcard pattern "
 				+ "(use e.g. 'Message' or 'session*')");
 
-		var pattern = reference.SimpleName;
+		var pattern = StorageColumnName(columns, reference.SimpleName);
 		var isPattern = IsColumnPattern(pattern);
 		var matches = new List<int>();
 		for (var i = 0; i < columns.Count; i++)
@@ -350,6 +379,50 @@ public static partial class KqlTransformer
 			throw new UnsupportedKqlException($"{opName}: unknown column '{pattern}'");
 		return matches;
 	}
+
+	// The user-facing name of the VIRTUAL column that is not a column: `Properties`.
+	// KqlSchema advertises it (so completion offers it and `where Properties["k"] == …` works) and every
+	// scalar context resolves it against the stored JSON column that backs it — but an emitted shape carries
+	// STORED columns, and the bag is stored as PropertiesJson (spans/metrics carry their AttributesJson under
+	// that same streamed name). Without this mapping `project-away Properties` — the one thing a user reaches
+	// for when the JSON blob is the noise they want gone — was the single place the advertised column did not
+	// exist.
+	//
+	// THE RULE THAT HOLDS NOW: wherever a column NAME is resolved to the shape (a column-selection list, or a
+	// bare column REFERENCE inside `project`), `Properties` is an alias for the backing column (only when the
+	// current shape actually carries it, and never shadowing a real column of that name); it is not invented
+	// as an emitted column. So
+	//   project-away Properties      ≡ project-away PropertiesJson   → the bag is gone;
+	//   project-keep Id, Properties  → [Id, PropertiesJson]           → the bag stays under its STORED name
+	//   project Properties           ≡ project PropertiesJson         → the real bag text, not a column of nulls
+	//     (naming it `Properties` instead would be a trap: the downstream bag lookup keys on the
+	//     PropertiesJson name, so Properties["k"] would stop resolving right after the keep/projection that
+	//     asked for the bag);
+	//   and a later Properties["k"] resolves exactly as it does after the same PropertiesJson spelling —
+	//   it fails with "Properties.<key>: input has no PropertiesJson column" once the bag is gone.
+	// Bag KEYS are not aliased: `project city` reaches Properties.city through the bare-name fallback, but
+	// `project-away city` has no column to drop and stays the precise unknown-column error.
+	// The streamed name of the stored JSON-bag column (events' PropertiesJson, spans'/metrics'
+	// AttributesJson — all three are streamed under this one name, see the root specs).
+	const string PropertiesJsonColumn = "PropertiesJson";
+
+	static string StorageColumnName(IReadOnlyList<KqlColumn> columns, string name) =>
+		string.Equals(name, "Properties", StringComparison.OrdinalIgnoreCase)
+			&& FindColumnIndex(columns, PropertiesJsonColumn) >= 0
+			&& ResolveColumnIndexCI(columns, name) < 0 // a real column of that name still wins
+			? PropertiesJsonColumn
+			: name;
+
+	// The stored bag column a bare `Properties` reference stands for, or -1 when the name is not the virtual bag
+	// (or the current shape carries no bag column to point at — e.g. after a `project-keep Id`). Deliberately
+	// the ONE place a caller asks "is this the virtual bag?", so `project` and the column-selection family
+	// cannot drift apart again.
+	// KNOWN GAP (follow-up, not this change): `distinct Properties` and `summarize … by Properties` still go
+	// through the bag fallback and so still answer a bag KEY lookup — a column of nulls named after the bag.
+	static int VirtualBagColumnIndex(IReadOnlyList<KqlColumn> columns, string name) =>
+		StorageColumnName(columns, name) is var stored && !string.Equals(stored, name, StringComparison.Ordinal)
+			? FindColumnIndex(columns, stored)
+			: -1;
 
 	// A new emitted stage over a CHOSEN subset/order of the current stage's columns: each output column
 	// rides the storage expression the upstream stage already resolves for its SOURCE column (so a rename
@@ -422,7 +495,7 @@ public static partial class KqlTransformer
 					$"project-rename: '{named.Expression.Kind}' is not a column name — project-rename only renames "
 					+ "existing columns (use 'project' to compute a new one)");
 
-			var index = ResolveColumnIndexCI(stage.Columns, source.SimpleName);
+			var index = ResolveColumnIndexCI(stage.Columns, StorageColumnName(stage.Columns, source.SimpleName));
 			if (index < 0)
 				throw new UnsupportedKqlException($"project-rename: unknown column '{source.SimpleName}'");
 			renamedTo[index] = alias.Name.SimpleName;
