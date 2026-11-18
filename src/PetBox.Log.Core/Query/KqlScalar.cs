@@ -777,8 +777,21 @@ static class KqlScalar
 	// both dialects. The term is a required string literal, so the whole pattern is built at COMPILE time.
 	// TermStart/TermEnd reproduce KQL's term-char rule (letters/digits are term chars, everything else —
 	// INCLUDING underscore — is a delimiter, which is why a plain `\b` would be wrong); `(?i)` gives `has`
-	// its case-insensitivity, `has_cs` omits it. A needle that is not a whole TERM matches nothing (Kusto
-	// semantics) — see the constant arm below, shared with HasAffix/HasList.
+	// its case-insensitivity, `has_cs` omits it. An empty term matches nothing (Kusto semantics).
+	//
+	// DO NOT "FIX" THIS TO BE STRICT ABOUT THE NEEDLE. Kusto's "RHS is a whole term in LHS" is a SIMPLIFICATION
+	// of the implementation, which is an index PRE-FILTER followed by an EXACT LITERAL SCAN: the term index
+	// narrows the candidate rows by the needle's words, then the scan compares the whole needle against the
+	// stored string. Measured behaviour on real ADX (Stack Overflow 79092741) — `Message has "Heart Beat"`
+	// MATCHES "as if it was a single whole term"; SO 74827840 states the shape outright for `has "#ell#"`:
+	// "index for initial filtering on the term (ell), followed by a narrowed data scan (to filter out on the
+	// entire searched string)". So a needle CARRYING a delimiter is a legitimate match — measured on this
+	// engine: `"x a b y" has 'a b'` → TRUE, `"Heart Beat now" has 'Heart Beat'` → TRUE, `"rate_l exceeded" has
+	// 'rate_l'` → TRUE — and empty-ing them was a regression that silently dropped the most natural user
+	// query, the exact class of wrong answer this engine is being hardened against. The boundary regex below
+	// is that literal scan. It anchors BOTH ends of the needle, so `has 'rate_l'` still finds nothing inside
+	// `rate_limit` (the next character is a letter); whether real ADX matches that middle case is UNVERIFIED
+	// here, so it is left alone rather than guessed at in either direction.
 	static Expr HasFn(BinaryExpression b, ScalarContext ctx, string opName, bool caseInsensitive, bool negate = false)
 	{
 		var access = Compile(b.Left, ctx);
@@ -786,13 +799,9 @@ static class KqlScalar
 			throw new UnsupportedKqlException($"'{opName}' requires a string operand on the left, got {access.Type.Name}");
 		if (b.Right is not LiteralExpression { LiteralValue: string term })
 			throw new UnsupportedKqlException($"'{opName}' requires a string literal on the right");
-		// RHS of `has` is a WHOLE TERM in LHS, and a TERM is a maximal run of letters/digits (see TermStart),
-		// so a needle carrying ANY other character — `a b`, `rate_l`, `x-y` — can never be one: the answer is a
-		// CONSTANT, not a match (the empty needle is the same arm). Leaving it to the regex is a FALSE POSITIVE
-		// wherever the needle's own delimiters happen to line up with the value's boundaries — measured before
-		// this rule: `"x a b y" has 'a b'` and `"rate_l rate_limit" has 'rate_l'` were both TRUE, where Kusto
-		// says false. The negation still needs Negated() so a NULL value stays excluded.
-		if (term.Length == 0 || !IsTermRun(term))
+		// An empty `has` term matches NOTHING in Kusto (it is not an empty-substring match), so its
+		// negation matches every NON-NULL value — Negated() adds the null exclusion.
+		if (term.Length == 0)
 			return negate ? Negated(Expr.Constant(false), access) : Expr.Constant(false);
 		var pattern = (caseInsensitive ? "(?i)" : "") + TermStart + Re2Escape(term) + TermEnd;
 		var call = Expr.Call(SqlMethod(nameof(KqlSqlExpressions.MatchesRegex)), access, Expr.Constant(pattern));
@@ -832,9 +841,14 @@ static class KqlScalar
 		return negate ? Negated(call, access) : call;
 	}
 
-	// Is the whole needle a run of TERM chars (letters/digits, the `\p{L}\p{N}` the boundary fragments use)?
-	// THE one predicate behind the "a needle that is not a term matches nothing" arm of every term operator
-	// (`has`, `hasprefix`/`hassuffix`, `has_any`/`has_all`) — do not grow a second one.
+	// Is the whole needle a run of TERM chars? Used by HasAffix ONLY: `hasprefix`/`hassuffix` really are about
+	// TERM boundaries, so a needle carrying any other character cannot be a prefix/suffix of one. `has` itself
+	// is deliberately NOT gated on this — see the block comment above HasFn (index pre-filter + exact literal
+	// scan, where a delimiter-carrying needle is a legitimate match).
+	// NOTE: `char.IsLetterOrDigit` is `\p{L}` + `\p{Nd}` — NARROWER than the `\p{N}` the boundary fragments
+	// above use, which also covers `Nl` (e.g. the Roman numeral Ⅻ) and `No` (superscript ²). A needle made of
+	// those is refused here while the regex would treat it as term text; both readings are defensible and no
+	// measured query depends on it, so the predicate is left as it is rather than widened.
 	static bool IsTermRun(string term)
 	{
 		foreach (var c in term)
@@ -847,7 +861,9 @@ static class KqlScalar
 	// works on any/all of the elements" — so each term reuses the SAME term-boundary regex (and therefore
 	// the same element-escaped literal match). Both spellings are case-INsensitive (there is no `_cs` twin)
 	// and neither has a negated form; a null subject is pinned to FALSE by MatchesRegex, which is already
-	// the Kusto answer for an un-negated predicate, so no Negated() wrapper applies. An empty LIST is the
+	// the Kusto answer for an un-negated predicate, so no Negated() wrapper applies. An empty ELEMENT
+	// matches nothing (the `has` rule, which is about the EMPTY needle only — a delimiter-carrying element is
+	// a legitimate match, see HasFn): dropped from `has_any`, fatal to `has_all`. An empty LIST is the
 	// OR/AND identity — false for has_any, vacuously TRUE for has_all.
 	static Expr HasList(Expression left, ExpressionList right, ScalarContext ctx, string opName, bool all)
 	{
@@ -859,13 +875,7 @@ static class KqlScalar
 		{
 			if (element.Element is not LiteralExpression { LiteralValue: string term })
 				throw new UnsupportedKqlException($"'{opName}' requires a list of string literals");
-			// An element that is empty OR carries a non-term character can never be a whole TERM (the same
-			// constant-false element `has` gives), and the per-element rule is PINNED here:
-			//   * `has_all` — every element must match, so one impossible element makes the WHOLE predicate
-			//     false (the row is excluded): return at once.
-			//   * `has_any` — that element matches nothing, so it is DROPPED and the remaining elements still
-			//     can match; an all-impossible list falls through to the `false` identity below.
-			if (term.Length == 0 || !IsTermRun(term))
+			if (term.Length == 0)
 			{
 				if (all)
 					return Expr.Constant(false);
