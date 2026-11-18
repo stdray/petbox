@@ -220,8 +220,8 @@ public sealed class KqlResultTests
 	[Fact]
 	public async Task Compute_UnsupportedFunction_ThrowsPrecise()
 	{
-		var act = async () => await Run(Rows, Parse("events | project Id, X = strlen(Message)"));
-		await act.Should().ThrowAsync<UnsupportedKqlException>().WithMessage("*strlen*not supported*");
+		var act = async () => await Run(Rows, Parse("events | project Id, X = bag_keys(Message)"));
+		await act.Should().ThrowAsync<UnsupportedKqlException>().WithMessage("*bag_keys*not supported*");
 	}
 
 	// --- Task A: aggregates over the int Level column (production-only; KustoLoco can't cast

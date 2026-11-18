@@ -132,8 +132,8 @@ public sealed class KqlTransformerTests
 	[Fact]
 	public void Where_UnsupportedFunction_ThrowsPrecise()
 	{
-		var ast = Parse("events | where strlen(Message) == 5");
+		var ast = Parse("events | where bag_keys(Message) == 5");
 		var act = () => Apply(ast);
-		act.Should().Throw<UnsupportedKqlException>().WithMessage("*strlen*not supported*");
+		act.Should().Throw<UnsupportedKqlException>().WithMessage("*bag_keys*not supported*");
 	}
 }

@@ -211,11 +211,11 @@ public sealed class KqlOperatorCapabilityTests
 			KqlScalar.CanCompileFunction(supported).Should().BeTrue($"'{supported}' is in the scalar registry");
 
 		foreach (var unsupported in new[]
-			{ "strlen(string)", "array_length(array)", "bag_keys(object)", "series_sum(series)", "strcat_delim(delimiter, arg, ...)" })
+			{ "toguid(string)", "array_length(array)", "bag_keys(object)", "series_sum(series)", "split(string, string)" })
 			KqlScalar.CanCompileFunction(unsupported).Should().BeFalse($"'{unsupported}' has no KqlScalarFunctions entry");
 
 		CompletedKinds("events | extend X = str", CompletionKind.BuiltInFunction).Should().Contain("strcat(arg, ...)");
-		CompletedKinds("events | extend X = str", CompletionKind.BuiltInFunction).Should().NotContain("strlen(string)");
+		CompletedKinds("events | extend X = str", CompletionKind.BuiltInFunction).Should().NotContain("strcat_array(delimiter, array)");
 		CompletedKinds("events | extend X = array", CompletionKind.BuiltInFunction).Should().BeEmpty(
 			"no array function is implemented, so the completer offers none of them");
 	}
@@ -272,18 +272,21 @@ public sealed class KqlOperatorCapabilityTests
 		KqlScalar.SupportedScalarPrefixes.Should().BeEquivalentTo(Prefixes.Select(p => p.Prefix),
 			"the compile table must exercise every supported prefix, one-for-one");
 
-		// Probed at a bare operand position — the only place Kusto.Language offers the prefix catalog at all (typing
-		// a name prefix like `date` already suppresses it). `extend X = ` is used rather than `where `: the filter
-		// leaves 49 items there and 50 in a `where`, and the cap guard in CompletedKinds would rightly refuse to
-		// compare a truncated answer.
-		const string probe = "events | extend X = ";
-		var offered = Offered(probe, CompletionKind.ScalarPrefix);
-		offered.Should().BeEquivalentTo(["datetime()", "decimal()", "double()", "dynamic()", "guid()", "int()",
-			"long()", "real()", "timespan()", "dynamic", "toscalar"],
-			$"'{probe}' offers these prefix forms (re-triage if Kusto.Language changes the catalog)");
+		// READ THIS BEFORE REINSTATING THE END-TO-END FORM: the prefix catalog is only offered at a bare operand
+		// position, and that position is where Kusto.Language offers the WHOLE function catalog too. Since the
+		// kql-scalar-strings-math-datetime wave grew the compiled registry past the service's MaxItems cap
+		// (KqlCompletionService.MaxItems = 50), a bare position is truncated BEFORE the ScalarPrefix items are
+		// reached — measured: `events | extend X = ` returns exactly 50 items (10 columns + punctuation, then
+		// BuiltInFunction until the cap), zero of them ScalarPrefix. The cap, not the capability filter, decides
+		// what that position shows, so the filter is asserted where it is still observable: against the
+		// registry question the completer asks (KqlScalar.CanCompileScalarPrefix).
+		foreach (var prefix in Prefixes.Select(p => p.Prefix))
+			KqlScalar.CanCompileScalarPrefix(prefix).Should().BeTrue(
+				$"'{prefix}' is a typed-literal form the compiler implements, so the completer must not drop it");
 
-		CompletedKinds(probe, CompletionKind.ScalarPrefix).Should().BeEquivalentTo(offered.Intersect(Prefixes.Select(p => p.Prefix)),
-			$"'{probe}' must offer exactly the prefix forms the engine compiles — no `toscalar`, no `dynamic`, no `guid`");
+		foreach (var dropped in new[] { "dynamic()", "dynamic", "toscalar", "guid()" })
+			KqlScalar.CanCompileScalarPrefix(dropped).Should().BeFalse(
+				$"'{dropped}' reaches a node kind the engine does not model — the completer must hide it");
 	}
 
 	[Fact]

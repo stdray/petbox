@@ -1,3 +1,4 @@
+using System.Globalization;
 using System.Reflection;
 using Kusto.Language.Syntax;
 using PetBox.Log.Core.Data;
@@ -62,6 +63,13 @@ abstract class ScalarContext
 	// this context's nullable instant representation: long? (epoch-ms) for the SQL/record context,
 	// DateTime? for the in-memory/row context. Used by todatetime(), whose result may be null.
 	public abstract Expr NullableInstant(Expr epochMsNullable);
+
+	// Bridge a ticks-`long` DURATION into this context's duration representation: ticks (long) in the
+	// SQL/record domain, TimeSpan in the in-memory/row domain — the timespan mirror of NullableInstant, and
+	// the reason dayofweek()/make_timespan() can return a real Kusto `timespan` on both pipeline positions.
+	// The SQL contexts keep the long (that IS the storage form of TimeSpan, see KqlTransformer's
+	// logical-type ↔ storage-type mapping), so only the row domain overrides.
+	public virtual Expr CoerceTicks(Expr ticks) => ticks;
 }
 
 // Shared machinery for the SQL/record contexts of the two table roots (events / spans). Leaves resolve
@@ -492,6 +500,13 @@ sealed class RowScalarContext(ParamExpr rowArray, IReadOnlyList<KqlColumn> colum
 	// (null-preserving) via FromUnixMsN.
 	public override Expr NullableInstant(Expr epochMsNullable) =>
 		Expr.Call(typeof(KqlSqlExpressions).GetMethod(nameof(KqlSqlExpressions.FromUnixMsN))!, epochMsNullable);
+
+	// In-memory durations are TimeSpan (the logical type a timespan column carries here), so a ticks-long
+	// duration converts once, at the same boundary FromUnixMs crosses for instants.
+	public override Expr CoerceTicks(Expr ticks) =>
+		Expr.Call(
+			typeof(KqlSqlExpressions).GetMethod(nameof(KqlSqlExpressions.FromTicksN))!,
+			ticks.Type == typeof(long?) ? ticks : Expr.Convert(ticks, typeof(long?)));
 }
 
 // A layered scalar context for compiling project/extend output expressions in the SQL/record domain
@@ -508,6 +523,7 @@ sealed class DerivedColumnContext(ScalarContext baseCtx, Func<string, Expr?> loo
 	public override Expr CurrentInstant() => baseCtx.CurrentInstant();
 	public override Expr CoerceInstant(Expr e) => baseCtx.CoerceInstant(e);
 	public override Expr NullableInstant(Expr epochMsNullable) => baseCtx.NullableInstant(epochMsNullable);
+	public override Expr CoerceTicks(Expr ticks) => baseCtx.CoerceTicks(ticks);
 }
 
 // One column of an emitted storage-typed row: its logical name/type (what the user sees) and the emitted
@@ -1344,6 +1360,62 @@ static class KqlScalarFunctions
 			["isnotnull"] = (a, c) => IsNullFn(a, "isnotnull", negate: true),
 			["isempty"] = (a, c) => IsEmptyFn(a, "isempty", negate: false),
 			["isnotempty"] = (a, c) => IsEmptyFn(a, "isnotempty", negate: true),
+
+			// --- wave: string / math / datetime-part / conversion scalars (card
+			// work/kql-scalar-strings-math-datetime). Every entry carries a PORTABLE per-dialect SQL
+			// translation: this engine has no in-memory execution path (KqlTransformer.ExecutePipeline), so
+			// a shim that cannot translate SQLite AND DuckDB identically is not a fallback, it is a broken
+			// query. Where no such translation exists the function is absent (see the card's drop list). ---
+
+			// string
+			["strlen"] = (a, c) => StringFn1(a, "strlen", nameof(KqlSqlExpressions.StrLen)),
+			["indexof"] = IndexOf,
+			["replace_string"] = ReplaceString,
+			["trim"] = (a, c) => Trim(a, "trim"),
+			["trim_start"] = (a, c) => Trim(a, "trim_start"),
+			["trim_end"] = (a, c) => Trim(a, "trim_end"),
+			["strcat_delim"] = StrcatDelim,
+			["format_bytes"] = FormatBytes,
+			["isascii"] = (a, c) => StringFn1(a, "isascii", nameof(KqlSqlExpressions.IsAscii)),
+			["isutf8"] = (a, c) => StringFn1(a, "isutf8", nameof(KqlSqlExpressions.IsUtf8)),
+
+			// math
+			["abs"] = Abs,
+			["floor"] = (a, c) => RealFn(a, "floor", nameof(KqlSqlExpressions.Floor)),
+			["ceiling"] = (a, c) => RealFn(a, "ceiling", nameof(KqlSqlExpressions.Ceiling)),
+			["round"] = Round,
+			["sqrt"] = (a, c) => RealFn(a, "sqrt", nameof(KqlSqlExpressions.Sqrt)),
+			["exp"] = (a, c) => RealFn(a, "exp", nameof(KqlSqlExpressions.Exp)),
+			["log"] = (a, c) => RealFn(a, "log", nameof(KqlSqlExpressions.LogNatural)),
+			["log2"] = (a, c) => RealFn(a, "log2", nameof(KqlSqlExpressions.Log2)),
+			["log10"] = (a, c) => RealFn(a, "log10", nameof(KqlSqlExpressions.Log10)),
+			["sign"] = Sign,
+			["pow"] = Pow,
+			["pi"] = Pi,
+			["isnan"] = (a, c) => RealPred(a, "isnan", nameof(KqlSqlExpressions.IsNaNFn)),
+			["isinf"] = (a, c) => RealPred(a, "isinf", nameof(KqlSqlExpressions.IsInfFn)),
+			["min_of"] = (a, c) => MinMax(a, c, "min_of", max: false),
+			["max_of"] = (a, c) => MinMax(a, c, "max_of", max: true),
+			["coalesce"] = Coalesce,
+
+			// datetime parts / arithmetic
+			["dayofweek"] = (a, c) => InstantExtract(a, c, "dayofweek", nameof(KqlSqlExpressions.DayOfWeekTicks), ticks: true),
+			["dayofmonth"] = (a, c) => InstantExtract(a, c, "dayofmonth", nameof(KqlSqlExpressions.DayOfMonthOfMs)),
+			["dayofyear"] = (a, c) => InstantExtract(a, c, "dayofyear", nameof(KqlSqlExpressions.DayOfYearOfMs)),
+			["monthofyear"] = (a, c) => InstantExtract(a, c, "monthofyear", nameof(KqlSqlExpressions.MonthOfMs)),
+			["hourofday"] = (a, c) => InstantExtract(a, c, "hourofday", nameof(KqlSqlExpressions.HourOfMs)),
+			["week_of_year"] = (a, c) => InstantExtract(a, c, "week_of_year", nameof(KqlSqlExpressions.WeekOfYearOfMs)),
+			["datetime_part"] = DateTimePart,
+			["datetime_add"] = DateTimeAdd,
+			["endofday"] = (a, c) => EndOf(a, c, "endofday"),
+			["endofweek"] = (a, c) => EndOf(a, c, "endofweek"),
+			["endofmonth"] = (a, c) => EndOf(a, c, "endofmonth"),
+			["make_datetime"] = MakeDateTime,
+			["make_timespan"] = MakeTimespan,
+
+			// conversion
+			["toboolean"] = ToBoolConv,
+			["tohex"] = ToHex,
 		};
 
 	public static bool TryResolve(string name, out KqlScalarFunction fn) => Registry.TryGetValue(name, out fn!);
@@ -1750,6 +1822,581 @@ static class KqlScalarFunctions
 	}
 
 	static MethodInfo SqlM(string name) => typeof(KqlSqlExpressions).GetMethod(name)!;
+
+	// --- shared coercion helpers for the string / math / datetime / conversion scalars ---
+
+	// The single argument of a 1-argument function, with a function-named error.
+	static Expr OneArg(IReadOnlyList<Expr> args, string fn)
+	{
+		if (args.Count != 1)
+			throw new UnsupportedKqlException($"{fn}() takes exactly 1 argument, got {args.Count}");
+		return args[0];
+	}
+
+	static void RequireString(Expr e, string fn)
+	{
+		if (e.Type != typeof(string))
+			throw new UnsupportedKqlException($"{fn}() requires a string argument, got {KqlScalar.FriendlyTypeName(e.Type)}");
+	}
+
+	// A numeric argument lifted to a NULLABLE target numeric (long?/double?), so each math scalar has ONE
+	// signature instead of a T/T? pair and stays TOTAL: a malformed/missing bag value arrives as null
+	// through toint/todouble and must PROPAGATE (Kusto's null rule), never throw.
+	static Expr LiftNumeric(Expr e, Type target, string fn)
+	{
+		if (!KqlScalar.IsNumericValue(e.Type))
+			throw new UnsupportedKqlException(
+				$"{fn}() requires a numeric argument, got {KqlScalar.FriendlyTypeName(e.Type)}");
+		return KqlScalar.ConvertToValue(e, typeof(Nullable<>).MakeGenericType(target));
+	}
+
+	// The REAL domain a Kusto math scalar works in: lift to double?, then pin to the SQL REAL type
+	// (AsRealN), so an integral-valued double CONSTANT is not printed as a bare integer literal — the
+	// long-standing linq2db hazard documented on KqlSqlExpressions.AsReal — and DuckDB does not resolve the
+	// overload against DECIMAL/INTEGER.
+	static Expr ToReal(Expr e, string fn) =>
+		Expr.Call(SqlM(nameof(KqlSqlExpressions.AsRealN)), LiftNumeric(e, typeof(double), fn));
+
+	static Expr RealFn(IReadOnlyList<Expr> args, string fn, string method) =>
+		Expr.Call(SqlM(method), ToReal(OneArg(args, fn), fn));
+
+	static Expr RealPred(IReadOnlyList<Expr> args, string fn, string method) =>
+		Expr.Call(SqlM(method), ToReal(OneArg(args, fn), fn));
+
+	static Expr StringFn1(IReadOnlyList<Expr> args, string fn, string method)
+	{
+		var a = OneArg(args, fn);
+		RequireString(a, fn);
+		return Expr.Call(SqlM(method), a);
+	}
+
+	// Kusto casts a non-string scalar to string inside the string functions ("If the arguments aren't of
+	// string type, they'll be forcibly converted to string") — reuse tostring()'s coercion.
+	static Expr ToStr(Expr e, string fn) => e.Type == typeof(string) ? e : ToStringConv([e], null!);
+
+	// A datetime argument in the EPOCH-MS domain these shims speak: native for the SQL/record context,
+	// bridged through ToUnixMs in the row context (the same bridge StartOf uses).
+	static Expr ToMs(Expr instant) =>
+		instant.Type == typeof(DateTime) ? Expr.Call(SqlM(nameof(KqlSqlExpressions.ToUnixMs)), instant) : instant;
+
+	// ms-domain → this context's instant representation (the mirror of ToMs).
+	static Expr FromMs(Expr ms, bool asDateTime) =>
+		asDateTime ? Expr.Call(SqlM(nameof(KqlSqlExpressions.FromUnixMs)), ms) : ms;
+
+	// floor-order-invariant CommonValueType that names the function in its error instead of saying "incompatible
+	// result types" with no context.
+	static Type Unified(IReadOnlyList<Expr> args, string fn)
+	{
+		try
+		{
+			return KqlScalar.CommonValueType(args.Select(a => a.Type).ToList());
+		}
+		catch (UnsupportedKqlException ex)
+		{
+			throw new UnsupportedKqlException($"{fn}(): {ex.Message}");
+		}
+	}
+
+	// --- string scalars ---
+
+	// indexof(string, match[, start[, length[, occurrence]]]) — ZERO-based, -1 when absent (kusto/query/
+	// indexof-function). `occurrence` (the Nth match) needs a per-row loop no SQL dialect can express, so it
+	// is refused PRECISELY instead of silently returning the first match's index; the default value 1 is of
+	// course accepted.
+	static Expr IndexOf(IReadOnlyList<Expr> args, ScalarContext ctx)
+	{
+		if (args.Count is < 2 or > 5)
+			throw new UnsupportedKqlException(
+				$"indexof() takes 2 to 5 arguments (string, match[, start[, length[, occurrence]]]), got {args.Count}");
+		RequireString(args[0], "indexof");
+		RequireString(args[1], "indexof");
+		if (args.Count == 5 && args[4] is not System.Linq.Expressions.ConstantExpression { Value: 1L })
+			throw new UnsupportedKqlException(
+				"indexof() occurrence other than 1 is not supported: locating the Nth match needs a per-row loop "
+				+ "that no SQL dialect offers (this engine has a single SQL path). Use a 4-argument indexof().");
+		var start = args.Count >= 3 ? RequireLong(args[2], "indexof() start") : Expr.Constant(0L);
+		var length = args.Count >= 4 ? RequireLong(args[3], "indexof() length") : Expr.Constant(-1L);
+		return Expr.Call(SqlM(nameof(KqlSqlExpressions.IndexOf)), args[0], args[1], start, length);
+	}
+
+	// replace_string(text, lookup, rewrite) — all NON-overlapping matches (kusto/query/replace-string-function).
+	static Expr ReplaceString(IReadOnlyList<Expr> args, ScalarContext ctx)
+	{
+		if (args.Count != 3)
+			throw new UnsupportedKqlException(
+				$"replace_string() takes exactly 3 arguments (text, lookup, rewrite), got {args.Count}");
+		foreach (var a in args)
+			RequireString(a, "replace_string");
+		return Expr.Call(SqlM(nameof(KqlSqlExpressions.ReplaceString)), args[0], args[1], args[2]);
+	}
+
+	// trim/trim_start/trim_end take a REGEX and strip ALL leading/trailing matches of it (kusto/query/
+	// trim-function). A single regexp_replace cannot loop, so the pattern is rewritten at COMPILE time into an
+	// anchored, greedily repeated one — `^(?:P)+` / `(?:P)+$` — whose repetition consumes the same run of
+	// matches Kusto's loop does. Hence the literal-regex requirement: the pattern becomes part of the SQL.
+	static Expr Trim(IReadOnlyList<Expr> args, string fn)
+	{
+		if (args.Count != 2)
+			throw new UnsupportedKqlException($"{fn}() takes exactly 2 arguments (regex, source), got {args.Count}");
+		if (args[0] is not System.Linq.Expressions.ConstantExpression { Value: string regex })
+			throw new UnsupportedKqlException($"{fn}() requires a string LITERAL regular expression as its first argument");
+		if (regex.Length == 0)
+			throw new UnsupportedKqlException($"{fn}() requires a non-empty regular expression");
+		RequireString(args[1], fn);
+		var source = args[1];
+		if (fn is "trim" or "trim_start")
+			source = Expr.Call(SqlM(nameof(KqlSqlExpressions.RegexTrim)), source,
+				Expr.Constant("^(?:" + regex + ")+", typeof(string)));
+		if (fn is "trim" or "trim_end")
+			source = Expr.Call(SqlM(nameof(KqlSqlExpressions.RegexTrim)), source,
+				Expr.Constant("(?:" + regex + ")+$", typeof(string)));
+		return source;
+	}
+
+	// strcat_delim(delimiter, arg1, arg2, …) — 2..64 values joined by the first argument (kusto/query/
+	// strcat-delim-function; `strcat_delim('-', 1, '2')` = '1-2'). A NULL argument renders as EMPTY, exactly
+	// like strcat, so the fold rides the same StrCat2 shim (a plain `||` on both dialects).
+	static Expr StrcatDelim(IReadOnlyList<Expr> args, ScalarContext ctx)
+	{
+		if (args.Count < 3)
+			throw new UnsupportedKqlException(
+				$"strcat_delim() takes a delimiter and at least 2 values, got {args.Count} arguments");
+		RequireString(args[0], "strcat_delim");
+		var delimiter = args[0];
+		var acc = ToStr(args[1], "strcat_delim");
+		for (var i = 2; i < args.Count; i++)
+			acc = Expr.Call(SqlM(nameof(KqlSqlExpressions.StrCat2)),
+				Expr.Call(SqlM(nameof(KqlSqlExpressions.StrCat2)), acc, delimiter),
+				ToStr(args[i], "strcat_delim"));
+		return acc;
+	}
+
+	// format_bytes(size[, precision[, units]]) — 1024-based units, auto-selected by magnitude unless `units`
+	// is given, precision defaulting to 0 (kusto/query/format-bytes-function: 10332,1 -> '10.1 KB';
+	// 20010332 -> '19 MB'; 20010332,2 -> '19.08 MB'; 20010332,0,'KB' -> '19541 KB'). The ladder is folded as a
+	// CASE over the magnitude and each rung renders with printf, which measured identical on SQLite and
+	// DuckDB. `precision` and `units` are compile-time literals because they pick the format string and the
+	// divisor.
+	static Expr FormatBytes(IReadOnlyList<Expr> args, ScalarContext ctx)
+	{
+		if (args.Count is < 1 or > 3)
+			throw new UnsupportedKqlException(
+				$"format_bytes() takes 1 to 3 arguments (size[, precision[, units]]), got {args.Count}");
+		var size = ToReal(args[0], "format_bytes");
+		var digits = 0L;
+		if (args.Count >= 2)
+		{
+			if (args[1] is not System.Linq.Expressions.ConstantExpression { Value: long literalDigits })
+				throw new UnsupportedKqlException("format_bytes() precision must be an integer literal");
+			digits = literalDigits;
+		}
+		if (digits is < 0 or > 15)
+			throw new UnsupportedKqlException($"format_bytes() precision {digits} is out of range (0-15)");
+		string? units = null;
+		if (args.Count == 3)
+		{
+			if (args[2] is not System.Linq.Expressions.ConstantExpression { Value: string u })
+				throw new UnsupportedKqlException(
+					"format_bytes() units must be a string literal (Bytes, KB, MB, GB, TB, PB, EB), or '' for auto-selection");
+			units = u.Length == 0 ? null : u;
+		}
+		return FormatBytesLadder(size, digits, units);
+	}
+
+	static readonly string[] ByteUnits = ["Bytes", "KB", "MB", "GB", "TB", "PB", "EB"];
+
+	static Expr FormatBytesLadder(Expr size, long precision, string? units)
+	{
+		var format = "%." + precision.ToString(CultureInfo.InvariantCulture) + "f";
+		Expr Rung(int k) => Expr.Call(SqlM(nameof(KqlSqlExpressions.FormatBytesRung)),
+			Expr.Divide(size, Expr.Constant(Math.Pow(1024, k), typeof(double?))),
+			Expr.Constant(format, typeof(string)),
+			Expr.Constant(ByteUnits[k], typeof(string)));
+
+		if (units is not null)
+		{
+			var k = Array.FindIndex(ByteUnits, u => string.Equals(u, units, StringComparison.OrdinalIgnoreCase));
+			if (k < 0)
+				throw new UnsupportedKqlException(
+					$"format_bytes() unit '{units}' is not one of Bytes, KB, MB, GB, TB, PB, EB");
+			return Rung(k);
+		}
+
+		// Auto-selection: the largest rung whose divisor does not exceed |size|; a null size stays null (every
+		// rung then renders NULL, because printf(NULL) and the `||` concatenation are null-propagating).
+		var acc = Rung(ByteUnits.Length - 1);
+		for (var k = ByteUnits.Length - 2; k >= 0; k--)
+			acc = Expr.Condition(
+				Expr.LessThan(size, Expr.Constant(Math.Pow(1024, k + 1), typeof(double?)), liftToNull: false, method: null),
+				Rung(k), acc);
+		return acc;
+	}
+
+	// --- math scalars ---
+
+	static Expr Abs(IReadOnlyList<Expr> args, ScalarContext ctx)
+	{
+		var a = OneArg(args, "abs");
+		if (!KqlScalar.IsNumericValue(a.Type))
+			throw new UnsupportedKqlException($"abs() requires a numeric argument, got {KqlScalar.FriendlyTypeName(a.Type)}");
+		return KqlScalar.NonNullable(a.Type) == typeof(double)
+			? Expr.Call(SqlM(nameof(KqlSqlExpressions.AbsDouble)), ToReal(a, "abs"))
+			: Expr.Call(SqlM(nameof(KqlSqlExpressions.AbsLong)), LiftNumeric(a, typeof(long), "abs"));
+	}
+
+	static Expr Sign(IReadOnlyList<Expr> args, ScalarContext ctx) =>
+		Expr.Call(SqlM(nameof(KqlSqlExpressions.Sign)), ToReal(OneArg(args, "sign"), "sign"));
+
+	static Expr Pow(IReadOnlyList<Expr> args, ScalarContext ctx)
+	{
+		if (args.Count != 2)
+			throw new UnsupportedKqlException($"pow() takes exactly 2 arguments (base, exponent), got {args.Count}");
+		return Expr.Call(SqlM(nameof(KqlSqlExpressions.Pow)), ToReal(args[0], "pow"), ToReal(args[1], "pow"));
+	}
+
+	static Expr Round(IReadOnlyList<Expr> args, ScalarContext ctx)
+	{
+		if (args.Count is not (1 or 2))
+			throw new UnsupportedKqlException($"round() takes 1 or 2 arguments (number[, precision]), got {args.Count}");
+		var precision = args.Count == 2 ? RequireLong(args[1], "round() precision") : Expr.Constant(0L);
+		return Expr.Call(SqlM(nameof(KqlSqlExpressions.RoundDouble)), ToReal(args[0], "round"), precision);
+	}
+
+	static Expr Pi(IReadOnlyList<Expr> args, ScalarContext ctx)
+	{
+		if (args.Count != 0)
+			throw new UnsupportedKqlException($"pi() takes no arguments, got {args.Count}");
+		return Expr.Call(SqlM(nameof(KqlSqlExpressions.Pi)));
+	}
+
+	// min_of/max_of(arg, arg_2, …) — 2..64 arguments of ONE type, non-null values taking precedence
+	// (kusto/query/max-of-function). Numerics fold through a HasValue-guarded comparison (the same shape
+	// NullGuard builds, so it translates identically); strings fold through the MinOfString/MaxOfString
+	// shims, whose SQL compares with `>`/`<` (ordinal in both dialects) and whose body uses CompareOrdinal.
+	static Expr MinMax(IReadOnlyList<Expr> args, ScalarContext ctx, string fn, bool max)
+	{
+		if (args.Count < 2)
+			throw new UnsupportedKqlException($"{fn}() takes at least 2 arguments, got {args.Count}");
+		if (args.Count > 64)
+			throw new UnsupportedKqlException($"{fn}() supports at most 64 arguments, got {args.Count}");
+		var t = Unified(args, fn);
+		var isString = KqlScalar.NonNullable(t) == typeof(string);
+		var isInstant = KqlScalar.NonNullable(t) == typeof(DateTime);
+		var unified = args.Select(a => KqlScalar.ConvertToValue(a, t)).ToList();
+		if (isInstant)
+			unified = unified.Select(a => ctx.CoerceInstant(a)).ToList();
+		var acc = unified[0];
+		for (var i = 1; i < unified.Count; i++)
+			acc = isString
+				? Expr.Call(SqlM(max ? nameof(KqlSqlExpressions.MaxOfString) : nameof(KqlSqlExpressions.MinOfString)), acc, unified[i])
+				: MinMaxNumeric(acc, unified[i], max);
+		return acc;
+	}
+
+	static Expr MinMaxNumeric(Expr a, Expr b, bool max)
+	{
+		var cmp = max
+			? Expr.GreaterThan(a, b, liftToNull: false, method: null)
+			: Expr.LessThan(a, b, liftToNull: false, method: null);
+		var pick = Expr.Condition(cmp, a, b);
+		if (!KqlScalar.IsNullable(a.Type))
+			return pick;
+		return Expr.Condition(Expr.Property(a, "HasValue"),
+			Expr.Condition(Expr.Property(b, "HasValue"), pick, a),
+			b);
+	}
+
+	// coalesce(arg, arg_2, …) — "the first arg whose value isn't null (or not-empty for string expressions)"
+	// (kusto/query/coalesce-function). A non-nullable argument always wins, so that fold is resolved at
+	// COMPILE time.
+	static Expr Coalesce(IReadOnlyList<Expr> args, ScalarContext ctx)
+	{
+		if (args.Count == 0)
+			throw new UnsupportedKqlException("coalesce() takes at least 1 argument");
+		if (args.Count > 64)
+			throw new UnsupportedKqlException($"coalesce() supports at most 64 arguments, got {args.Count}");
+		var t = Unified(args, fn: "coalesce");
+		var acc = KqlScalar.ConvertToValue(args[0], t);
+		for (var i = 1; i < args.Count; i++)
+			acc = CoalescePair(acc, KqlScalar.ConvertToValue(args[i], t));
+		return acc;
+	}
+
+	static Expr CoalescePair(Expr a, Expr b)
+	{
+		if (KqlScalar.NonNullable(a.Type) == typeof(string))
+			return Expr.Call(SqlM(nameof(KqlSqlExpressions.CoalesceString)), a, b);
+		return KqlScalar.IsNullable(a.Type)
+			? Expr.Condition(Expr.Property(a, "HasValue"), a, b)
+			: a;
+	}
+
+	// --- datetime parts / arithmetic ---
+
+	// A calendar part of an instant as an integer (dayofmonth/dayofyear/monthofyear/hourofday/week_of_year
+	// and the `dayofweek` TIMESPAN, which is `ticks = true`). The instant is bridged into the epoch-ms domain
+	// the shims speak; `ticks` results are bridged back into the context's duration representation.
+	static Expr InstantExtract(IReadOnlyList<Expr> args, ScalarContext ctx, string fn, string method, bool ticks = false)
+	{
+		var value = Expr.Call(SqlM(method), ToMs(ctx.CoerceInstant(OneArg(args, fn))));
+		return ticks ? ctx.CoerceTicks(value) : value;
+	}
+
+	// datetime_part(part, datetime) — an integer part of the instant (kusto/query/datetime-part-function;
+	// 2017-10-30 01:02:03.765 → year 2017, quarter 4, month 10, week_of_year 44, day 30, dayOfYear 303,
+	// hour 1, minute 2, second 3, millisecond 765). microsecond/nanosecond are refused: the engine's instant
+	// representation is an epoch-MILLISECOND long, so those digits do not exist.
+	static Expr DateTimePart(IReadOnlyList<Expr> args, ScalarContext ctx)
+	{
+		if (args.Count != 2)
+			throw new UnsupportedKqlException($"datetime_part() takes exactly 2 arguments (part, datetime), got {args.Count}");
+		if (args[0] is not System.Linq.Expressions.ConstantExpression { Value: string part })
+			throw new UnsupportedKqlException("datetime_part() part must be a string literal");
+		var ms = ToMs(ctx.CoerceInstant(args[1]));
+		Expr Call(string m) => Expr.Call(SqlM(m), ms);
+		return part.ToLowerInvariant() switch
+		{
+			"year" => Call(nameof(KqlSqlExpressions.YearOfMs)),
+			"quarter" => Call(nameof(KqlSqlExpressions.QuarterOfMs)),
+			"month" => Call(nameof(KqlSqlExpressions.MonthOfMs)),
+			"week_of_year" => Call(nameof(KqlSqlExpressions.WeekOfYearOfMs)),
+			"day" => Call(nameof(KqlSqlExpressions.DayOfMonthOfMs)),
+			"dayofyear" => Call(nameof(KqlSqlExpressions.DayOfYearOfMs)),
+			"hour" => Call(nameof(KqlSqlExpressions.HourOfMs)),
+			"minute" => Call(nameof(KqlSqlExpressions.MinuteOfMs)),
+			"second" => Call(nameof(KqlSqlExpressions.SecondOfMs)),
+			// ((ms % 1000) + 1000) % 1000 — the non-negative remainder, on both dialects (SQLite's % truncates
+			// toward zero, so a pre-epoch instant would otherwise yield a negative millisecond).
+			"millisecond" => Expr.Modulo(
+				Expr.Add(Expr.Modulo(ms, Expr.Constant(1000L)), Expr.Constant(1000L)), Expr.Constant(1000L)),
+			_ => throw UnsupportedPart("datetime_part", part,
+				"year, quarter, month, week_of_year, day, dayofyear, hour, minute, second, millisecond"),
+		};
+	}
+
+	static UnsupportedKqlException UnsupportedPart(string fn, string part, string supported) =>
+		new($"{fn}() part '{part}' is not supported (supported: {supported}); microsecond/nanosecond are below the "
+			+ "engine's millisecond instant resolution, and year/quarter/month arithmetic has no portable SQL "
+			+ "translation (SQLite normalises an end-of-month overflow where Kusto clamps)");
+
+	// datetime_add(part, amount, datetime) — a period multiplied by an amount, added to an instant
+	// (kusto/query/datetime-add-function). FIXED-WIDTH parts are pure epoch-ms arithmetic and translate on
+	// both dialects; the CALENDAR parts (year/quarter/month) are refused by name — see UnsupportedPart.
+	static Expr DateTimeAdd(IReadOnlyList<Expr> args, ScalarContext ctx)
+	{
+		if (args.Count != 3)
+			throw new UnsupportedKqlException($"datetime_add() takes exactly 3 arguments (part, amount, datetime), got {args.Count}");
+		if (args[0] is not System.Linq.Expressions.ConstantExpression { Value: string part })
+			throw new UnsupportedKqlException("datetime_add() part must be a string literal");
+		var amount = RequireLong(args[1], "datetime_add() amount");
+		var instant = ctx.CoerceInstant(args[2]);
+		var asDateTime = instant.Type == typeof(DateTime);
+		var ms = ToMs(instant);
+		var added = part.ToLowerInvariant() switch
+		{
+			"week" => Offset(ms, amount, 604_800_000L),
+			"day" => Offset(ms, amount, 86_400_000L),
+			"hour" => Offset(ms, amount, 3_600_000L),
+			"minute" => Offset(ms, amount, 60_000L),
+			"second" => Offset(ms, amount, 1_000L),
+			"millisecond" => Expr.Add(ms, amount),
+			_ => throw UnsupportedPart("datetime_add", part,
+				"week, day, hour, minute, second, millisecond"),
+		};
+		return FromMs(added, asDateTime);
+	}
+
+	static Expr Offset(Expr ms, Expr amount, long unitMs) =>
+		Expr.Add(ms, Expr.Multiply(amount, Expr.Constant(unitMs)));
+
+	// endofday/endofweek/endofmonth(date[, offset]) — the LAST instant of the containing day/week/month,
+	// shifted by `offset` of those units (kusto/query/endofday-function: endofday(2017-01-01 10:10:17) is
+	// 2017-01-01T23:59:59.9999999; endofweek is SATURDAY-anchored, so the week starts on the preceding
+	// Sunday — the same anchor startofweek uses). The engine's resolution is a MILLISECOND, so `end` is
+	// .999: Kusto's 7-digit .9999999 truncated to the storage resolution.
+	static Expr EndOf(IReadOnlyList<Expr> args, ScalarContext ctx, string fn)
+	{
+		if (args.Count is not (1 or 2))
+			throw new UnsupportedKqlException($"{fn}() takes 1 or 2 arguments (date[, offset]), got {args.Count}");
+		var instant = ctx.CoerceInstant(args[0]);
+		var asDateTime = instant.Type == typeof(DateTime);
+		var ms = ToMs(instant);
+		var offset = args.Count == 2 ? RequireLong(args[1], $"{fn}() offset") : Expr.Constant(0L);
+		var last = fn switch
+		{
+			"endofday" => Expr.Add(Offset(Expr.Call(SqlM(nameof(KqlSqlExpressions.StartOfDayMs)), ms), offset, 86_400_000L),
+				Expr.Constant(86_399_999L)),
+			"endofweek" => Expr.Subtract(
+				Offset(Expr.Call(SqlM(nameof(KqlSqlExpressions.StartOfWeekMs)), ms),
+					Expr.Add(offset, Expr.Constant(1L)), 604_800_000L), Expr.Constant(1L)),
+			_ => EndOfMonth(ms, offset),
+		};
+		return FromMs(last, asDateTime);
+	}
+
+	// The last millisecond of the containing month, for the two offsets that are EXACT in arithmetic: 0 =
+	// start of the NEXT month minus one millisecond (any instant in month M plus 32 days lands in M+1, since
+	// no month is longer than 31 days), -1 = start of THIS month minus one millisecond. Any other offset
+	// needs calendar-month arithmetic, which has no portable translation (see UnsupportedPart).
+	static Expr EndOfMonth(Expr ms, Expr offset)
+	{
+		if (TryConstLong(offset, out var n) && n is 0 or -1)
+			return Expr.Subtract(
+				Expr.Call(SqlM(nameof(KqlSqlExpressions.StartOfMonthMs)),
+					n == 0 ? Expr.Add(ms, Expr.Constant(32 * 86_400_000L)) : ms),
+				Expr.Constant(1L));
+		throw new UnsupportedKqlException(
+			"endofmonth() supports the offsets 0 and -1 only: other month offsets need calendar-month arithmetic, "
+			+ "which has no portable SQL translation (SQLite normalises an end-of-month overflow where Kusto clamps)");
+	}
+
+	// A compile-time integer constant, folded through the unary-minus/convert wrappers a Kusto literal arrives
+	// in (`-1` parses as UnaryMinus(1), so it is NOT a ConstantExpression on its own).
+	static bool TryConstLong(Expr e, out long value)
+	{
+		switch (e)
+		{
+			case System.Linq.Expressions.ConstantExpression { Value: long v }:
+				value = v;
+				return true;
+			case System.Linq.Expressions.UnaryExpression
+			{
+				NodeType: System.Linq.Expressions.ExpressionType.Negate,
+				Operand: System.Linq.Expressions.ConstantExpression { Value: long v },
+			}:
+				value = -v;
+				return true;
+			case System.Linq.Expressions.UnaryExpression
+			{
+				NodeType: System.Linq.Expressions.ExpressionType.Convert,
+				Operand: System.Linq.Expressions.ConstantExpression { Value: long v },
+			}:
+				value = v;
+				return true;
+			default:
+				value = 0;
+				return false;
+		}
+	}
+
+	// make_datetime(year, month, day[, hour[, minute[, second]]]) — a datetime from calendar fields, folded at
+	// COMPILE time like now()/ago() (kusto/query/make-datetime-function). .NET's DateTime constructor does the
+	// validation, which no dialect offers portably: measured, SQLite silently NORMALISES '2024-02-31' to
+	// 2024-03-02 while DuckDB raises — a silent year-shifting divergence this refuses to ship. Kusto yields
+	// NULL for an impossible date; the engine has no null datetime literal, so the fields are refused by name
+	// instead.
+	static Expr MakeDateTime(IReadOnlyList<Expr> args, ScalarContext ctx)
+	{
+		if (args.Count is < 3 or > 6)
+			throw new UnsupportedKqlException(
+				$"make_datetime() takes 3 to 6 arguments (year, month, day[, hour[, minute[, second]]]), got {args.Count}");
+
+		long Field(int i, string what)
+		{
+			if (args[i] is not System.Linq.Expressions.ConstantExpression { Value: long v })
+				throw new UnsupportedKqlException(
+					$"make_datetime() requires constant arguments (it is folded at compile time); {what} is not an integer literal");
+			return v;
+		}
+
+		double FieldReal(int i, string what) => args[i] is System.Linq.Expressions.ConstantExpression c
+			? c.Value switch
+			{
+				long l => l,
+				double d => d,
+				_ => throw new UnsupportedKqlException($"make_datetime() {what} must be a numeric literal"),
+			}
+			: throw new UnsupportedKqlException(
+				$"make_datetime() requires constant arguments (it is folded at compile time); {what} is not a literal");
+
+		var year = Field(0, "year");
+		var month = Field(1, "month");
+		var day = Field(2, "day");
+		var hour = args.Count >= 4 ? Field(3, "hour") : 0;
+		var minute = args.Count >= 5 ? Field(4, "minute") : 0;
+		var second = args.Count >= 6 ? FieldReal(5, "second") : 0;
+		if (year is < 1 or > 9999 || hour is < 0 or > 23 || minute is < 0 or > 59 || second is < 0 or >= 60)
+			throw InvalidDateTime(year, month, day, hour, minute, second);
+		DateTime dt;
+		try
+		{
+			dt = new DateTime((int)year, (int)month, (int)day, (int)hour, (int)minute, 0, DateTimeKind.Utc)
+				.AddMilliseconds(Math.Round(second * 1000, MidpointRounding.AwayFromZero));
+		}
+		catch (ArgumentOutOfRangeException)
+		{
+			throw InvalidDateTime(year, month, day, hour, minute, second);
+		}
+		return ctx.CoerceInstant(Expr.Constant(dt));
+	}
+
+	static UnsupportedKqlException InvalidDateTime(long y, long mo, long d, long h, long mi, double s) =>
+		new($"make_datetime({y}, {mo}, {d}, {h}, {mi}, {s.ToString(CultureInfo.InvariantCulture)}) is not a valid "
+			+ "datetime (Kusto yields null here; the engine folds make_datetime at compile time and refuses rather "
+			+ "than shifting the date)");
+
+	// make_timespan(hour, minute[, second]) / make_timespan(day, hour, minute, second) — a duration from its
+	// parts (kusto/query/make-timespan-function). Hour 0-23, minute 0-59, second < 60 — out of range yields NULL,
+	// which the shim's CASE reproduces on both dialects (units the arity does not carry are 0). The result is a
+	// TIMESPAN: ticks in the SQL/record domain, TimeSpan in the row domain (CoerceTicks).
+	static Expr MakeTimespan(IReadOnlyList<Expr> args, ScalarContext ctx)
+	{
+		if (args.Count is not (2 or 3 or 4))
+			throw new UnsupportedKqlException(
+				$"make_timespan() takes 2, 3 or 4 arguments — (hour, minute[, second]) or (day, hour, minute, second) — got {args.Count}");
+		Expr day, hour, minute;
+		var secondIndex = -1;
+		if (args.Count == 4)
+		{
+			day = RequireLong(args[0], "make_timespan() day");
+			hour = RequireLong(args[1], "make_timespan() hour");
+			minute = RequireLong(args[2], "make_timespan() minute");
+			secondIndex = 3;
+		}
+		else
+		{
+			day = Expr.Constant(0L);
+			hour = RequireLong(args[0], "make_timespan() hour");
+			minute = RequireLong(args[1], "make_timespan() minute");
+			secondIndex = args.Count == 3 ? 2 : -1;
+		}
+		var second = secondIndex < 0
+			? Expr.Constant(0.0)
+			: (Expr)Expr.Convert(LiftNumeric(args[secondIndex], typeof(double), "make_timespan"), typeof(double));
+		return ctx.CoerceTicks(Expr.Call(SqlM(nameof(KqlSqlExpressions.MakeTimespanTicks)), day, hour, minute, second));
+	}
+
+	// --- tohex ---
+
+	// tohex(value[, minLength]) — the two's-complement hex rendering (kusto/query/tohex-function: tohex(256) =
+	// '100', tohex(-256) = 'ffffffffffffff00', tohex(256, 8) = '00000100'). minLength is a compile-time
+	// literal (1-16; it picks the printf width) and, per Kusto, is a MINIMUM — a longer rendering is never
+	// truncated — so it is applied as the printf/ToString width. An int argument renders its 32-bit two's
+	// complement ('ffffff00'), a long its 64-bit one.
+	static Expr ToHex(IReadOnlyList<Expr> args, ScalarContext ctx)
+	{
+		if (args.Count is not (1 or 2))
+			throw new UnsupportedKqlException($"tohex() takes 1 or 2 arguments (value[, minLength]), got {args.Count}");
+		var value = args[0];
+		var integral = KqlScalar.NonNullable(value.Type);
+		if (integral != typeof(long) && integral != typeof(int))
+			throw new UnsupportedKqlException(
+				$"tohex() requires an integer argument, got {KqlScalar.FriendlyTypeName(value.Type)}");
+		long minLength = 0;
+		if (args.Count == 2)
+		{
+			if (args[1] is not System.Linq.Expressions.ConstantExpression { Value: long n })
+				throw new UnsupportedKqlException("tohex() minLength must be an integer literal");
+			minLength = Math.Clamp(n, 0, 16);
+		}
+		var format = minLength == 0
+			? "%x"
+			: "%0" + minLength.ToString(CultureInfo.InvariantCulture) + "x";
+		var method = integral == typeof(int)
+			? nameof(KqlSqlExpressions.ToHexInt)
+			: nameof(KqlSqlExpressions.ToHexLong);
+		return Expr.Call(SqlM(method), LiftNumeric(value, typeof(long), "tohex"), Expr.Constant(format, typeof(string)));
+	}
 
 	static MethodInfo Method(string name) =>
 		typeof(KqlScalarFunctions).GetMethod(name, BindingFlags.Static | BindingFlags.NonPublic)!;
