@@ -700,10 +700,16 @@ public static class KqlSqlExpressions
 	[Sql.Expression("pi()", ServerSideOnly = true)]
 	public static double Pi() => Math.PI;
 
-	// isnan: `x <> x` is TRUE only for NaN — DuckDB computes it natively; SQLite CANNOT STORE NaN (it
-	// folds every NaN to NULL at the storage boundary), so FALSE is the truthful answer there, not a
-	// divergence papered over. Null pins to FALSE rather than NULL (a total predicate, like isascii).
-	[Sql.Expression("COALESCE({0} <> {0}, FALSE)", ServerSideOnly = true, IsNullable = Sql.IsNullableType.NotNullable)]
+	// isnan: the two dialects need DIFFERENT mechanisms, and the obvious one is wrong on DuckDB.
+	// SQLite cannot store NaN at all — measured: CAST('nan' AS DOUBLE) is 0.0 and there is no isnan() function
+	// — so `x <> x` (which can only ever be false there) is the honest test and no NaN can ever reach it.
+	// DuckDB DOES hold NaN but deliberately breaks IEEE-754: its total order makes 'NaN' = 'NaN' TRUE
+	// (DuckDB's "SQL Quirks" documentation), so `x <> x` returns FALSE for a real NaN there — measured on the
+	// bundled 1.5.5 through the production path: isnan(todouble('nan')) was false where Kusto says true.
+	// Hence the native arm: DuckDB's isnan() answers true/false/NULL as documented (isnan(NULL) is NULL, so
+	// the COALESCE restores the total predicate). KqlScalarFunctionsBatchTests pins a REAL NaN per dialect.
+	[Sql.Expression(ProviderName.SQLite, "COALESCE({0} <> {0}, 0)", ServerSideOnly = true, IsNullable = Sql.IsNullableType.NotNullable)]
+	[Sql.Expression(ProviderName.DuckDB, "COALESCE(isnan({0}), FALSE)", ServerSideOnly = true, IsNullable = Sql.IsNullableType.NotNullable)]
 	public static bool IsNaNFn(double? v) => v is { } x && double.IsNaN(x);
 
 	// isinf: DBL_MAX is finite in both dialects (measured), so `|x| > DBL_MAX` is true exactly for ±inf.
@@ -802,11 +808,13 @@ public static class KqlSqlExpressions
 	// === tohex: the two's-complement hex rendering of an integer, LOWERCASE (kusto/query/tohex-function:
 	// tohex(256) = '100', tohex(-256) = 'ffffffffffffff00', tohex(256, 8) = '00000100'). Non-negative values
 	// print minimally or zero-padded to the compile-time minLength; NEGATIVE values print their full
-	// two's-complement width (16 digits for a long, 8 for an int). printf's own %x prints a MINUS SIGN for a
-	// negative argument, so the negative arm splits the value into two 32-bit halves and masks each: SQLite
-	// has no unsigned cast at all, and DuckDB's `>>` is a LOGICAL shift (measured: -256 >> 32 gave 0 there),
-	// so the high half goes through a FLOOR division, which is arithmetic on both. `format` is the
-	// compile-time literal ('%08x' / '%x'), so the padding is exact on both sides and needs no dialect arm.
+	// two's-complement width (16 digits for a long, 8 for an int). printf's %x already renders the
+	// two's-complement digits for a negative argument on BOTH dialects (measured: printf('%08x', -256) is
+	// 'ffffffffffffff00' on SQLite and DuckDB alike), so the mask below is NOT there to recover the value —
+	// it is there to pin the WIDTH: printf's width is a MINIMUM, so the 64-bit rendering ignores '%08x', and
+	// only masking to 32 bits yields Kusto's 8-digit int form. The long arm then derives its high half with a
+	// FLOOR division rather than `>>`, which is a LOGICAL shift on DuckDB (measured: -256 >> 32 gave 0 there),
+	// so one mask shape is arithmetic on both. `format` is the compile-time literal ('%08x' / '%x').
 	[Sql.Expression(
 		"(CASE WHEN {0} < 0 THEN printf('%08x%08x', CAST(floor({0} / 4294967296.0) AS BIGINT) & 4294967295, {0} & 4294967295) ELSE printf({1}, {0}) END)",
 		ServerSideOnly = true, IsNullable = Sql.IsNullableType.Nullable)]

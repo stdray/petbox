@@ -1365,7 +1365,22 @@ static class KqlScalarFunctions
 			// work/kql-scalar-strings-math-datetime). Every entry carries a PORTABLE per-dialect SQL
 			// translation: this engine has no in-memory execution path (KqlTransformer.ExecutePipeline), so
 			// a shim that cannot translate SQLite AND DuckDB identically is not a fallback, it is a broken
-			// query. Where no such translation exists the function is absent (see the card's drop list). ---
+			// query. ---
+			//
+			// THE DROP LIST — the scalars this wave deliberately does NOT register. Each absence is a TYPE-MODEL or
+			// single-SQL-path limit, not an oversight, and none of them may be faked with a string/double stand-in:
+			//   split           — returns `dynamic` (an array); the engine models no dynamic type.
+			//   strcat_array    — takes a `dynamic` array; same missing type.
+			//   replace_strings — takes a dynamic array of from/to pairs; same missing type.
+			//   toguid          — `guid` is not a modelled type (a string stand-in would not order/compare as one).
+			//   todecimal       — `decimal` is not a modelled type (double loses the exactness the type exists for).
+			//   typeof          — the type name of a value is per-row and DYNAMIC, and the dialects spell it
+			//                     differently ('integer'/'real' vs 'INTEGER'/'DECIMAL'); a compile-time CLR name
+			//                     would lie for every Properties value.
+			//   countof         — counts OVERLAPPING occurrences, which needs a per-row loop no SQL dialect has;
+			//                     the non-overlapping replace() trick would answer 2 where Kusto says 3 — silently wrong.
+			//   reverse         — no SQLite reverse() and no portable character loop.
+			//   totimespan      — the string→timespan grammar ("[-][d.]hh:mm:ss[.fffffff]") has no portable parse.
 
 			// string
 			["strlen"] = (a, c) => StringFn1(a, "strlen", nameof(KqlSqlExpressions.StrLen)),
