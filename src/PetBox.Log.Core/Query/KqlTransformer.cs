@@ -384,17 +384,15 @@ public static partial class KqlTransformer
 	static Type Nullable(Type t) =>
 		t.IsValueType && !KqlScalar.IsNullable(t) ? typeof(Nullable<>).MakeGenericType(t) : t;
 
-	// --- post-shape (in-memory) order by / take / top / distinct ---
-	// These run after a shape change, over the streamed object?[] rows. order/top buffer the
-	// whole stream (a sort must); take just truncates. Sort keys compile through the wave-1
-	// scalar engine over the current row shape, so they may reference computed columns.
+	// --- post-shape order by / take / top / distinct: ALL of them compose in SQL ---
+	// HISTORY, recorded so nobody rebuilds it: these once ran over streamed object?[] rows with an in-memory
+	// sort. That stage was deleted with the single-path migration (4e35c8e2) and nothing replaced it — a
+	// shape-changed pipeline continues through ComposeOrder / ComposeTake / ComposeTop / ComposeDistinct on the
+	// composed SqlStage, where sort keys compile straight to SQL and may reference computed columns.
 
-	// Compares boxed scalar values (long/double/string/DateTime/…) for post-shape sorting.
-	// Comparer<object>.Default routes to the boxed value's IComparable and treats null as the
-	// smallest value, matching Kusto's nulls-first ascending order. STRINGS compare ORDINAL: the
-	// pre-split ORDER BY runs under SQLite's BINARY collation, and String.CompareTo (culture-
-	// sensitive) would order the same clause differently by pipeline position ("apple" before
-	// "Banana" post-split, after it pre-split).
+	// UNUSED LEFTOVER of that deleted in-memory sort: nothing references this type and it orders nothing. Its
+	// one rule, were it ever revived — STRING keys compare ORDINAL, matching the SQL BINARY collation, so the
+	// answer cannot depend on the pipeline position of the sort.
 	sealed class BoxedComparer : IComparer<object?>
 	{
 		public static readonly BoxedComparer Instance = new();
@@ -409,7 +407,7 @@ public static partial class KqlTransformer
 	// subquery over the SAME log (`events`/`spans`), composed by the same transformer against the same
 	// IQueryable source (TryComposeSubqueryStage). ---
 
-	enum JoinKind { InnerUnique, Inner, LeftOuter }
+	enum JoinKind { InnerUnique, Inner, LeftOuter, LeftSemi, LeftAnti }
 
 	static JoinKind ParseJoinKind(SyntaxList<NamedParameter> parameters, string opName, JoinKind defaultKind)
 	{
@@ -421,13 +419,19 @@ public static partial class KqlTransformer
 			if (!string.Equals(name, "kind", StringComparison.Ordinal))
 				throw new UnsupportedKqlException($"{opName} parameter '{name}' not supported (only 'kind' is supported)");
 			var value = (p.Expression as LiteralExpression)?.LiteralValue?.ToString();
+			// One spelling per kind: Kusto ALSO documents `anti`/`leftantisemi` as aliases of `leftanti` (and
+			// `rightsemi`/`rightanti`/`fullouter`, which stay unsupported). Aliases are refused BY DESIGN and
+			// must not be added for these two alone — no kind here accepts one (innerunique/inner/leftouter
+			// don't either), so the error below stays the complete list of what works.
 			kind = value switch
 			{
 				"innerunique" => JoinKind.InnerUnique,
 				"inner" => JoinKind.Inner,
 				"leftouter" => JoinKind.LeftOuter,
+				"leftsemi" => JoinKind.LeftSemi,
+				"leftanti" => JoinKind.LeftAnti,
 				_ => throw new UnsupportedKqlException(
-					$"{opName} kind '{value}' not supported (supported: innerunique, inner, leftouter)"),
+					$"{opName} kind '{value}' not supported (supported: innerunique, inner, leftouter, leftsemi, leftanti)"),
 			};
 		}
 		return kind;

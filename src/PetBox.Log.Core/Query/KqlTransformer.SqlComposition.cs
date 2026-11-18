@@ -11,8 +11,10 @@ using MemberBinding = System.Linq.Expressions.MemberBinding;
 namespace PetBox.Log.Core.Query;
 
 // ========================================================================================
-// SINGLE-SQL-PATH MIGRATION (spec: kql-single-path-impl). Post-split ops migrated from the in-memory
-// Stream* path to ONE composable SQL query: count, distinct, project, extend, order/sort, take, top.
+// SINGLE-SQL-PATH (spec: kql-single-path-impl). HISTORY, stated once: the post-split ops used to run in an
+// in-memory row-by-row path, and 4e35c8e2 DELETED it. Today they fold into ONE composable SQL query —
+// count, distinct, project, extend, order/sort, take, top, where, summarize, join, lookup, mv-expand, parse
+// — and an op that cannot compose is REFUSED, never handed to a second path (see the compose loop).
 //
 // THE LOGICAL-TYPE ↔ STORAGE-TYPE MAPPING LAYER
 //   A pipeline column carries a LOGICAL type (KqlColumn.ClrType — DateTime/TimeSpan/string/long/int/
@@ -28,25 +30,28 @@ namespace PetBox.Log.Core.Query;
 //   (element type = the record type, or a runtime-emitted DynRow after a project/extend/distinct), its
 //   LOGICAL column schema, a ScalarContext factory over the element type (EmittedStorageScalarContext for
 //   emitted rows — so a DOWNSTREAM stage resolves columns an upstream stage produced), and how to
-//   materialize one element to a logical object?[]. Migrated ops CHAIN in SQL (project→order→take = one
-//   query); at the first un-migrated op (summarize/mv-expand/parse/join/where-post-split) the stage
-//   materializes and the remainder runs on the existing in-memory Stream* path.
+//   materialize one element to a logical object?[]. Ops CHAIN in SQL (project→order→take = one query); an
+//   op that cannot compose — an expression the storage context cannot translate, a construct with no SQL
+//   arm — returns null, and the compose loop then REFUSES it with a precise error. Nothing runs elsewhere.
 //
 // LOGICAL TYPING (Option 2)
 //   Each project/extend output expression is compiled TWICE: over the record/emitted context (STORAGE,
 //   for the SELECT) and over RowScalarContext purely to read its LOGICAL type (.Type). RowScalarContext is
-//   the semantic authority (identical to the in-memory path): if it throws, the query errors identically
-//   on both pipeline positions; if it accepts, the storage value is mapping-converted to that logical type.
+//   the semantic authority (it carries the same logical typing the materialized rows do): if it throws, the
+//   query errors identically on both pipeline positions; if it accepts, the storage value is
+//   mapping-converted to that logical type.
 //
-// TRANSIENT bridge: if an output expression is not SQL-translatable in the storage context (it THROWS),
-//   the WHOLE stage returns null and runs in-memory. As of the datetime-translation wave this fires for
-//   ZERO expressions in the test suite (bin(datetime,timespan), the last gap, now translates via epoch-ms
-//   bucketing). It remains a safety net whose resolution is always to ADD the SQL translation, never to
-//   keep an expression in-memory as the goal.
+// NON-TRANSLATABLE OUTPUT = REFUSAL: if an output expression cannot be translated in the storage context (it
+//   THROWS), the WHOLE stage returns null and the operator is REFUSED with that precise error. As of the
+//   datetime-translation wave this fires for ZERO expressions in the test suite (bin(datetime,timespan), the
+//   last gap, now translates via epoch-ms bucketing). Its resolution is always to ADD the SQL translation —
+//   there is no in-memory path for an expression to survive in.
 //
 // PROVIDER PARITY (DynRow / ordinal string order)
-//   Production is always linq2db+SQLite; unit tests run over in-memory EnumerableQuery. Emitted rows derive
-//   from DynRow (structural equality) so EnumerableQuery's .Distinct() dedups BY VALUE like SQL DISTINCT.
+//   Production is always linq2db (SQLite); the differential suite adds DuckDb over the SAME linq2db path.
+//   No caller passes a plain in-memory IQueryable any more, but the two rules below are what keep every
+//   provider in agreement if one ever does. Emitted rows derive from DynRow (structural equality) so
+//   EnumerableQuery's .Distinct() dedups BY VALUE like SQL DISTINCT.
 //   String ORDER BY passes StringComparer.Ordinal to OrderBy: linq2db ignores it (SQL default collation =
 //   BINARY = ordinal-byte), EnumerableQuery honors it — so all three (in-memory Ordinal, SQLite BINARY,
 //   EnumerableQuery) agree on ordinal. Numeric/temporal(epoch-ms)/bool keys are collation-free.
@@ -85,7 +90,7 @@ public static partial class KqlTransformer
 				break;
 			}
 			// A no-`by` summarize is TERMINAL like count: a bare aggregate that always yields ONE row
-			// (Kusto's empty-input one-default-row rule). Returns null → in-memory fallback.
+			// (Kusto's empty-input one-default-row rule). Null → the operator is REFUSED, like any other.
 			if (postOps[composed] is SummarizeOperator { ByClause: null } noBy)
 			{
 				var r = SqlSummarizeNoBy(stage, noBy, now, options);
@@ -124,9 +129,10 @@ public static partial class KqlTransformer
 		return (stage, composed, counted);
 	}
 
-	// The SQL right-subquery runner: validates the same-log rule (like RunCorrelationSubquery), then
-	// composes the whole right pipeline to a SqlStage — null when it is not fully SQL-composable (any op
-	// fell back, or a terminal count), so the caller falls the whole join back to the in-memory hash join.
+	// The SQL right-subquery runner: validates the same-log rule, then composes the whole right pipeline to a
+	// SqlStage — null when it is not fully SQL-composable (an op that would not compose, or a terminal count).
+	// The caller (ComposeJoin/ComposeLookup) then returns null too, and the join/lookup is REFUSED: there is
+	// no in-memory hash join to fall back to.
 	static SqlStage? TryComposeSubqueryStage<T>(SyntaxNode rightExpr, IQueryable<T> source, DateTime now,
 		string opName, RootSpec<T> spec, KqlTranslationOptions options, SqlSubqueryRunner sqlRunSub)
 	{
@@ -146,7 +152,7 @@ public static partial class KqlTransformer
 		var preResult = ApplyPipeline(source, preOps, spec.MakeContext);
 		var (stage, composed, counted) = ComposeLoop(RecordStage(preResult, spec), postOps, now, sqlRunSub, options);
 		if (counted is not null || composed < postOps.Count)
-			return null; // right side isn't fully SQL → whole join falls back to in-memory
+			return null; // right side isn't fully SQL → the join/lookup is refused (no in-memory path)
 		return stage;
 	}
 
@@ -174,8 +180,8 @@ public static partial class KqlTransformer
 	static KqlResult Materialize(SqlStage stage) =>
 		new(stage.Columns, AsAsyncRows(stage.Query, stage.ElementType, stage.ToLogicalRow));
 
-	// ---- count: COUNT(*) over the current stage's query, one SQL round-trip; output identical to
-	// StreamCount ({ Count: long }). Reflective over the (possibly emitted) element type. ----
+	// ---- count: COUNT(*) over the current stage's query, one SQL round-trip; output identical to the
+	// pre-SQL count ({ Count: long }). Reflective over the (possibly emitted) element type. ----
 	static KqlResult SqlCount(SqlStage stage) => new([new KqlColumn("Count", typeof(long))], SqlCountRows(stage));
 
 	static async IAsyncEnumerable<object?[]> SqlCountRows(SqlStage stage, [EnumeratorCancellation] CancellationToken ct = default)
@@ -190,8 +196,8 @@ public static partial class KqlTransformer
 	static Task<long> LongCountGeneric<TE>(IQueryable<TE> query, CancellationToken ct) => AsyncExtensions.LongCountAsync(query, ct);
 
 	// ---- distinct: SELECT DISTINCT <resolved cols>. Resolves each target over the stage context (record
-	// or emitted), so `distinct A` works after a project too. Dedup happens in SQL (the InMemoryBufferCap is
-	// moot for a migrated distinct). ----
+	// or emitted), so `distinct A` works after a project too. Dedup happens in SQL; the in-memory buffer cap
+	// that bounded the old row-by-row dedup went with that path. ----
 	static SqlStage ComposeDistinct(SqlStage stage, DistinctOperator distinct, DateTime now)
 	{
 		var param = Expr.Parameter(stage.ElementType, "e");
@@ -258,7 +264,7 @@ public static partial class KqlTransformer
 					$"project expression '{element.Element.Kind}' not supported (use a column ref or 'name = expression')"),
 			};
 			if (!TryCompileStorage(exprSyntax, storageCtx, out var storage))
-				return null; // transient: stage runs in-memory until the expr is SQL-translated
+				return null; // never taken: TryCompileStorage THROWS on a non-translatable expr rather than returning false
 			var logicalType = KqlScalar.Compile(exprSyntax, new RowScalarContext(rowParam, working) { UtcNow = now }).Type;
 			working.Add(new KqlColumn(name, logicalType));
 			if (!inputNames.Contains(name))
@@ -529,7 +535,7 @@ public static partial class KqlTransformer
 				throw new UnsupportedKqlException(
 					$"extend expression '{element.Element.Kind}' not supported (use 'name = expression')");
 			if (!TryCompileStorage(exprSyntax, storageCtx, out var storage))
-				return null; // transient in-memory until SQL-translated
+				return null; // never taken: TryCompileStorage THROWS on a non-translatable expr rather than returning false
 			var name = alias.Name.SimpleName;
 			var logicalType = KqlScalar.Compile(exprSyntax, new RowScalarContext(rowParam, columns) { UtcNow = now }).Type;
 			var existing = FindColumnIndex(columns, name);
@@ -546,9 +552,9 @@ public static partial class KqlTransformer
 		return BuildEmittedStage(stage.Query, stage.ElementType, param, cols, distinct: false, now);
 	}
 
-	// ---- order by / sort: ORDER BY over the stage. Keys compile over the stage context (storage domain);
-	// a computed key that is not yet SQL-translatable returns null (transient in-memory). String keys use
-	// the ordinal comparer so all three providers agree (see header). Shape is unchanged. ----
+	// ---- order by / sort: ORDER BY over the stage. Keys compile over the stage context (storage domain); a
+	// key that cannot be translated is REFUSED through that compile (it throws — no in-memory fallback).
+	// String keys use the ordinal comparer so all providers agree (see header). Shape is unchanged. ----
 	static SqlStage? ComposeOrder(SqlStage stage, SortOperator sort, DateTime now)
 	{
 		var param = Expr.Parameter(stage.ElementType, "e");
@@ -573,9 +579,9 @@ public static partial class KqlTransformer
 	// context (EmittedStorageScalarContext resolves the columns/bag the upstream produced), IDENTICALLY to the
 	// pre-split ApplyWhere — a bag lookup rides the SAME JsonExtract the pre-split path emits (the emitted
 	// stage carries the original PropertiesJson storage), so a `where Properties.<k> == …` is byte-identical
-	// pre- and post-split. A non-boolean condition throws (like ApplyWhere/ApplyPostWhere); a not-yet-SQL-
-	// translatable predicate returns null (transient in-memory, matching order/project — fires for zero
-	// expressions in the suite). Shape is unchanged. ----
+	// pre- and post-split. A non-boolean condition throws (like ApplyWhere); a predicate that cannot be
+	// translated is REFUSED by construction (TryCompileStorage throws — nothing runs in memory). Shape is
+	// unchanged. ----
 	static SqlStage? ComposeWhere(SqlStage stage, FilterOperator filter, DateTime now)
 	{
 		var param = Expr.Parameter(stage.ElementType, "e");
@@ -616,12 +622,12 @@ public static partial class KqlTransformer
 		_ => ((Expression)element, true),
 	};
 
-	// ---- parse (star-free literal form): reproduces the in-memory MatchParse position logic in SQL via
+	// ---- parse (star-free literal form): the pre-SQL parse position logic, expressed in SQL via
 	// substr/instr. Adds/replaces the capture columns (string), keeping every row (non-match → all captures
-	// null, row retained). Promise-neutral (NO regex — literal matching only, byte-identical to MatchParse
-	// for BMP text; astral chars are the one residual, see BuildParseCaptures). Composes on SqlStage. A
-	// non-SQL-translatable source returns null (transient in-memory); pattern-shape errors (typed/regex/
-	// adjacent captures) throw exactly like ApplyParse. ----
+	// null, row retained). Promise-neutral (NO regex — literal matching only, byte-identical to the pre-SQL
+	// parse for BMP text; astral chars are the one residual, see BuildParseCaptures). Composes on SqlStage; a
+	// source that cannot be translated is REFUSED through its compile; pattern-shape errors (typed/regex/
+	// adjacent captures) throw with the same precision as before. ----
 	static SqlStage? ComposeParse(SqlStage stage, ParseOperator op, DateTime now)
 	{
 		if (op.Parameters.Count > 0)
@@ -639,7 +645,7 @@ public static partial class KqlTransformer
 		var captures = BuildParseCaptures(srcExpr, segments);
 
 		// Output = all input columns (passthrough) + the capture columns (string), replace-in-place on a
-		// name collision — identical to ApplyParse's column shaping.
+		// name collision — the same column shaping the pre-SQL parse produced.
 		var columns = stage.Columns.ToList();
 		var captureByName = new Dictionary<string, Expr>(StringComparer.Ordinal);
 		foreach (var (name, value) in captures)
@@ -658,11 +664,11 @@ public static partial class KqlTransformer
 		return BuildEmittedStage(stage.Query, stage.ElementType, param, cols, distinct: false, now);
 	}
 
-	// Reproduces MatchParse's exact position walk as SQL expressions: a running 0-based `pos` and a `failed`
-	// flag are threaded through the segments (literal must match at pos via substr(=); a capture runs up to
-	// the next literal via instr; a trailing capture takes the rest). Every capture is gated by the FINAL
-	// (src != null AND NOT failed) — so any mismatch nulls ALL captures while the row is kept, matching
-	// MatchParse. BMP-byte-identical; the one residual is astral (SQLite instr/substr count code POINTS,
+	// Reproduces the pre-SQL parse's exact position walk as SQL expressions: a running 0-based `pos` and a
+	// `failed` flag are threaded through the segments (literal must match at pos via substr(=); a capture runs
+	// up to the next literal via instr; a trailing capture takes the rest). Every capture is gated by the
+	// FINAL (src != null AND NOT failed) — so any mismatch nulls ALL captures while the row is kept, as
+	// before. BMP-byte-identical; the one residual is astral (SQLite instr/substr count code POINTS,
 	// .NET IndexOf/Substring count UTF-16 code UNITS) — see the report.
 	static List<(string Name, Expr Value)> BuildParseCaptures(Expr src, IReadOnlyList<(bool IsCapture, string Value)> segments)
 	{
@@ -735,10 +741,10 @@ public static partial class KqlTransformer
 	//   5. json_each over the array; each element renders via je.type (bool/null EXACT; numbers canonicalize
 	//      through CAST(je.value AS TEXT) per the accepted kql-numeric-semantics promise). The exploded scalar
 	//      REPLACES the array column in-place (bare-column target) or APPENDS a new column (Properties target),
-	//      matching ApplyMvExpand's output shape. Wrapped via MakeEmittedStage so it composes downstream IN SQL
+	//      matching the pre-SQL mv-expand's output shape. Wrapped via MakeEmittedStage so it composes in SQL
 	//      (mv-expand | summarize/order/project stays one query — linq2db nests the FromSql as a derived table).
 	// NEVER returns null for a supported target (mv-expand is pure SQL everywhere now); unsupported forms
-	// (multi-column / to typeof / row limit / parameters) throw exactly like ApplyMvExpand.
+	// (multi-column / to typeof / row limit / parameters) throw with the same precision as the pre-SQL op.
 	static SqlStage ComposeMvExpand(SqlStage stage, MvExpandOperator op, KqlDialect dialect, DateTime now)
 	{
 		if (op.Parameters.Count > 0)
@@ -797,8 +803,9 @@ public static partial class KqlTransformer
 	}
 
 	// Resolves the mv-expand target to (output name, existing-column index or -1, array-value storage expr) —
-	// the SQL analog of ResolveMvColumn: a bare name that IS a column explodes it in place; otherwise (and the
-	// Properties.<key> / Properties["key"] forms) it reads the property and appends a new column named after the leaf.
+	// the SQL analog of the pre-SQL mv-expand target resolution: a bare name that IS a column explodes it in
+	// place; otherwise (and the Properties.<key> / Properties["key"] forms) it reads the property and appends a
+	// new column named after the leaf.
 	static (string OutName, int TargetIndex, Expr Value) ResolveMvArraySource(SqlStage stage, ScalarContext ctx, Expression expr)
 	{
 		switch (expr)
@@ -852,15 +859,20 @@ public static partial class KqlTransformer
 		return (IQueryable)FromSqlOpen.MakeGenericMethod(rowType).Invoke(null, [dc, raw, args])!;
 	}
 
-	// ---- join (SQL): reproduces ApplyJoin/StreamJoinRows semantics as a SQL join on the composable
+	// ---- join (SQL): the pre-SQL row-by-row join semantics, expressed as a SQL join on the composable
 	// SqlStage. All kinds compose in SQL: kind=inner (Queryable.Join, no dedup), kind=innerunique (left
-	// window-dedup then inner join), kind=leftouter (GroupJoin+SelectMany+DefaultIfEmpty). A bare join (no
+	// window-dedup then inner join), kind=leftouter (GroupJoin+SelectMany+DefaultIfEmpty), kind=leftsemi /
+	// kind=leftanti (EXISTS over the right side, LEFT columns only). A bare join (no
 	// kind=) resolves to `defaultKind` — Inner by default (spec kql-join-default-inner), a deliberate
 	// deviation from Kusto's innerunique default; the knob rides through KqlTranslationOptions.DefaultJoinKind.
-	// The right side is compiled to a SqlStage via sqlRunSub; if it isn't fully SQL, the whole join falls
-	// back. Null join keys never match (KQL): inner pre-filters BOTH sides' null keys (also aligns
-	// EnumerableQuery with SQL, which would otherwise match null==null); leftouter filters ONLY the right
-	// (left null-key rows survive via DefaultIfEmpty, never matching a filtered right). ----
+	// The right side is compiled to a SqlStage via sqlRunSub; if it isn't fully SQL, ComposeJoin returns null
+	// and the operator is refused as unsupported — there is no in-memory fallback to fall back TO. Null join
+	// keys never match (KQL): inner pre-filters BOTH sides' null keys (also aligns
+	// EnumerableQuery with SQL, which would otherwise match null==null); leftouter/semi/anti filter ONLY the
+	// right (left null-key rows survive via DefaultIfEmpty, never matching a filtered right), and for
+	// leftsemi/leftanti that same rule decides the row: a null left key has NO match, so it is dropped by
+	// leftsemi and RETURNED by leftanti (Kusto: a null key never matches — it is not an error, it is a
+	// non-match; filtering the left side too would silently lose those rows from leftanti). ----
 	static SqlStage? ComposeJoin(SqlStage left, JoinOperator op, DateTime now, SqlSubqueryRunner sqlRunSub, KqlJoinDefault defaultJoinKind)
 	{
 		var kind = ParseJoinKind(op.Parameters, "join", MapJoinDefault(defaultJoinKind));
@@ -875,6 +887,10 @@ public static partial class KqlTransformer
 			JoinKind.InnerUnique => BuildInnerJoin(left, right, onClause, "join", now, dedupLeft: true),
 			JoinKind.Inner => BuildInnerJoin(left, right, onClause, "join", now, dedupLeft: false),
 			JoinKind.LeftOuter => BuildLeftOuterJoin(left, right, onClause, "join", excludeRightKeys: false, now),
+			// leftsemi / leftanti: LEFT rows that DO / DON'T have a match, projected LEFT columns only, each
+			// left row at most once (EXISTS, not a join — duplicate right keys cannot duplicate a left row).
+			JoinKind.LeftSemi => BuildSemiAntiJoin(left, right, onClause, "join", anti: false, now),
+			JoinKind.LeftAnti => BuildSemiAntiJoin(left, right, onClause, "join", anti: true, now),
 			_ => null,
 		};
 	}
@@ -939,8 +955,9 @@ public static partial class KqlTransformer
 	// inner (dedupLeft=false) or innerunique (dedupLeft=true — dedup the LEFT by key, keeping the first row
 	// per key, via GroupBy(key).Select(g => OrderBy(identity).First()); linq2db translates that to a
 	// ROW_NUMBER() OVER (PARTITION BY key ORDER BY identity)=1 dedup and EnumerableQuery keeps the same
-	// first-in-input-order row, so both providers agree, matching today's StreamJoinRows innerunique. The
-	// explicit identity order is REQUIRED — a bare First() picks arbitrarily over real SQLite, see DedupByKey).
+	// first-in-input-order row, so both providers agree — and that is the row Kusto's innerunique keeps (its
+	// first-encountered row per key). The explicit identity order is REQUIRED — a bare First() picks
+	// arbitrarily over real SQLite, see DedupByKey).
 	static SqlStage? BuildInnerJoin(SqlStage left, SqlStage right, JoinOnClause onClause, string opName, DateTime now, bool dedupLeft)
 	{
 		var lParam = Expr.Parameter(left.ElementType, "l");
@@ -979,6 +996,47 @@ public static partial class KqlTransformer
 
 		var joined = DynJoin(leftQ, rightQ, left.ElementType, right.ElementType, keyType, resultType, leftKey, rightKey, resultSel);
 		return MakeEmittedStage(joined, resultType, outCols.Select(c => (c.Name, c.LogicalType)).ToList(), now);
+	}
+
+	// leftsemi / leftanti: the "what is MISSING" questions ("services with no errors in 24h", "traces with no
+	// spans"). Both project the LEFT columns ONLY and emit each left row AT MOST ONCE — the match is decided
+	// by an EXISTS subquery over the right side (Queryable.Any), so a right side with duplicate keys can
+	// neither duplicate nor swallow a left row, and no identity column / dedup pass is needed.
+	// Null keys follow the documented Kusto rule (a null key never matches), so a left null-key row counts as
+	// UNMATCHED: absent from leftsemi, PRESENT in leftanti. Only the RIGHT side's null keys are pre-filtered
+	// (the leftouter rule) — filtering the left side too would silently drop those rows from leftanti.
+	static SqlStage? BuildSemiAntiJoin(SqlStage left, SqlStage right, JoinOnClause onClause, string opName, bool anti, DateTime now)
+	{
+		var lParam = Expr.Parameter(left.ElementType, "l");
+		var lctx = left.MakeContext(lParam);
+		var rParam = Expr.Parameter(right.ElementType, "r");
+		var rctx = right.MakeContext(rParam);
+
+		var keys = ResolveJoinKeysSql(onClause, left, lctx, right, rctx, opName);
+		if (keys is null)
+			return null;
+
+		var rightQ = FilterNonNullKeys(right.Query, right.ElementType, rParam, keys.Select(k => k.R).ToList());
+
+		// The EXISTS predicate: $left key(s) == $right key(s) — the left exprs ride in from the outer lambda.
+		Expr? match = null;
+		foreach (var k in keys)
+		{
+			var eq = Expr.Equal(k.L, k.R);
+			match = match is null ? eq : Expr.AndAlso(match, eq);
+		}
+		var anyMethod = typeof(Queryable).GetMethods()
+			.Single(m => m.Name == "Any" && m.GetParameters().Length == 2
+				&& m.GetParameters()[1].ParameterType.GetGenericArguments()[0].GetGenericArguments().Length == 2)
+			.MakeGenericMethod(right.ElementType);
+		var hasMatch = Expr.Call(anyMethod, Expr.Constant(rightQ), Expr.Quote(Expr.Lambda(match!, rParam)));
+
+		var pred = anti ? (Expr)Expr.Not(hasMatch) : hasMatch;
+		var filtered = DynWhere(left.Query, left.ElementType, Expr.Lambda(pred, lParam));
+
+		// LEFT columns only — no right column (and no collision suffix) reaches the output.
+		var outCols = left.Columns.Select(c => new SqlCol(c.Name, c.ClrType, lctx.ResolveColumn(c.Name))).ToList();
+		return BuildEmittedStage(filtered, left.ElementType, lParam, outCols, distinct: false, now);
 	}
 
 	// leftouter via GroupJoin + SelectMany + DefaultIfEmpty (probe C). Left columns are flattened into an
@@ -1249,10 +1307,11 @@ public static partial class KqlTransformer
 	}
 
 	// ---- summarize (WITH `by`): GROUP BY the resolved keys, project keys + aggregates. The DB groups
-	// (relieving the in-memory group-table / dcount-set caps), and the result composes further in SQL.
-	// no-`by` summarize (bounded to one row incl. the Kusto empty-input default-row rule) stays in-memory
-	// for now — returned as null. Any key/aggregate not yet SQL-translatable (or a deferred case: string
-	// min/max collation) also returns null → the whole summarize runs in-memory unchanged. ----
+	// (no in-memory group table / dcount set exists any more), and the result composes further in SQL.
+	// no-`by` summarize (bounded to one row incl. the Kusto empty-input default-row rule) is TERMINAL over the
+	// stage — SqlSummarizeNoBy, not a composable step. Any aggregate that cannot be translated (or a deferred
+	// case: string min/max collation) makes this return null, and the summarize is REFUSED — it does not run
+	// anywhere else. ----
 	static SqlStage? ComposeSummarize(SqlStage stage, SummarizeOperator op, DateTime now, KqlTranslationOptions options)
 	{
 		if (op.ByClause is null)
@@ -1329,7 +1388,7 @@ public static partial class KqlTransformer
 	// no-`by` summarize: a BARE aggregate. GroupBy(constant) yields one row over non-empty input and ZERO
 	// over empty; Kusto requires ONE default row over empty (count()→0, sum/avg/min/max→null, dcount/countif
 	// →0), so a 0-row result synthesizes the per-aggregate defaults. Terminal (returns a KqlResult, not a
-	// composable stage). Any aggregate not SQL-translatable → null (in-memory fallback).
+	// composable stage). An aggregate that cannot be translated → null, and the summarize is REFUSED.
 	static KqlResult? SqlSummarizeNoBy(SqlStage stage, SummarizeOperator op, DateTime now, KqlTranslationOptions options)
 	{
 		var x = Expr.Parameter(stage.ElementType, "x");
@@ -1360,10 +1419,10 @@ public static partial class KqlTransformer
 			foreach (var col in emitted)
 			{
 				// Empty-group default: a non-nullable value-type result (count/countif/dcount → long) defaults to
-				// its zero (0); a nullable/ref result (sum/avg/min/max/arg_*) defaults to null. Matches
-				// StreamSummarize's fresh-accumulator fold. make_list/make_set (and their _if forms) are the
-				// exception: their ref-type (string) result is a JSON array, and Kusto yields an EMPTY array over
-				// empty input — the literal "[]", not null.
+				// its zero (0); a nullable/ref result (sum/avg/min/max/arg_*) defaults to null. Matches the pre-SQL
+				// summarize's fresh-accumulator fold. make_list/make_set (and their _if forms) are the exception:
+				// their ref-type (string) result is a JSON array, and Kusto yields an EMPTY array over empty input —
+				// the literal "[]", not null.
 				var def = KqlScalar.IsNullable(col.Logical) || !col.Logical.IsValueType
 					? null
 					: Activator.CreateInstance(col.Logical);
