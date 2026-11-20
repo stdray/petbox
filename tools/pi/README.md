@@ -7,9 +7,14 @@ loads live in `~/.pi/agent/`, outside the repo, and are refreshed by `deploy.sh`
 ```
 tools/pi/extensions/petbox-pi.ts   ──▶  ~/.pi/agent/extensions/petbox-pi.ts
 tools/pi/extensions/agent-rules.ts ──▶  ~/.pi/agent/extensions/agent-rules.ts
+tools/pi/extensions/<name>/        ──▶  ~/.pi/agent/extensions/<name>/   (whole directory)
 tools/pi/agents/*.md               ──▶  ~/.pi/agent/agents/*.md
 tools/pi/rules/amd-*.md            ──▶  ~/.pi/agent/skills/amd-*.md
 ```
+
+Flat `extensions/*.ts` files are copied with a `cmp` check; `extensions/<name>/`
+directories are mirrored with `diff -r` (pi loads `index.ts` from a subdirectory and its
+sibling modules have to arrive with it). Both are idempotent — a second run writes nothing.
 
 ```sh
 ./tools/pi/deploy.sh --dry-run   # what would change
@@ -17,6 +22,14 @@ tools/pi/rules/amd-*.md            ──▶  ~/.pi/agent/skills/amd-*.md
 ```
 
 Then restart pi: extensions load at startup, and `/reload` re-reads config but not new files.
+
+**Tests live in `tests/`, not beside the extensions.** `deploy.sh` copies `extensions/*.ts` into
+pi's load path, so a `*.test.ts` sitting there would be loaded as an extension. Run them with:
+
+```sh
+bun test tools/pi/tests/opencode-bridge/          # or: node --test tools/pi/tests/opencode-bridge/*.test.ts
+OPENCODE_BRIDGE_SKIP_LIVE=1 bun test …            # unit only; the live tests spawn real opencode
+```
 
 **Role files are merged, not copied.** `model:` and `thinking:` in a role's frontmatter are owned
 by the Roles panel, which writes them into the *installed* file (that is where the
@@ -40,6 +53,7 @@ from `src/common/default-agents.json`.
 | `extensions/agent-rules.ts` | assembles `rules/amd-*.md` into the `agent_rules` prompt section for the main session; reports an unreadable or missing fragment once to the log and the UI instead of dropping the whole section silently, and checks that every role's `skills:` resolves to an installed fragment — in the same roots `pi-subagents` searches (the session's `.pi/skills` and `.agents/skills`, then the user scope), `<name>.md` or `<name>/SKILL.md` |
 | `extensions/pwsh-tool.ts` | the built-in PowerShell tool registered a second time as `pwsh` — see "Why a second PowerShell tool" below |
 | `extensions/session-id-status.ts` | one extra footer line: `sid:xxxxxxxx · up 12m · compact×2` |
+| `extensions/opencode-bridge/` | `opencode_delegate` tool: runs a prompt through the external `opencode` CLI and returns its answer, tool calls, usage and cost (directory extension: `index.ts` + `types.ts`/`parse.ts`/`delegate.ts`) |
 | `agents/*.md` | our five subagent roles: `worker`, `scout`, `oracle`, `reviewer`, `researcher` |
 | `rules/amd-*.md` | the operating rules, one topic per file (always injected) |
 | `rules/pbx-*.md` | PetBox-specific rules — injected only when the session declares a petbox MCP tool |
