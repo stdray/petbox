@@ -1679,6 +1679,30 @@ public static class TasksTools
 		IReadOnlyList<UpsertDedupedView>? dedupedView = null;
 		if (isObservationsCreateBatch)
 		{
+			// work observations-dedup-bypasses-type-validation: a node's `type` is judged HERE,
+			// BEFORE the dedup guard, because dedup can consume the WHOLE batch — a hit replaces
+			// the input array, and a fully-deduped batch returns below without ever reaching
+			// tasks.UpsertAsync, whose workflow resolution (TasksService.ApplyWorkflow ->
+			// WorkflowEngine.Validate) is the only OTHER place a type is checked. Without this
+			// gate a create carrying an unknown `type` (e.g. `issue`, a type of other boards) was
+			// deduped against nothing and reported as `applied: true, inserted: 0`.
+			//
+			// The authority is the same one the write path resolves through — the BOARD's own
+			// runtime (this board is `$utility`-homed, so it resolves against the project's
+			// utility layer, never whichever methodology instance happens to be active). An
+			// EMPTY type stays legal (it resolves to the kind's default, exactly as before) and a
+			// VALID type dedups exactly as before; only an unknown one is refused, and refused
+			// BEFORE anything is matched — a mistyped write must never bump an existing
+			// observation's recurrence.
+			var obsRuntime = await tasks.GetRuntimeForBoardAsync(projectKey, board, ct);
+			foreach (var node in nodes)
+			{
+				if (node.Type is not { Length: > 0 } type || obsRuntime.For(SystemBoards.ObservationKind, type) is not null)
+					continue;
+				throw new ArgumentException(
+					$"board kind '{obsRuntime.KindName(SystemBoards.ObservationKind)}' needs a known type ({obsRuntime.ValidTypes(SystemBoards.ObservationKind)}); got '{type}'")
+					.ForNode(node.Key ?? "");
+			}
 			var dedup = await obsDedup!.PreProcessCreatesAsync(projectKey, board, nodes, sessionId, ct);
 			if (dedup.Hits.Count > 0)
 				dedupedView = dedup.Hits.Select(h => new UpsertDedupedView(h.RequestedKey, h.ExistingKey, h.ExistingNodeId, h.RecurrenceCount)).ToList();
