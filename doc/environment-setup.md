@@ -1,5 +1,26 @@
 # Environment setup — the agent-executable scenario
 
+## Start here — the prompt to give the agent
+
+Paste this into a `pi` session started **inside a clone of this repository**. It is deliberately
+short: everything else is in this file.
+
+> Set up this machine to work in this repository, following `doc/environment-setup.md` end to end.
+> Read that file first — it is the whole procedure, and every step carries its own verification.
+> Run the verification; if one fails, stop and tell me the failing command and its output instead
+> of working around it.
+>
+> Ask me only what the machine cannot tell you: the PetBox project key to wire, and an API key for
+> it. If we are only proving that things work, use the `smoke` project with a `sandboxOnly` key.
+>
+> Rules: never hand-edit anything marked `petbox: managed`, and never edit files under `~/.pi/agent`
+> — `tools/pi/deploy.sh` and `npx petbox-wire apply` own them. Changes confined to `tools/pi/**` are
+> gated by `bun test tools/pi/tests/` plus a second `deploy.sh` run that writes nothing, not by
+> `./build.ps1`.
+>
+> Finish with a report: what you installed, the verification output for each step, and anything this
+> document did not cover.
+
 This is a **runbook an agent follows**, not an article a human reads. A new person installs
 pi, clones this repository, and says "set me up". The agent walks the steps below in order,
 runs the verification after each one, and stops at the first red instead of pressing on.
