@@ -39,6 +39,24 @@ this folder is shipped to `~/.pi/agent`, not built into the product, and `dotnet
 never see it. The moment a diff escapes into `src/`, `tests/` or `build.cs`, the full Cake gate
 applies to that change again.
 
+**Role-derived child config (`opencode-bridge/role-config.ts`).** With a `role` parameter the tool
+stops using its fixed read-only policy and derives the child's opencode config from that role's
+file in `~/.pi/agent/agents/<role>.md`: the markdown body becomes `agents.<role>.system` (measured:
+that REPLACES opencode's base prompt, and `instructions` is emitted empty for the same reason), the
+frontmatter `tools` list becomes `agents.<role>.permissions` — `read`/`find`/`ls`/`grep` → `read`,
+`glob`, `grep`; `edit`/`write` → `edit` only with `allowWrite`; `bash`/`powershell` → `shell` only
+with `allowShell`; `subagent` denied unless explicitly lifted — behind a leading catch-all
+`"*": "deny"` rule (the per-agent permission shape is an ARRAY of rules; the object form is ignored
+there, which was measured the hard way). `model:` pins the model (a caller's `model` still wins) and
+`thinking:` becomes the single opencode `providers.<p>.models.<id>.variants` entry plus
+`-m provider/model#variant`. The production PetBox MCP server is included only with `mcp: true`,
+and `websearch.provider` only for a role that declares a web tool. Without `role` the behaviour is
+the old one: pinned model plus the fixed read-only policy. One caveat, measured: a role's own
+`model:` is used unless the caller passes `model`, and some role pins name a subscription provider
+the standalone child cannot authenticate to (`opencode-go/hy4-flash-free` failed with
+`Header 'Authorization' has invalid value` while `opencode/hy4-flash-free` ran the same role fine) —
+pass `model` explicitly when delegating in an environment with only free-tier credentials.
+
 **Role files are merged, not copied.** `model:` and `thinking:` in a role's frontmatter are owned
 by the Roles panel, which writes them into the *installed* file (that is where the
 `*.md.bak-before-models-panel-*` files come from). A plain copy reverted the owner's model choice
@@ -61,7 +79,7 @@ from `src/common/default-agents.json`.
 | `extensions/agent-rules.ts` | assembles `rules/amd-*.md` into the `agent_rules` prompt section for the main session; reports an unreadable or missing fragment once to the log and the UI instead of dropping the whole section silently, and checks that every role's `skills:` resolves to an installed fragment — in the same roots `pi-subagents` searches (the session's `.pi/skills` and `.agents/skills`, then the user scope), `<name>.md` or `<name>/SKILL.md` |
 | `extensions/pwsh-tool.ts` | the built-in PowerShell tool registered a second time as `pwsh` — see "Why a second PowerShell tool" below |
 | `extensions/session-id-status.ts` | one extra footer line: `sid:xxxxxxxx · up 12m · compact×2` |
-| `extensions/opencode-bridge/` | `opencode_delegate` tool: runs a prompt through the external `opencode` CLI and returns its answer, tool calls, usage and cost (directory extension: `index.ts` + `types.ts`/`parse.ts`/`delegate.ts`) |
+| `extensions/opencode-bridge/` | `opencode_delegate` tool: runs a prompt through the external `opencode` CLI and returns its answer, tool calls, usage and cost (directory extension: `index.ts` + `types.ts`/`parse.ts`/`delegate.ts`/`role-config.ts`) |
 | `agents/*.md` | our five subagent roles: `worker`, `scout`, `oracle`, `reviewer`, `researcher` |
 | `rules/amd-*.md` | the operating rules, one topic per file (always injected) |
 | `rules/pbx-*.md` | PetBox-specific rules — injected only when the session declares a petbox MCP tool |

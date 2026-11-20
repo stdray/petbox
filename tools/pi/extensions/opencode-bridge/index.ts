@@ -43,6 +43,13 @@ import {
 	resultBody,
 	runOpencode,
 } from "./delegate.ts";
+import {
+	assertAgentParameters,
+	loadPetboxMcpServer,
+	loadRole,
+	planRoleRun,
+	type RoleRunPlan,
+} from "./role-config.ts";
 import type { OpencodeErrorInfo, OpencodeEvent, Usage } from "./types.ts";
 
 const TOOL_NAME = "opencode_delegate";
@@ -55,6 +62,8 @@ const RESULT_TAIL_CHARS = 8_000;
 interface DelegateDetails {
 	model: string;
 	agent?: string;
+	role?: string;
+	thinking?: string;
 	sessionId?: string;
 	usage: Usage;
 	steps: number;
@@ -98,14 +107,14 @@ function summarize(details: DelegateDetails): string {
 	if (details.timedOut) parts.push("TIMED OUT");
 	if (details.aborted) parts.push("ABORTED");
 	if (details.finishReason) parts.push(`finish ${details.finishReason}`);
+	if (details.role) parts.push(`role ${details.role}${details.thinking ? `/${details.thinking}` : ""}`);
 	parts.push(`writes ${details.allowWrite ? "allowed" : "denied"}, shell ${details.allowShell ? "allowed" : "denied"}`);
 	return `---\nopencode_delegate | ${parts.join(" | ")}`;
 }
 
-/** Write the child's private config: model pin, deny policy, and no MCP servers. */
-async function makeConfigDir(model: string, policy: ChildPolicy): Promise<string> {
+/** Write a generated child config into a fresh temp dir. */
+async function makeConfigDir(config: Record<string, unknown>): Promise<string> {
 	const dir = await mkdtemp(path.join(tmpdir(), "pi-opencode-bridge-"));
-	const config = buildChildConfig(model, policy);
 	await writeFile(path.join(dir, "opencode.json"), `${JSON.stringify(config, null, 2)}\n`, "utf8");
 	return dir;
 }
@@ -117,16 +126,42 @@ export default function opencodeBridge(pi: ExtensionAPI): void {
 		description:
 			"Delegate a self-contained prompt to an external `opencode` CLI agent and return its final answer, " +
 			"tool calls, token usage and cost. Runs a private opencode server with a throwaway config (no MCP servers). " +
+			"Pass `role` to derive the child's system prompt and permission set from a pi role file " +
+			"(tools become permissions; thinking becomes the model variant). " +
 			"Use it to get a second harness's answer, or to reach models this session does not have.",
 		promptSnippet: "Delegate a prompt to an external opencode agent and return its answer, tool calls and usage",
 		promptGuidelines: [
 			"Use opencode_delegate when the user asks to run something through opencode, or names an opencode model explicitly.",
 			"opencode_delegate runs the delegated agent READ-ONLY by default: no file writes, no shell. Pass allowWrite or allowShell only when the user has asked for changes on disk; they are the dangerous flags.",
+			"Pass opencode_delegate a `role` (for example scout or worker) to give the child that role's system prompt and capability ceiling instead of the generic read-only default.",
 			`opencode_delegate defaults to ${DEFAULT_MODEL}; pass model to override it, and pass session to continue a previous opencode_delegate conversation.`,
 		],
 		parameters: Type.Object({
 			prompt: Type.String({ description: "The prompt for the opencode agent. Include all context it needs." }),
-			agent: Type.Optional(Type.String({ description: 'opencode agent role, e.g. "build" or "plan".' })),
+			role: Type.Optional(
+				Type.String({
+					description:
+						'pi role name (a file in ~/.pi/agent/agents/<role>.md, e.g. "scout", "worker"). The role body ' +
+						"becomes the child's system prompt; its tools become its permissions; its thinking becomes the " +
+						"model variant. The child is selected with --agent <role>. If `agent` is also passed it must " +
+						"equal the role name.",
+				}),
+			),
+			thinking: Type.Optional(
+				Type.String({
+					description:
+						'Override the role\'s thinking level: off, minimal, low, medium, high, xhigh, max. ' +
+						'Mapped to the opencode model variant (off/minimal→low). Ignored without `role`.',
+				}),
+			),
+			agent: Type.Optional(
+				Type.String({
+					description:
+						'opencode agent name defined by the generated child config, e.g. "build" or "plan". ' +
+						'For a pi role use `role` instead — an `agent` this config does not define is rejected ' +
+						"before the child starts. With `role`, `agent` must be absent or equal to the role name.",
+				}),
+			),
 			model: Type.Optional(
 				Type.String({ description: `provider/model, e.g. "${DEFAULT_MODEL}". Defaults to that model.` }),
 			),
@@ -152,10 +187,22 @@ export default function opencodeBridge(pi: ExtensionAPI): void {
 						"Denied by default (the generated child config denies it). Also passes --auto.",
 				}),
 			),
+			allowSubagent: Type.Optional(
+				Type.Boolean({
+					description:
+						"DANGEROUS: let the delegated agent spawn subagents of its own. Denied by default.",
+				}),
+			),
+			mcp: Type.Optional(
+				Type.Boolean({
+					description:
+						"DANGEROUS: connect the child to the production PetBox MCP server from the project's .mcp.json " +
+						"(read/write access to live boards). Off by default — the child gets no MCP servers.",
+				}),
+			),
 		}),
 
 		async execute(_toolCallId, params, signal, onUpdate, ctx) {
-			const model = params.model?.trim() || DEFAULT_MODEL;
 			const cwd = params.cwd ? path.resolve(ctx.cwd, params.cwd) : ctx.cwd;
 			const timeoutMs = params.timeoutMs && params.timeoutMs > 0 ? params.timeoutMs : DEFAULT_TIMEOUT_MS;
 			const policy: ChildPolicy = {
@@ -166,9 +213,48 @@ export default function opencodeBridge(pi: ExtensionAPI): void {
 			// generated config stand either way.
 			const auto = needsAutoApprove(policy);
 
+			let role: RoleRunPlan | undefined;
+			let model = params.model?.trim() || DEFAULT_MODEL;
+			let thinking = params.thinking;
+			let childAgent = params.agent;
+			let variant = params.variant;
+			let config: Record<string, unknown>;
+
+			if (params.role) {
+				if (params.variant) {
+					throw new Error(
+						"opencode_delegate: pass `thinking`, not `variant`, with a role — the variant is derived " +
+							"from the role's thinking level so the config and the argv cannot disagree.",
+					);
+				}
+				// loadRole and planRoleRun both throw with a clear message on a bad name, an unknown
+				// thinking level, or a role model the standalone CLI cannot authenticate.
+				const plan = planRoleRun(loadRole(params.role, { cwd: ctx.cwd }), {
+					model: params.model,
+					thinking: params.thinking,
+					allowWrite: policy.allowWrite,
+					allowShell: policy.allowShell,
+					allowSubagent: params.allowSubagent === true,
+					mcpServer: params.mcp === true ? loadPetboxMcpServer(ctx.cwd) : undefined,
+					defaultModel: DEFAULT_MODEL,
+				});
+				role = plan;
+				model = plan.model;
+				thinking = plan.thinking;
+				// ALWAYS the role name: the per-agent ruleset is only reachable through `--agent`.
+				childAgent = plan.agent;
+				variant = plan.variant;
+				config = plan.config;
+			} else {
+				config = buildChildConfig(model, policy);
+			}
+			// Fail here, not inside the child: a bad role/agent pair otherwise surfaces as
+			// `Agent not found` and 0 tokens, which reads like an opencode problem.
+			assertAgentParameters(role ? role.agent : undefined, params.agent, config);
+
 			let configDir: string;
 			try {
-				configDir = await makeConfigDir(model, policy);
+				configDir = await makeConfigDir(config);
 			} catch (err) {
 				throw new Error(`opencode_delegate: could not create the child config dir: ${(err as Error).message}`);
 			}
@@ -176,7 +262,9 @@ export default function opencodeBridge(pi: ExtensionAPI): void {
 			const toolCalls: DelegateDetails["toolCalls"] = [];
 			const details: DelegateDetails = {
 				model,
-				agent: params.agent,
+				agent: childAgent,
+				role: role?.agent,
+				thinking,
 				usage: { input: 0, output: 0, reasoning: 0, cacheRead: 0, cacheWrite: 0, cost: 0 },
 				steps: 0,
 				toolCalls,
@@ -210,9 +298,9 @@ export default function opencodeBridge(pi: ExtensionAPI): void {
 			try {
 				const result = await runOpencode({
 					prompt: params.prompt,
-					agent: params.agent,
+					agent: childAgent,
 					model,
-					variant: params.variant,
+					variant,
 					session: params.session,
 					auto,
 					cwd,
