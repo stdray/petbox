@@ -28,7 +28,7 @@ import {
 	type RouteDecision,
 	type RouteLeg,
 } from "./route.ts";
-import { UNAUTHENTICATED_PROVIDERS, loadRole, planRoleRun, type RoleDefinition } from "./role-config.ts";
+import { settledEffort, UNAUTHENTICATED_PROVIDERS, loadRole, planRoleRun, type RoleDefinition } from "./role-config.ts";
 import type { Usage } from "./types.ts";
 
 /** Opencode-leg model when nothing names one the standalone CLI can authenticate. */
@@ -182,7 +182,12 @@ export function registerDelegateTool(pi: ExtensionAPI): void {
 			const role = params.role ? loadRole(params.role, { cwd: ctx.cwd }) : undefined;
 			const effort = params.effort?.trim() || role?.thinking;
 			const cwd = params.cwd ? path.resolve(ctx.cwd, params.cwd) : ctx.cwd;
+			const catalog = readModelCatalog();
 			const legs = buildLegs(role, effort, params.model?.trim(), parentModelOf(ctx));
+			// Report what pi will SETTLE on, not what was asked: the first leg is the pi leg, and
+			// pi clamps a thinking level to the model's catalog entry before running.
+			const settled = settledEffort(`${legs[0].provider}/${legs[0].model}`, legs[0].effort, catalog);
+			if (settled) legs[0] = { ...legs[0], effort: settled };
 
 			let cache = readRouteCache();
 			if (params.resetRoute) cache = clearDead(cache);
@@ -190,7 +195,6 @@ export function registerDelegateTool(pi: ExtensionAPI): void {
 			const requested = params.model ? { ...splitModelEffort(params.model), effort } : undefined;
 			// The catalog gate exists because pi-subagents substitutes the PARENT model for an id it
 			// cannot resolve instead of failing, so an unknown model would silently "work" there.
-			const catalog = readModelCatalog();
 			let decision = decideRoute({ legs, requested, cache, catalog });
 			onUpdate?.({
 				content: [{ type: "text", text: `delegate: ${routeLine(decision, role?.name)}` }],

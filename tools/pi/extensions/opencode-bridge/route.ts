@@ -376,11 +376,33 @@ function pickLeg(input: DecideRouteInput): RouteDecision {
  * and `models.json` (hand-written custom providers, `{providers: {id: {models: …}}}`). Only
  * membership is read here — the thinking-level clamp is `bridge-effort-from-catalog`.
  */
+/** One catalog entry: what the model is, and which thinking levels it actually has. */
+export interface ModelEntry {
+	provider: string;
+	model: string;
+	/** pi's own `reasoning` flag; a non-reasoning model supports only `off`. */
+	reasoning?: boolean;
+	/** `{"minimal": null, "low": "low", …}` — `null` means the level is NOT supported. */
+	thinkingLevelMap?: Record<string, string | null>;
+}
+
 export interface ModelCatalog {
 	/** `provider/model` keys, lowercased. */
 	known: Set<string>;
+	/** Full entries, keyed the same way. Effort clamping reads `thinkingLevelMap` from here. */
+	entries: Map<string, ModelEntry>;
 	/** Files that were readable, for the evidence line. */
 	sources: string[];
+}
+
+/** The catalog entry for `provider/model`, or undefined when the catalog does not list it. */
+export function findModelEntry(
+	catalog: ModelCatalog,
+	provider: string,
+	model: string,
+): ModelEntry | undefined {
+	if (!provider || !model) return undefined;
+	return catalog.entries.get(routeKey(provider, model).toLowerCase());
 }
 
 export function catalogPaths(): { store: string; custom: string } {
@@ -391,18 +413,31 @@ export function catalogPaths(): { store: string; custom: string } {
 	};
 }
 
-function addModels(known: Set<string>, providerId: string, models: unknown): void {
+function addModels(catalog: ModelCatalog, providerId: string, models: unknown): void {
 	if (!Array.isArray(models)) return;
 	for (const model of models) {
-		const id = typeof model === "object" && model !== null ? (model as { id?: unknown }).id : undefined;
-		if (typeof id === "string" && id.length > 0) known.add(routeKey(providerId, id).toLowerCase());
+		if (typeof model !== "object" || model === null) continue;
+		const entry = model as { id?: unknown; reasoning?: unknown; thinkingLevelMap?: unknown };
+		if (typeof entry.id !== "string" || entry.id.length === 0) continue;
+		const key = routeKey(providerId, entry.id).toLowerCase();
+		catalog.known.add(key);
+		const recorded: ModelEntry = { provider: providerId, model: entry.id };
+		if (typeof entry.reasoning === "boolean") recorded.reasoning = entry.reasoning;
+		if (entry.thinkingLevelMap && typeof entry.thinkingLevelMap === "object") {
+			const map: Record<string, string | null> = {};
+			for (const [level, raw] of Object.entries(entry.thinkingLevelMap as Record<string, unknown>)) {
+				if (raw === null || typeof raw === "string") map[level] = raw;
+			}
+			recorded.thinkingLevelMap = map;
+		}
+		catalog.entries.set(key, recorded);
 	}
 }
 
 /** Read both catalog files. A missing or corrupt file contributes nothing, never throws. */
 export function readModelCatalog(paths: { store: string; custom: string } = catalogPaths()): ModelCatalog {
-	const known = new Set<string>();
-	const sources: string[] = [];
+	const catalog: ModelCatalog = { known: new Set<string>(), entries: new Map<string, ModelEntry>(), sources: [] };
+	const sources = catalog.sources;
 
 	const readJson = (file: string): unknown => {
 		if (!existsSync(file)) return undefined;
@@ -418,18 +453,18 @@ export function readModelCatalog(paths: { store: string; custom: string } = cata
 	const store = readJson(paths.store) as Record<string, { models?: unknown }> | undefined;
 	if (store && typeof store === "object") {
 		for (const [providerId, entry] of Object.entries(store)) {
-			if (entry && typeof entry === "object") addModels(known, providerId, entry.models);
+			if (entry && typeof entry === "object") addModels(catalog, providerId, entry?.models);
 		}
 	}
 
 	const custom = readJson(paths.custom) as { providers?: Record<string, { models?: unknown }> } | undefined;
 	if (custom?.providers && typeof custom.providers === "object") {
 		for (const [providerId, entry] of Object.entries(custom.providers)) {
-			if (entry && typeof entry === "object") addModels(known, providerId, entry.models);
+			if (entry && typeof entry === "object") addModels(catalog, providerId, entry?.models);
 		}
 	}
 
-	return { known, sources };
+	return catalog;
 }
 
 /** Is `provider/model` in pi's catalog? Unknown providers and bare ids are "no". */
