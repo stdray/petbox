@@ -557,44 +557,67 @@ function startRun(opts: RunOptions, invocation: Invocation): Promise<RunResult> 
  *
  * MEASURED DEFECT this exists for: `delegate(cwd='/c/Users/…/a')` — the Git Bash form a shell
  * user (and sometimes `ctx.cwd` when pi itself is started from Git Bash) writes — reached
- * `spawn` verbatim and produced
- * `spawn C:\…\opencode.exe ENOENT`. The binary was fine; the cwd was not. A caller's model then
- * misdiagnosed it as a broken install and burned runs on it.
+ * `spawn` verbatim and produced `spawn C:\…\opencode.exe ENOENT`. The binary was fine; the cwd
+ * was not.
  *
- * So: normalise MSYS drive paths (`/c/…` → `C:/…`, any single letter), keep Windows paths as
- * they are, and reject — before any spawn — anything that still does not exist, naming the form
- * that was given and the form that was expected.
+ * PLATFORM GATE (measured on WSL): `/c/…` is a DRIVE only on win32. On Linux it is an ordinary
+ * absolute path, and both the conversion and the drive-existence probe must stay behind the
+ * gate — otherwise a perfectly valid `/c/anything` is refused with "names drive C:, which does
+ * not exist". Everything platform-specific is therefore decided from `deps.platform`, and the
+ * probe itself is injectable so a test never depends on a real `C:` drive.
  */
-export function normalizeCwd(input: string, platform: string = process.platform): string {
+export interface CwdDeps {
+	platform?: string;
+	/** Whether `C:`/`D:` exists. Only consulted on win32. Injectable for tests. */
+	driveExists?: (drive: string) => boolean;
+}
+
+function cwdDeps(deps: CwdDeps = {}) {
+	return {
+		platform: deps.platform ?? process.platform,
+		driveExists: deps.driveExists ?? ((drive: string) => existsSync(`${drive}/`)),
+	};
+}
+
+/** MSYS (`/c/…`) → `C:/…`, on win32 only. Never consults the filesystem beyond the drive probe. */
+export function normalizeCwd(input: string, deps: CwdDeps = {}): string {
+	const { platform, driveExists } = cwdDeps(deps);
 	if (platform !== "win32") return input;
 	const trimmed = input.trim();
 	const msys = /^\/([A-Za-z])(\/|$)/.exec(trimmed);
-	if (msys) {
-		const drive = `${msys[1].toUpperCase()}:`;
-		const rest = trimmed.slice(2);
-		const converted = `${drive}${rest}`;
-		if (!existsSync(`${drive}/`)) {
-			throw new Error(
-				`opencode_delegate: cwd ${JSON.stringify(input)} names drive ${drive}, which does not exist on this machine. ` +
-					`The Git Bash form ${JSON.stringify(trimmed)} was converted to ${JSON.stringify(converted)}; ` +
-					`use a Windows path such as "C:/Users/…" or "/c/Users/…" for an existing drive.`,
-			);
-		}
-		return converted;
+	if (!msys) return trimmed;
+	const drive = `${msys[1].toUpperCase()}:`;
+	const converted = `${drive}${trimmed.slice(2)}`;
+	if (!driveExists(drive)) {
+		throw new Error(
+			`opencode_delegate: cwd ${JSON.stringify(input)} names drive ${drive}, which does not exist on this machine. ` +
+				`The Git Bash form ${JSON.stringify(trimmed)} was converted to ${JSON.stringify(converted)}; ` +
+				`use a Windows path such as "C:/Users/…" or "/c/Users/…" for an existing drive.`,
+		);
 	}
-	if (/^[A-Za-z]:[\/]/.test(trimmed) || /^\\/.test(trimmed)) return trimmed;
-	return trimmed;
+	return converted;
 }
 
-/** `normalizeCwd` plus a existence check, for the one point a tool's cwd is resolved. */
-export function resolveToolCwd(raw: string | undefined, sessionCwd: string, platform: string = process.platform): string {
-	const session = normalizeCwd(sessionCwd, platform);
+/**
+ * `normalizeCwd` plus an existence check — the single point a tool's cwd is resolved.
+ *
+ * On POSIX nothing is converted and no drive is ever named: a missing path gets the plain
+ * "does not exist" message, because that is the only thing wrong with it.
+ */
+export function resolveToolCwd(raw: string | undefined, sessionCwd: string, deps: CwdDeps = {}): string {
+	const { platform } = cwdDeps(deps);
+	const session = normalizeCwd(sessionCwd, deps);
 	if (!raw || raw.trim().length === 0) return session;
-	const target = path.isAbsolute(raw) || /^\/([A-Za-z])(\/|$)/.test(raw) ? normalizeCwd(raw, platform) : path.resolve(session, raw);
+	const isAbsolute =
+		path.isAbsolute(raw) || (platform === "win32" && /^\/([A-Za-z])(\/|$)/.test(raw));
+	const target = isAbsolute ? normalizeCwd(raw, deps) : path.resolve(session, raw);
 	if (!existsSync(target)) {
 		throw new Error(
-			`opencode_delegate: cwd ${JSON.stringify(raw)} does not exist${target !== raw ? ` (resolved to ${JSON.stringify(target)})` : ""}. ` +
-				"Pass an existing directory; on Windows either \"C:/Users/…\" or the Git Bash form \"/c/Users/…\" works.",
+			`opencode_delegate: cwd ${JSON.stringify(raw)} does not exist${
+				target !== raw ? ` (resolved to ${JSON.stringify(target)})` : ""
+			}. Pass an existing directory${
+				platform === "win32" ? '; on Windows either "C:/Users/…" or the Git Bash form "/c/Users/…" works' : ""
+			}.`,
 		);
 	}
 	return target;

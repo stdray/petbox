@@ -335,7 +335,7 @@ test("role mode carries a top-level deny-all backstop", () => {
 
 test("a role run always hands runOpencode the role name as agent", () => {
 	const scout = repoRole("scout");
-	const plan = planRoleRun(scout, { model: "opencode/hy4-flash-free", defaultModel: "opencode/hy4-flash-free" });
+	const plan = planRoleRun(scout, { model: "opencode/hy4-flash-free", defaultModel: "opencode/hy4-flash-free", catalog: CATALOG });
 	assert.equal(plan.agent, "scout", "the per-agent ruleset is only reachable through --agent");
 
 	// The seam that matters: what buildInvocation does with that plan.
@@ -356,7 +356,7 @@ test("a role model the CLI cannot authenticate fails with the fix, not a header 
 	assert.match(scout.model ?? "", /^opencode-go\//, "the repo fixture pins the subscription provider");
 
 	assert.throws(
-		() => planRoleRun(scout, { defaultModel: "opencode/hy4-flash-free" }),
+		() => planRoleRun(scout, { defaultModel: "opencode/hy4-flash-free", catalog: CATALOG }),
 		(err: Error) => {
 			assert.match(err.message, /cannot be authenticated by the standalone opencode CLI/);
 			assert.match(err.message, /Header 'Authorization' has invalid value/);
@@ -367,7 +367,7 @@ test("a role model the CLI cannot authenticate fails with the fix, not a header 
 
 	// An explicit model wins: no throw, no silent substitution.
 	assert.equal(resolveRoleModel(scout, "opencode/hy4-flash-free"), "opencode/hy4-flash-free");
-	assert.equal(planRoleRun(scout, { model: "opencode/hy4-flash-free" }).model, "opencode/hy4-flash-free");
+	assert.equal(planRoleRun(scout, { model: "opencode/hy4-flash-free", catalog: CATALOG }).model, "opencode/hy4-flash-free");
 	// A role with no pin falls back to the default, untouched.
 	assert.equal(resolveRoleModel({ ...scout, model: undefined }, undefined, "x/y"), "x/y");
 });
@@ -397,7 +397,7 @@ test("agent without a definition is rejected before the child starts", () => {
 
 test("the role path defines and selects the role agent, and rejects a disagreeing agent", () => {
 	const scout = repoRole("scout");
-	const plan = planRoleRun(scout, { model: "opencode/hy4-flash-free" });
+	const plan = planRoleRun(scout, { model: "opencode/hy4-flash-free", catalog: CATALOG });
 	assert.ok(plan.config.agents && (plan.config.agents as Record<string, unknown>)[scout.name]);
 	assert.doesNotThrow(() => assertAgentParameters(plan.agent, scout.name, plan.config), "agent === role is fine");
 	assert.doesNotThrow(() => assertAgentParameters(plan.agent, undefined, plan.config));

@@ -8,6 +8,7 @@
 
 import assert from "node:assert/strict";
 import { existsSync } from "node:fs";
+import { homedir } from "node:os";
 import test from "node:test";
 
 import {
@@ -79,7 +80,10 @@ test("the prompt is passed verbatim, past `--`, with no shell in the middle", ()
 	const prompt = 'say "hi" & echo %PATH% | del *';
 	const inv = buildInvocation({ prompt, baseEnv });
 	assert.equal(inv.args.at(-1), prompt);
-	assert.equal(inv.command.endsWith(".exe"), true, "a .cmd shim would go through cmd.exe and mangle this prompt");
+	// The intent is "no shell shim in the middle": on Windows the resolved command is the real
+	// .exe (never the .cmd), on POSIX it is the plain executable name.
+	assert.equal(/\.(cmd|bat)$/i.test(inv.command), false, "a .cmd/.bat shim would go through a shell and mangle this prompt");
+	if (process.platform === "win32") assert.equal(inv.command.endsWith(".exe"), true);
 });
 
 test("cwd is pinned into PWD, because opencode prefers PWD over the spawn cwd", () => {
@@ -248,39 +252,52 @@ test("a failed run carries the error, never the empty-answer placeholder", () =>
 	assert.equal(resultBody("  partial answer ", exhausted), "partial answer");
 });
 
-test("a Git Bash (MSYS) cwd is converted, never handed to a spawn", () => {
-	// Measured defect: cwd='/c/Users/…' reached spawn verbatim → "opencode.exe ENOENT" and a
-	// misdiagnosis of the binary. On win32 the form must be converted (or refused) first.
-	assert.equal(normalizeCwd("/c/Users/stdray/AppData/Local/Temp", "win32"), "C:/Users/stdray/AppData/Local/Temp");
-	assert.equal(normalizeCwd("/d/my/prj/petbox", "win32"), "D:/my/prj/petbox");
-	assert.equal(normalizeCwd("/c", "win32"), "C:");
-	assert.equal(normalizeCwd("C:/Users/stdray", "win32"), "C:/Users/stdray", "Windows paths pass through");
-	assert.equal(normalizeCwd("/home/me", "linux"), "/home/me", "posix is untouched");
+test("a Git Bash (MSYS) cwd is converted on win32 — and is an ordinary path on Linux", () => {
+	// Measured defect 1: cwd='/c/Users/…' reached spawn verbatim → "opencode.exe ENOENT".
+	// Measured defect 2 (WSL): the conversion ran on LINUX too and refused a valid `/c/…`.
+	const win = { platform: "win32", driveExists: () => true };
+	assert.equal(normalizeCwd("/c/Users/stdray/AppData/Local/Temp", win), "C:/Users/stdray/AppData/Local/Temp");
+	assert.equal(normalizeCwd("/d/my/prj/petbox", win), "D:/my/prj/petbox");
+	assert.equal(normalizeCwd("/c", win), "C:");
+	assert.equal(normalizeCwd("C:/Users/stdray", win), "C:/Users/stdray", "Windows paths pass through");
 
-	// An unknown drive is refused with both forms named — and never reaches a spawn. The letter
-	// has to be one this machine does not have, so it is found rather than hardcoded.
-	const missing = "DEFGHIJKLMNOPQRSTUVWXYZ".split("").find((letter) => !existsSync(`${letter}:/`));
-	if (missing) {
-		const lower = missing.toLowerCase();
-		assert.throws(
-			() => normalizeCwd(`/${lower}/nowhere`, "win32"),
-			(err: Error) => {
-				assert.match(err.message, new RegExp(`drive ${missing}:`));
-				assert.ok(err.message.includes(`"/${lower}/nowhere"`), "names the form given");
-				assert.ok(err.message.includes(`${missing}:/nowhere`), "and the form it became");
-				assert.match(err.message, /use a Windows path/);
-				return true;
-			},
-		);
-	}
+	// On posix a leading single-letter segment is NOT a drive: untouched, no complaint.
+	const posix = { platform: "linux" };
+	assert.equal(normalizeCwd("/home/me", posix), "/home/me");
+	assert.equal(normalizeCwd("/c/Users/stdray/AppData/Local/Temp", posix), "/c/Users/stdray/AppData/Local/Temp");
+	assert.equal(normalizeCwd("/d/x", posix), "/d/x", "no drive conversion on Linux");
+
+	// An unknown drive on win32 is refused with both forms named, and never reaches a spawn.
+	assert.throws(
+		() => normalizeCwd("/z/nowhere", { platform: "win32", driveExists: () => false }),
+		(err: Error) => {
+			assert.match(err.message, /drive Z:/);
+			assert.ok(err.message.includes('"/z/nowhere"'));
+			assert.ok(err.message.includes("Z:/nowhere"));
+			assert.match(err.message, /use a Windows path/);
+			return true;
+		},
+	);
 });
 
-test("a cwd that does not exist is refused with the resolved path", () => {
-	if (process.platform !== "win32") return;
-	const resolved = resolveToolCwd(undefined, "/c/Users/stdray/AppData/Local/Temp");
-	assert.match(resolved, /^C:\/Users\/stdray\/AppData\/Local\/Temp$/i, "the session cwd is normalised too");
+test("a cwd that does not exist is refused with the resolved path, on either platform", () => {
+	const win = { platform: "win32", driveExists: () => true };
+	assert.match(
+		resolveToolCwd(undefined, "/c/Users/stdray/AppData/Local/Temp", win),
+		/^C:\/Users\/stdray\/AppData\/Local\/Temp$/i,
+		"the session cwd is normalised too",
+	);
+	const missing = existsSync("/") ? "/definitely-not-here-xyz" : "/nope";
 	assert.throws(
-		() => resolveToolCwd("C:/definitely-not-here-xyz", "C:/Users/stdray"),
+		() => resolveToolCwd(missing, "/", { platform: "linux" }),
 		/does not exist.*Pass an existing directory/s,
 	);
+	assert.equal(normalizeCwd("/home/me", { platform: "linux" }), "/home/me", "no conversion, no drive complaint on Linux");
+	// resolveToolCwd also checks existence, so a POSIX-only path can only be resolved on a POSIX host.
+	if (process.platform !== "win32") {
+		// A path that exists on THIS host, so the check under test is the platform gate and not
+		// whether a fixture directory happens to be there.
+		const home = homedir();
+		assert.equal(resolveToolCwd(home, "/", { platform: "linux" }), home);
+	}
 });
