@@ -30,6 +30,8 @@ export interface RoleDefinition {
 	name: string;
 	description?: string;
 	model?: string;
+	/** Raw frontmatter line, quoted back when the model is malformed. */
+	modelLine?: string;
 	thinking?: string;
 	tools: string[];
 	disallowedTools: string[];
@@ -84,9 +86,13 @@ export function parseRoleFile(text: string, sourcePath: string): RoleDefinition 
 	if (end < 0) throw new Error(`${sourcePath}: frontmatter is not closed with '---'`);
 
 	const fields = new Map<string, string>();
+	const rawLines = new Map<string, string>();
 	for (const line of lines.slice(1, end)) {
 		const match = /^([A-Za-z_][A-Za-z0-9_-]*):\s*(.*)$/.exec(line);
-		if (match) fields.set(match[1], match[2]);
+		if (match) {
+			fields.set(match[1], match[2]);
+			rawLines.set(match[1], line.trim());
+		}
 	}
 
 	const name = parseScalar(fields.get("name") ?? "");
@@ -97,6 +103,15 @@ export function parseRoleFile(text: string, sourcePath: string): RoleDefinition 
 		.join("\n")
 		.replace(/^\s*\n+/, "")
 		.trim();
+	// `agents.<name>.system` REPLACES opencode's base prompt, so an empty body would leave the
+	// child with no instructions at all while the tool still reported the role as active.
+	if (body.length === 0) {
+		throw new Error(
+			`${sourcePath}: role ${JSON.stringify(name)} has an empty body — the markdown after the ` +
+				"frontmatter is the child's system prompt, and an empty one replaces opencode's base " +
+				"prompt with nothing",
+		);
+	}
 
 	const role: RoleDefinition = {
 		name,
@@ -109,7 +124,10 @@ export function parseRoleFile(text: string, sourcePath: string): RoleDefinition 
 	const description = parseScalar(fields.get("description") ?? "");
 	if (description) role.description = description;
 	const model = parseScalar(fields.get("model") ?? "");
-	if (model) role.model = model;
+	if (model) {
+		role.model = model;
+		role.modelLine = rawLines.get("model") ?? `model: ${model}`;
+	}
 	const thinking = parseScalar(fields.get("thinking") ?? "");
 	if (thinking) role.thinking = thinking;
 	return role;
@@ -383,6 +401,31 @@ export function assertAgentParameters(
 }
 
 /**
+ * Flags that only mean something alongside `role`.
+ *
+ * `mcp` and `allowSubagent` shape the ROLE-derived config (`agents.<role>.permissions`, the
+ * PetBox server block). Without a role there is no agent to grant them to, and the earlier
+ * code simply dropped them — the child ran disconnected and the caller's answer quietly lacked
+ * board access. Silently ignoring a permission-shaped flag is the failure mode this forbids.
+ */
+export function assertRoleOnlyFlags(
+	roleName: string | undefined,
+	flags: { mcp?: boolean; allowSubagent?: boolean },
+): void {
+	if (roleName !== undefined) return;
+	const misused: string[] = [];
+	if (flags.mcp === true) misused.push("mcp");
+	if (flags.allowSubagent === true) misused.push("allowSubagent");
+	if (misused.length === 0) return;
+	throw new Error(
+		`opencode_delegate: ${misused.map((flag) => `\`${flag}: true\``).join(" and ")} only applies together with ` +
+			"`role` — these flags shape a role-derived config (an agent's permissions and the PetBox " +
+			"server block), and without a role there is no agent to apply them to. Pass `role` as well, " +
+			"or drop the flag.",
+	);
+}
+
+/**
  * The role config for one delegated role.
  *
  * `instructions` is deliberately empty: the role body replaces the prompt (measured), and
@@ -391,8 +434,23 @@ export function assertAgentParameters(
  */
 export function buildRoleConfig(role: RoleDefinition, options: RoleConfigOptions): Record<string, unknown> {
 	const variant = variantFor(options.thinking);
-	const [providerId, ...rest] = options.model.split("/");
-	const modelId = rest.join("/");
+	// The `#variant` suffix and the `providers…variants` declaration have to agree: a suffix
+	// with nothing declared against it is a guaranteed `provider.no-route`. Both therefore hang
+	// off a well-formed `provider/model`, and a malformed pin (a frontmatter `model:
+	// hy4-flash-free`) is rejected HERE, where the role file and its offending line are known.
+	const modelMatch = /^([^/#]+)\/([^#]+)$/.exec(options.model);
+	if (!modelMatch) {
+		const origin =
+			options.model === role.model && role.modelLine
+				? ` from ${role.sourcePath} (${role.modelLine})`
+				: " (passed as the model parameter)";
+		throw new Error(
+			`opencode_delegate: model ${JSON.stringify(options.model)}${origin} is not "provider/model", ` +
+				"so no variant can be declared or selected for it — use e.g. " +
+				'"opencode/hy4-flash-free".',
+		);
+	}
+	const [, providerId, modelId] = modelMatch;
 	const permissions = rulesForRole(role, options);
 	const config: Record<string, unknown> = {
 		$schema: "https://opencode.ai/config.json",
@@ -411,7 +469,7 @@ export function buildRoleConfig(role: RoleDefinition, options: RoleConfigOptions
 		},
 	};
 
-	if (variant && providerId && modelId) {
+	if (variant) {
 		// Only the level actually used is declared — a catalogue of unused levels is config
 		// nobody reads, and opencode resolves `#id` against this list.
 		config.providers = {

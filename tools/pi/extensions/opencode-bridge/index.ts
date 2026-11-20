@@ -45,6 +45,7 @@ import {
 } from "./delegate.ts";
 import {
 	assertAgentParameters,
+	assertRoleOnlyFlags,
 	loadPetboxMcpServer,
 	loadRole,
 	planRoleRun,
@@ -157,9 +158,9 @@ export default function opencodeBridge(pi: ExtensionAPI): void {
 			agent: Type.Optional(
 				Type.String({
 					description:
-						'opencode agent name defined by the generated child config, e.g. "build" or "plan". ' +
-						'For a pi role use `role` instead — an `agent` this config does not define is rejected ' +
-						"before the child starts. With `role`, `agent` must be absent or equal to the role name.",
+						"Name of an agent the GENERATED child config defines — which, without `role`, is none, so " +
+						"this is only meaningful alongside `role` (and must then equal the role name). " +
+						"A pi role is passed as `role: \"<name>\"`, never here.",
 				}),
 			),
 			model: Type.Optional(
@@ -190,14 +191,17 @@ export default function opencodeBridge(pi: ExtensionAPI): void {
 			allowSubagent: Type.Optional(
 				Type.Boolean({
 					description:
-						"DANGEROUS: let the delegated agent spawn subagents of its own. Denied by default.",
+						"DANGEROUS: let the delegated agent spawn subagents of its own. Denied by default. " +
+						"Only valid together with `role` (it shapes that role's permission set); passing it without " +
+						"a role is an error.",
 				}),
 			),
 			mcp: Type.Optional(
 				Type.Boolean({
 					description:
 						"DANGEROUS: connect the child to the production PetBox MCP server from the project's .mcp.json " +
-						"(read/write access to live boards). Off by default — the child gets no MCP servers.",
+						"(read/write access to live boards). Off by default — the child gets no MCP servers. " +
+						"Only valid together with `role`; passing it without a role is an error.",
 				}),
 			),
 		}),
@@ -209,6 +213,9 @@ export default function opencodeBridge(pi: ExtensionAPI): void {
 				allowWrite: params.allowWrite === true,
 				allowShell: params.allowShell === true,
 			};
+			// Both flags shape a role-derived config; silently dropping them without a role is how
+			// a caller gets an answer that quietly lacked board access.
+			assertRoleOnlyFlags(params.role, { mcp: params.mcp, allowSubagent: params.allowSubagent });
 			// `--auto` only when something was explicitly approved; the deny rules in the
 			// generated config stand either way.
 			const auto = needsAutoApprove(policy);

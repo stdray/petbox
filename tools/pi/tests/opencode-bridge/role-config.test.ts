@@ -21,6 +21,7 @@ import test from "node:test";
 
 import {
 	assertAgentParameters,
+	assertRoleOnlyFlags,
 	buildRoleConfig,
 	loadPetboxMcpServer,
 	loadRole,
@@ -121,7 +122,7 @@ test("a writer role only writes when the caller allows it", () => {
 	assert.equal(effectOf(shell, "worker", "edit"), "deny");
 
 	assert.equal(effectOf(allowed, "worker", "subagent"), "deny", "subagents need their own flag");
-	const withSub = asConfig(buildRoleConfig(worker, { model: "m", allowSubagent: true }));
+	const withSub = asConfig(buildRoleConfig(worker, { model: "p/x", allowSubagent: true }));
 	assert.equal(effectOf(withSub, "worker", "subagent"), "allow");
 });
 
@@ -167,14 +168,14 @@ test("the production MCP server is off unless asked for", () => {
 
 test("websearch is configured only for a role that declares a web tool", () => {
 	const scout = repoRole("scout");
-	assert.equal(asConfig(buildRoleConfig(scout, { model: "m" })).websearch, undefined);
+	assert.equal(asConfig(buildRoleConfig(scout, { model: "p/x" })).websearch, undefined);
 
 	const web: RoleDefinition = {
 		...scout,
 		name: "researcher",
 		tools: [...scout.tools, "web_search"],
 	};
-	const config = asConfig(buildRoleConfig(web, { model: "m" }));
+	const config = asConfig(buildRoleConfig(web, { model: "p/x" }));
 	assert.deepEqual(config.websearch, { provider: "exa" });
 	assert.equal(effectOf(config, "researcher", "websearch"), "allow");
 });
@@ -182,12 +183,12 @@ test("websearch is configured only for a role that declares a web tool", () => {
 test("disallowed_tools removes exactly the capability it names", () => {
 	const scout = repoRole("scout");
 	const restricted: RoleDefinition = { ...scout, disallowedTools: ["read"] };
-	const config = asConfig(buildRoleConfig(restricted, { model: "m" }));
+	const config = asConfig(buildRoleConfig(restricted, { model: "p/x" }));
 	assert.equal(effectOf(config, "scout", "read"), "deny", "a veto beats the declared tool list");
 	assert.equal(effectOf(config, "scout", "grep"), "allow", "the other read tools are untouched");
 
 	const blind: RoleDefinition = { ...scout, tools: ["bash"], disallowedTools: [] };
-	const blindConfig = asConfig(buildRoleConfig(blind, { model: "m", allowShell: true }));
+	const blindConfig = asConfig(buildRoleConfig(blind, { model: "p/x", allowShell: true }));
 	assert.equal(effectOf(blindConfig, "scout", "read"), "deny", "no read tool declared, no read action");
 	assert.equal(effectOf(blindConfig, "scout", "glob"), "deny");
 	assert.equal(effectOf(blindConfig, "scout", "shell"), "allow");
@@ -229,7 +230,7 @@ test("mcp: true without a .mcp.json fails with the path it wanted", () => {
 
 test("rulesForRole is a pure function of role + options", () => {
 	const scout = repoRole("scout");
-	const options = { model: "m", allowShell: true };
+	const options = { model: "p/x", allowShell: true };
 	assert.deepEqual(rulesForRole(scout, options), rulesForRole(scout, options));
 	assert.equal(existsSync(path.join(REPO_AGENTS, "scout.md")), true);
 });
@@ -256,7 +257,7 @@ test("role mode carries a top-level deny-all backstop", () => {
 
 	const capped = asConfig(buildRoleConfig(worker, { model: "opencode/hy4-flash-free" }));
 	assert.equal(capped.permission!.edit, "deny", "no allowWrite, no edit — in both shapes");
-	assert.deepEqual(permissionBackstop(rulesForRole(worker, { model: "m", allowWrite: true })).edit, "allow");
+	assert.deepEqual(permissionBackstop(rulesForRole(worker, { model: "p/x", allowWrite: true })).edit, "allow");
 });
 
 test("a role run always hands runOpencode the role name as agent", () => {
@@ -332,4 +333,63 @@ test("the role path defines and selects the role agent, and rejects a disagreein
 		() => assertAgentParameters(plan.agent, "worker", plan.config),
 		/role "scout" and agent "worker" disagree/,
 	);
+});
+
+test("mcp / allowSubagent without a role are an error, not a silent drop", () => {
+	const scout = repoRole("scout");
+	// The bug this pins: the flags were read only inside the role branch, so a caller who forgot
+	// `role` silently got no MCP server and no subagents.
+	assert.throws(
+		() => assertRoleOnlyFlags(undefined, { mcp: true }),
+		/mcp.*only applies together with.*role/,
+	);
+	assert.throws(() => assertRoleOnlyFlags(undefined, { allowSubagent: true }), /allowSubagent/);
+	assert.throws(() => assertRoleOnlyFlags(undefined, { mcp: true, allowSubagent: true }), /only applies together with `role`/);
+	assert.doesNotThrow(() => assertRoleOnlyFlags(undefined, {}));
+	assert.doesNotThrow(() => assertRoleOnlyFlags(undefined, { mcp: false, allowSubagent: false }));
+	assert.doesNotThrow(() => assertRoleOnlyFlags(scout.name, { mcp: true, allowSubagent: true }));
+});
+
+test("a role file with an empty body is rejected, naming the file", () => {
+	const dir = mkdtempSync(path.join(tmpdir(), "oc-bridge-emptybody-"));
+	const file = path.join(dir, "ghost.md");
+	writeFileSync(file, "---\nname: ghost\ntools: read\n---\n\n   \n\n");
+	assert.throws(
+		() => parseRoleFile(readFileSync(file, "utf8"), file),
+		(err: Error) => {
+			assert.match(err.message, /has an empty body/);
+			assert.ok(err.message.includes(file), "the message names the file");
+			assert.match(err.message, /replaces opencode's base prompt/);
+			return true;
+		},
+	);
+});
+
+test("a model without provider/model is rejected instead of emitting a dangling #variant", () => {
+	const scout = repoRole("scout");
+	const malformed: RoleDefinition = { ...scout, model: "hy4-flash-free", modelLine: "model: hy4-flash-free" };
+
+	assert.throws(
+		() => buildRoleConfig(malformed, { model: "hy4-flash-free", thinking: "low" }),
+		(err: Error) => {
+			assert.match(err.message, /is not "provider\/model"/);
+			assert.ok(err.message.includes(scout.sourcePath), "names the role file");
+			assert.match(err.message, /model: hy4-flash-free/, "quotes the offending line");
+			return true;
+		},
+	);
+
+	// A caller-supplied bad model is attributed to the parameter, not to the role file.
+	assert.throws(
+		() => buildRoleConfig(scout, { model: "nope", thinking: "low" }),
+		/passed as the model parameter/,
+	);
+
+	// Well-formed: the suffix and the declaration arrive together, or neither does.
+	const withVariant = asConfig(buildRoleConfig(scout, { model: "opencode/hy4-flash-free", thinking: "low" }));
+	assert.equal(withVariant.model, "opencode/hy4-flash-free#low");
+	assert.equal(withVariant.providers?.opencode?.models["hy4-flash-free"]?.variants.length, 1);
+	const without = asConfig(buildRoleConfig(scout, { model: "opencode/hy4-flash-free" }));
+	assert.equal(without.model, "opencode/hy4-flash-free");
+	assert.equal(without.providers, undefined);
 });
