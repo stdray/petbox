@@ -57,6 +57,32 @@ the standalone child cannot authenticate to (`opencode-go/hy4-flash-free` failed
 `Header 'Authorization' has invalid value` while `opencode/hy4-flash-free` ran the same role fine) —
 pass `model` explicitly when delegating in an environment with only free-tier credentials.
 
+**Tool parity on the opencode leg (`bridge-parity`).** A role's `tools:` list is pi's vocabulary;
+the child only has what opencode can express. `EXPRESSIBLE_TOOLS` in `role-config.ts` is the single
+source of truth, and `analyzeToolParity` reports the difference **in the tool result**
+(`parity: codemode — …`), because silently losing a capability is how two earlier defects shipped.
+
+| Carries over | Notes |
+|---|---|
+| `read` | opencode `read` |
+| `grep` | opencode `grep` |
+| `find`, `ls` | both collapse to opencode's `glob` — there is no separate list tool |
+| `edit`, `write`, `notebook_edit` | one `edit` action; opencode normalises write to edit |
+| `bash`, `powershell`, `shell` | one `shell` action (gated by `allowShell`) |
+| `websearch`, `fetch_content`, `web_fetch`, … | `websearch` + `webfetch`, plus `websearch.provider: exa` — only when the role declares one of them |
+| `subagent`, `task` | `subagent` action (needs `allowSubagent`) |
+| MCP (PetBox) | only via `mcp: true` — the whole server, never per-tool |
+
+| Does NOT carry over | What to do |
+|---|---|
+| `codemode` — pi-side surface that can call MCP tools | the child loses that MCP reach: pass `mcp: true`, or restate the role without it |
+| `pwsh` — the pi extension re-registering PowerShell under another name | declare `powershell` instead; it maps to `shell` |
+| pi extension tools, `mcp__*` tool names, skill tools | not expressible per-tool; do not delegate that role if it depends on them |
+| `Agent`, `get_subagent_result`, any pi-only tool | same — restate the role for the opencode leg |
+
+A role whose **entire** tool list is unexpressible is reported as `BLOCK` rather than `parity`: the
+child would start with no tools and its "I cannot do that" would read as a task failure.
+
 **Role files are merged, not copied.** `model:` and `thinking:` in a role's frontmatter are owned
 by the Roles panel, which writes them into the *installed* file (that is where the
 `*.md.bak-before-models-panel-*` files come from). A plain copy reverted the owner's model choice

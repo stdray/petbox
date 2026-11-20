@@ -20,7 +20,10 @@ import * as path from "node:path";
 import test from "node:test";
 
 import {
+	analyzeToolParity,
 	assertAgentParameters,
+	describeParityLosses,
+	EXPRESSIBLE_TOOLS,
 	assertRoleOnlyFlags,
 	buildRoleConfig,
 	clampLegEfforts,
@@ -501,4 +504,42 @@ test("the clamp applies to EVERY leg, each against its own model", () => {
 	// No effort at all stays absent, and unknown models pass the request through untouched.
 	assert.deepEqual(clampLegEfforts([{ target: "pi", provider: "a", model: "b" }], CATALOG), [{ target: "pi", provider: "a", model: "b" }]);
 	assert.equal(clampLegEfforts([{ target: "pi", provider: "nobody", model: "nothing", effort: "low" }], CATALOG)[0].effort, "low");
+});
+
+test("a declared tool opencode cannot express is reported, not silently lost", () => {
+	// Both vendored roles declare `codemode` — the pi-side surface that can reach MCP tools.
+	const scout = repoRole("scout");
+	assert.ok(scout.tools.includes("codemode"));
+	const losses = analyzeToolParity(scout);
+	const codemode = losses.find((loss) => loss.tool === "codemode");
+	assert.ok(codemode, "codemode must be reported");
+	assert.equal(codemode?.severity, "warn", "refusing would make every vendored role undelegatable");
+	assert.match(String(codemode?.reason), /no equivalent/);
+	assert.match(String(codemode?.reason), /mcp: true/, "the recoverable half is named");
+
+	// `codemode` and `pwsh` are the pi-only surfaces; everything else maps to an action.
+	assert.equal(EXPRESSIBLE_TOOLS.read.action, "read");
+	assert.equal(EXPRESSIBLE_TOOLS.find.action, "glob", "opencode has no separate list tool");
+	assert.deepEqual(EXPRESSIBLE_TOOLS.web_search.action, ["websearch", "webfetch"]);
+	assert.equal(losses.some((loss) => loss.tool === "read"), false);
+
+	const line = describeParityLosses([codemode!])[0];
+	assert.match(line, /^parity: codemode — /, "the result line says exactly what was lost");
+});
+
+test("a portable role is silent, and an all-unexpressible role is a block", () => {
+	const portable: RoleDefinition = {
+		...repoRole("scout"),
+		name: "portable",
+		tools: ["read", "grep", "find", "ls", "edit", "write", "bash", "web_search"],
+	};
+	assert.deepEqual(analyzeToolParity(portable), [], "nothing to warn about");
+
+	const hopeless: RoleDefinition = { ...portable, name: "hopeless", tools: ["codemode", "mcp__petbox__tasks_search"] };
+	const blocked = analyzeToolParity(hopeless);
+	assert.deepEqual(blocked.map((loss) => loss.severity), ["block", "block"], "a child with no tools at all is refused-level");
+	assert.match(String(blocked[1].reason), /whole PetBox server/);
+
+	// A role with no tools at all declares no losses either — there is nothing to compare.
+	assert.deepEqual(analyzeToolParity({ ...portable, tools: [] }), []);
 });

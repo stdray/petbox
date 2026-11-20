@@ -28,7 +28,17 @@ import {
 	type RouteDecision,
 	type RouteLeg,
 } from "./route.ts";
-import { clampLegEfforts, settledEffort, UNAUTHENTICATED_PROVIDERS, loadRole, planRoleRun, type RoleDefinition } from "./role-config.ts";
+import {
+	analyzeToolParity,
+	clampLegEfforts,
+	describeParityLosses,
+	type ParityLoss,
+	settledEffort,
+	UNAUTHENTICATED_PROVIDERS,
+	loadRole,
+	planRoleRun,
+	type RoleDefinition,
+} from "./role-config.ts";
 import type { BridgeUsage } from "./pi-route.ts";
 import { startBackgroundRun } from "./steer-tools.ts";
 import type { Usage } from "./types.ts";
@@ -103,6 +113,8 @@ interface DelegateDetails {
 	handle?: string;
 	/** Usage as the pi leg reported it (`cost` only when the plugin provides one). */
 	piUsage?: BridgeUsage;
+	/** Declared capabilities the opencode child cannot have. */
+	parity?: ParityLoss[];
 	agentId?: string;
 	piFailure?: string;
 	opencode?: {
@@ -207,6 +219,9 @@ export function registerDelegateTool(pi: ExtensionAPI): void {
 		async execute(_toolCallId, params, signal, onUpdate, ctx) {
 			const startedAt = Date.now();
 			const role = params.role ? loadRole(params.role, { cwd: ctx.cwd }) : undefined;
+			// Silent degradation is the failure mode this guards: a capability the role declares
+			// that an opencode child cannot have is stated in the result, not just lost.
+			const parity: ParityLoss[] = role ? analyzeToolParity(role) : [];
 			const effort = params.effort?.trim() || role?.thinking;
 			// One place, so a Git Bash path can never reach a spawn.
 			const cwd = resolveToolCwd(params.cwd, ctx.cwd);
@@ -232,6 +247,7 @@ export function registerDelegateTool(pi: ExtensionAPI): void {
 					allowShell: params.allowShell === true,
 				});
 				const details: DelegateDetails = { route: started.route, durationMs: Date.now() - startedAt, handle: started.handle.id };
+				if (parity.length > 0) details.parity = parity;
 				return {
 					content: [
 						{
@@ -239,6 +255,7 @@ export function registerDelegateTool(pi: ExtensionAPI): void {
 							text: [
 								started.handle.routeLine,
 								`background · handle ${started.handle.id} · session ${started.handle.sessionId}`,
+								...describeParityLosses(parity),
 								"steer_delegate / abort_delegate / delegate_result take this handle",
 							].join("\n"),
 						},
@@ -389,6 +406,7 @@ export function registerDelegateTool(pi: ExtensionAPI): void {
 
 			const details: DelegateDetails = { route: decision, durationMs: Date.now() - startedAt };
 			if (piUsage) details.piUsage = piUsage;
+			if (parity.length > 0) details.parity = parity;
 			if (agentId) details.agentId = agentId;
 			if (piFailure) details.piFailure = piFailure;
 			if (opencodeRun) {
@@ -402,6 +420,7 @@ export function registerDelegateTool(pi: ExtensionAPI): void {
 			const lines = [routeLine(decision, role?.name)];
 			if (details.agentId) lines.push(`agent ${details.agentId}`);
 			if (decision.evidence) lines.push(`evidence: ${decision.evidence}`);
+			for (const warning of describeParityLosses(parity)) lines.push(warning);
 			if (opencodeRun?.error) lines.push(`error: ${opencodeRun.error}`);
 			// Same line either way: the pi leg's tokens replace the opencode leg's when it ran.
 			if (opencodeRun?.usage) lines.push(describeUsage(opencodeRun.usage, true));
