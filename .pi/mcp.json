@@ -6,7 +6,7 @@
       "headers": {
         "X-Api-Key": "${PETBOX_API_KEY}"
       },
-      "description": "PetBox task boards, methodology, memory and sessions. About 99 tools, all reached through codemode: searchTools(\"tasks\") or describeTool(\"tasks_search\"), then tools.mcp__petbox__<tool>(...)."
+      "description": "PetBox task boards, methodology, memory and sessions. About 99 tools, all reached through codemode: searchTools(\"tasks\") or describeTool(\"mcp__petbox__tasks_search\") — the BARE name returns undefined, so describeTool takes the qualified one — then tools.mcp__petbox__<tool>(...)."
     }
   }
 }
