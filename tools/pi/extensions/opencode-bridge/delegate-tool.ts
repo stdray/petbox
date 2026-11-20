@@ -28,7 +28,7 @@ import {
 	type RouteDecision,
 	type RouteLeg,
 } from "./route.ts";
-import { settledEffort, UNAUTHENTICATED_PROVIDERS, loadRole, planRoleRun, type RoleDefinition } from "./role-config.ts";
+import { clampLegEfforts, settledEffort, UNAUTHENTICATED_PROVIDERS, loadRole, planRoleRun, type RoleDefinition } from "./role-config.ts";
 import { startBackgroundRun } from "./steer-tools.ts";
 import type { Usage } from "./types.ts";
 
@@ -194,11 +194,9 @@ export function registerDelegateTool(pi: ExtensionAPI): void {
 			const effort = params.effort?.trim() || role?.thinking;
 			const cwd = params.cwd ? path.resolve(ctx.cwd, params.cwd) : ctx.cwd;
 			const catalog = readModelCatalog();
-			const legs = buildLegs(role, effort, params.model?.trim(), parentModelOf(ctx));
-			// Report what pi will SETTLE on, not what was asked: the first leg is the pi leg, and
-			// pi clamps a thinking level to the model's catalog entry before running.
-			const settled = settledEffort(`${legs[0].provider}/${legs[0].model}`, legs[0].effort, catalog);
-			if (settled) legs[0] = { ...legs[0], effort: settled };
+			// EVERY leg, against its OWN model: the leg that runs is not always legs[0], and a level
+			// one model supports can be absent on the other (`low: null` on hy4-flash-free).
+			const legs = clampLegEfforts(buildLegs(role, effort, params.model?.trim(), parentModelOf(ctx)), catalog);
 
 			let cache = readRouteCache();
 			if (params.resetRoute) cache = clearDead(cache);
@@ -232,7 +230,14 @@ export function registerDelegateTool(pi: ExtensionAPI): void {
 				};
 			}
 
-			const requested = params.model ? { ...splitModelEffort(params.model), effort } : undefined;
+			// The explicit model's effort is clamped against THAT model too — `decideRoute` honours a
+			// requested model verbatim (legIndex -1), so leaving the raw role level here put an
+			// unsupported `low` back into the decision after the legs had been fixed.
+			const requestedModelParts = params.model ? splitModelEffort(params.model) : undefined;
+			const requestedEffort = requestedModelParts
+				? settledEffort(`${requestedModelParts.provider}/${requestedModelParts.model}`, effort, catalog)
+				: effort;
+			const requested = requestedModelParts ? { ...requestedModelParts, effort: requestedEffort } : undefined;
 			// The catalog gate exists because pi-subagents substitutes the PARENT model for an id it
 			// cannot resolve instead of failing, so an unknown model would silently "work" there.
 			let decision = decideRoute({ legs, requested, cache, catalog });
