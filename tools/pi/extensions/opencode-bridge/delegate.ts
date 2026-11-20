@@ -36,14 +36,49 @@ export const KILL_GRACE_MS = 3_000;
 /**
  * Argv budget for the prompt.
  *
- * The prompt rides the command line (stdin is closed on purpose), and Windows caps a
- * command line at 32 767 characters — past that `CreateProcess` fails with an opaque error.
- * Counting CHARACTERS is not enough: Node escapes each `"` and `\` as `\\` and `\"`, so a
- * quote-heavy prompt of ~16 000 characters already costs ~32 000 on the wire. The guard
- * therefore counts the ESCAPED size plus the flags, model, session id and separator
- * (`ARGV_FIXED_OVERHEAD_CHARS`).
+ * The prompt rides the command line (stdin is closed on purpose), and the ceiling is the
+ * PLATFORM's, not one number:
+ * - win32: `CreateProcess` caps a command line at 32 767 characters, past which the failure is an
+ *   opaque one. Counting CHARACTERS is not enough there — Node escapes each `"` and `\` as `\\`
+ *   and `\"`, so a quote-heavy prompt of ~16 000 characters already costs ~32 000 on the wire.
+ *   Hence the guard counts the ESCAPED size plus flags/model/session/separator
+ *   (`ARGV_FIXED_OVERHEAD_CHARS`).
+ * - POSIX: the real limit is `ARG_MAX` (~2 MB on Linux, `getconf ARG_MAX`), so the same 32 K cap
+ *   would refuse a large brief for no reason. 128 K stays an order of magnitude under `ARG_MAX`
+ *   on purpose: argv shares that budget with the environment, every argument is copied, and a
+ *   prompt that big is a prompt that should have been a file.
  */
 export const MAX_ARGV_CHARS = 32_000;
+
+/** The POSIX budget: well under `ARG_MAX`, well over the old flat 32 K cap. */
+export const MAX_ARGV_CHARS_POSIX = 128 * 1024;
+
+/** The argv budget for a platform. `win32` keeps the measured 32 000. */
+export function maxArgvChars(platform: string = process.platform): number {
+	return platform === "win32" ? MAX_ARGV_CHARS : MAX_ARGV_CHARS_POSIX;
+}
+
+/**
+ * Refuse a prompt that cannot fit on the command line, before `spawn` returns something opaque.
+ * Exported so both platform paths are unit-testable without a child process.
+ */
+export function assertPromptFitsArgv(prompt: string, platform: string = process.platform): void {
+	const budget = maxArgvChars(platform);
+	const argvCost = estimateArgvCost(prompt);
+	if (argvCost <= budget) return;
+	throw new Error(
+		`opencode-bridge: prompt is ${prompt.length} characters but costs ${argvCost} on the command line ` +
+			`once escaped, over the ${budget}-character argv budget for ${platform}` +
+			(platform === "win32"
+				? " (Windows CreateProcess allows 32 767; quotes and backslashes double when escaped, so a " +
+					"quote-heavy prompt can blow the limit long before its character count does)"
+				: " (POSIX ARG_MAX is far larger, but argv shares it with the environment and every argument " +
+					"is copied)") +
+			". The prompt has to travel on the command line — the child's stdin is closed on purpose, so " +
+			"`opencode run` cannot block on it. Shorten the prompt, strip embedded files, split the task, or " +
+			"run the opencode agent directly with the prompt supplied another way.",
+	);
+}
 
 /** Flags, model, session id, separator — the non-prompt part of the command line. */
 export const ARGV_FIXED_OVERHEAD_CHARS = 400;
@@ -212,18 +247,7 @@ export function modelArgument(model?: string, variant?: string): string {
  * `process.env` (and the PATH, when resolving the executable) — no spawning.
  */
 export function buildInvocation(opts: InvocationOptions): Invocation {
-	const argvCost = estimateArgvCost(opts.prompt);
-	if (argvCost > MAX_ARGV_CHARS) {
-		throw new Error(
-			`opencode-bridge: prompt is ${opts.prompt.length} characters but costs ${argvCost} on the ` +
-				`command line once escaped, over the ${MAX_ARGV_CHARS}-character argv budget ` +
-				"(Windows CreateProcess allows 32 767; quotes and backslashes double when escaped, so a " +
-				"quote-heavy prompt can blow the limit long before its character count does). The prompt " +
-				"has to travel on the command line — the child's stdin is closed on purpose, so `opencode " +
-				"run` cannot block on it. Shorten the prompt, strip embedded files, split the task, or run " +
-				"the opencode agent directly with the prompt supplied another way.",
-		);
-	}
+	assertPromptFitsArgv(opts.prompt);
 	const command = opts.executable ?? resolveOpencodeExecutable();
 	const args: string[] = [
 		"run",
@@ -560,11 +584,13 @@ function startRun(opts: RunOptions, invocation: Invocation): Promise<RunResult> 
  * `spawn` verbatim and produced `spawn C:\…\opencode.exe ENOENT`. The binary was fine; the cwd
  * was not.
  *
- * PLATFORM GATE (measured on WSL): `/c/…` is a DRIVE only on win32. On Linux it is an ordinary
- * absolute path, and both the conversion and the drive-existence probe must stay behind the
- * gate — otherwise a perfectly valid `/c/anything` is refused with "names drive C:, which does
- * not exist". Everything platform-specific is therefore decided from `deps.platform`, and the
- * probe itself is injectable so a test never depends on a real `C:` drive.
+ * PLATFORM GATE (measured on WSL), stated exactly: `normalizeCwd` ALREADY returned its input
+ * unchanged off win32, so the conversion itself was never platform-blind. What was blind was
+ * `resolveToolCwd` — it treated `/c/...` as absolute on every platform and its "does not exist"
+ * message carried a Windows-only hint — plus tests that asserted Windows shapes everywhere. On
+ * Linux a valid `/c/anything` was therefore refused by that path, not by the converter.
+ * Everything platform-specific is now decided from `deps.platform`, and the probe is injectable
+ * so a test never depends on a real `C:` drive.
  */
 export interface CwdDeps {
 	platform?: string;

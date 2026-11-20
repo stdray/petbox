@@ -18,8 +18,10 @@ import {
 	classifyResult,
 	DEFAULT_MODEL,
 	EMPTY_ANSWER_PLACEHOLDER,
+	assertPromptFitsArgv,
 	estimateArgvCost,
-	MAX_ARGV_CHARS,
+	maxArgvChars,
+	MAX_ARGV_CHARS_POSIX,
 	modelArgument,
 	normalizeCwd,
 	resolveToolCwd,
@@ -142,29 +144,33 @@ test("allowWrite / allowShell are the only way to lift the deny policy", () => {
 });
 
 test("an oversized prompt is refused before it reaches CreateProcess", () => {
-	const affordable = "x".repeat(MAX_ARGV_CHARS - ARGV_FIXED_OVERHEAD_CHARS);
+	const budget = maxArgvChars();
+	const affordable = "x".repeat(budget - ARGV_FIXED_OVERHEAD_CHARS);
 	assert.equal(buildInvocation({ prompt: affordable, baseEnv: {} }).args.at(-1)?.length, affordable.length);
 
-	const tooBig = "x".repeat(MAX_ARGV_CHARS - ARGV_FIXED_OVERHEAD_CHARS + 1);
+	const tooBig = "x".repeat(budget - ARGV_FIXED_OVERHEAD_CHARS + 1);
 	assert.throws(
 		() => buildInvocation({ prompt: tooBig, baseEnv: {} }),
-		/characters but cost[sd]? \d+ on the command line once escaped, over the 32000-character argv budget/,
+		/once escaped, over the \d+-character argv budget/,
 	);
 });
 
 test("the argv guard counts the ESCAPED size, not the character count", () => {
 	// Node doubles every `"` and `\\` when building the Windows command line, so a
 	// quote-heavy prompt blows the 32 767 limit at roughly half its character count.
-	const quotes = '"'.repeat(MAX_ARGV_CHARS / 2);
-	assert.ok(quotes.length < MAX_ARGV_CHARS - 2_000, "the character count alone looks safe");
+	const quotes = '"'.repeat(maxArgvChars("win32") / 2);
+	assert.ok(quotes.length < maxArgvChars("win32") - 2_000, "the character count alone looks safe");
 	assert.equal(estimateArgvCost(quotes), quotes.length * 2 + ARGV_FIXED_OVERHEAD_CHARS);
+	// Pinned to win32 explicitly: the escape-doubling property is Windows', and the POSIX budget
+	// is large enough that the same prompt fits there.
 	assert.throws(
-		() => buildInvocation({ prompt: quotes, baseEnv: {} }),
-		/once escaped, over the 32000-character argv budget/,
+		() => assertPromptFitsArgv(quotes, "win32"),
+		/once escaped, over the 32000-character argv budget for win32/,
 		"a quote-heavy prompt under the character limit must still be refused",
 	);
+	assert.doesNotThrow(() => assertPromptFitsArgv(quotes, "linux"), "the same prompt fits the POSIX budget");
 	assert.throws(
-		() => buildInvocation({ prompt: "\\".repeat(MAX_ARGV_CHARS / 2), baseEnv: {} }),
+		() => assertPromptFitsArgv("\\".repeat(maxArgvChars("win32") / 2), "win32"),
 		/argv budget/,
 		"backslashes are doubled too",
 	);
@@ -172,7 +178,7 @@ test("the argv guard counts the ESCAPED size, not the character count", () => {
 
 test("runOpencode rejects when the invocation cannot be built", async () => {
 	await assert.rejects(
-		runOpencode({ prompt: "x".repeat(MAX_ARGV_CHARS), timeoutMs: 5_000 }),
+		runOpencode({ prompt: "x".repeat(maxArgvChars() + 1), timeoutMs: 5_000 }),
 		/argv budget/,
 		"a build failure must be a rejection, not a silent empty result",
 	);
@@ -300,4 +306,38 @@ test("a cwd that does not exist is refused with the resolved path, on either pla
 		const home = homedir();
 		assert.equal(resolveToolCwd(home, "/", { platform: "linux" }), home);
 	}
+});
+
+test("the production drive probe is exercised: no injected deps", () => {
+	// The seam every other test bypasses. With NO deps, `normalizeCwd` uses
+	// `existsSync("<drive>:/")` on win32 and short-circuits before it on POSIX.
+	if (process.platform === "win32") {
+		assert.equal(normalizeCwd("/c/Users/someone"), "C:/Users/someone");
+	} else {
+		assert.equal(normalizeCwd("/c/Users/someone"), "/c/Users/someone", "POSIX: an ordinary path, no drive probe");
+	}
+});
+
+test("the argv budget is the platform's, not one flat number", () => {
+	// On Linux ARG_MAX is ~2 MB: the old 32 K cap refused a big brief for no reason.
+	assert.equal(maxArgvChars("win32"), 32_000, "the measured CreateProcess ceiling");
+	assert.equal(maxArgvChars("linux"), MAX_ARGV_CHARS_POSIX);
+	assert.equal(maxArgvChars("darwin"), MAX_ARGV_CHARS_POSIX);
+	assert.ok(MAX_ARGV_CHARS_POSIX > 32_000 && MAX_ARGV_CHARS_POSIX < 1_000_000, "well under ARG_MAX, well over 32 K");
+
+	// A 40 K prompt: refused on win32, accepted on POSIX.
+	const fortyK = "x".repeat(40_000);
+	assert.throws(() => assertPromptFitsArgv(fortyK, "win32"), /32000-character argv budget for win32/);
+	assert.doesNotThrow(() => assertPromptFitsArgv(fortyK, "linux"));
+	assertPromptFitsArgv("small", "win32");
+
+	// Over the POSIX budget it is still refused, and the message names ARG_MAX rather than Windows.
+	assert.throws(
+		() => assertPromptFitsArgv("x".repeat(MAX_ARGV_CHARS_POSIX), "linux"),
+		(err: Error) => {
+			assert.match(err.message, /argv budget for linux/);
+			assert.match(err.message, /ARG_MAX/);
+			return true;
+		},
+	);
 });
