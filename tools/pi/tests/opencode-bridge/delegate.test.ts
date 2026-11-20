@@ -7,6 +7,7 @@
  */
 
 import assert from "node:assert/strict";
+import { existsSync } from "node:fs";
 import test from "node:test";
 
 import {
@@ -19,6 +20,8 @@ import {
 	estimateArgvCost,
 	MAX_ARGV_CHARS,
 	modelArgument,
+	normalizeCwd,
+	resolveToolCwd,
 	needsAutoApprove,
 	resolveOpencodeExecutable,
 	resultBody,
@@ -243,4 +246,41 @@ test("a failed run carries the error, never the empty-answer placeholder", () =>
 
 	// Real text always wins, failure or not.
 	assert.equal(resultBody("  partial answer ", exhausted), "partial answer");
+});
+
+test("a Git Bash (MSYS) cwd is converted, never handed to a spawn", () => {
+	// Measured defect: cwd='/c/Users/…' reached spawn verbatim → "opencode.exe ENOENT" and a
+	// misdiagnosis of the binary. On win32 the form must be converted (or refused) first.
+	assert.equal(normalizeCwd("/c/Users/stdray/AppData/Local/Temp", "win32"), "C:/Users/stdray/AppData/Local/Temp");
+	assert.equal(normalizeCwd("/d/my/prj/petbox", "win32"), "D:/my/prj/petbox");
+	assert.equal(normalizeCwd("/c", "win32"), "C:");
+	assert.equal(normalizeCwd("C:/Users/stdray", "win32"), "C:/Users/stdray", "Windows paths pass through");
+	assert.equal(normalizeCwd("/home/me", "linux"), "/home/me", "posix is untouched");
+
+	// An unknown drive is refused with both forms named — and never reaches a spawn. The letter
+	// has to be one this machine does not have, so it is found rather than hardcoded.
+	const missing = "DEFGHIJKLMNOPQRSTUVWXYZ".split("").find((letter) => !existsSync(`${letter}:/`));
+	if (missing) {
+		const lower = missing.toLowerCase();
+		assert.throws(
+			() => normalizeCwd(`/${lower}/nowhere`, "win32"),
+			(err: Error) => {
+				assert.match(err.message, new RegExp(`drive ${missing}:`));
+				assert.ok(err.message.includes(`"/${lower}/nowhere"`), "names the form given");
+				assert.ok(err.message.includes(`${missing}:/nowhere`), "and the form it became");
+				assert.match(err.message, /use a Windows path/);
+				return true;
+			},
+		);
+	}
+});
+
+test("a cwd that does not exist is refused with the resolved path", () => {
+	if (process.platform !== "win32") return;
+	const resolved = resolveToolCwd(undefined, "/c/Users/stdray/AppData/Local/Temp");
+	assert.match(resolved, /^C:\/Users\/stdray\/AppData\/Local\/Temp$/i, "the session cwd is normalised too");
+	assert.throws(
+		() => resolveToolCwd("C:/definitely-not-here-xyz", "C:/Users/stdray"),
+		/does not exist.*Pass an existing directory/s,
+	);
 });
