@@ -61,6 +61,15 @@ export function resetSubagentsReady(): void {
 	ready = false;
 }
 
+/** `lifetimeUsage` off the settled record, when the event carried no usage. */
+function recordLifetimeUsage(id: string): unknown {
+	const manager = (globalThis as Record<symbol, unknown>)[Symbol.for("pi-subagents:manager")] as
+		| { getRecord?: (agentId: string) => unknown }
+		| undefined;
+	const record = manager?.getRecord?.(id) as { lifetimeUsage?: unknown } | undefined;
+	return record?.lifetimeUsage;
+}
+
 /** `pi-subagents` keeps its manager on a well-known global (docs/rpc.md, "The manager registry"). */
 export const SUBAGENTS_MANAGER_KEY = Symbol.for("pi-subagents:manager");
 
@@ -98,12 +107,56 @@ export function lookupEffectiveInvocation(id: string): EffectiveInvocation | und
 	return Object.keys(effective).length > 0 ? effective : undefined;
 }
 
+/** The usage shape every leg reports (mirrors `types.ts` Usage). */
+export interface BridgeUsage {
+	input: number;
+	output: number;
+	reasoning: number;
+	cacheRead: number;
+	cacheWrite: number;
+	cost?: number;
+}
+
+/**
+ * Map a `subagents:completed` payload's `usage` into the bridge's shape.
+ *
+ * The plugin reports a pi `Usage` (`{input, output, reasoning, cacheRead, cacheWrite,
+ * cost:{…}}`), and only fills `cost` when its `showCost` setting is on — so `cost` stays
+ * OPTIONAL here: the line prints tokens and omits the cost rather than inventing a 0.
+ */
+export function piUsageToUsage(raw: unknown): BridgeUsage | undefined {
+	if (!raw || typeof raw !== "object") return undefined;
+	const usage = raw as {
+		input?: unknown;
+		output?: unknown;
+		reasoning?: unknown;
+		cacheRead?: unknown;
+		cacheWrite?: unknown;
+		cost?: { total?: unknown } | unknown;
+	};
+	const num = (value: unknown) => (typeof value === "number" && Number.isFinite(value) ? value : 0);
+	const mapped: BridgeUsage = {
+		input: num(usage.input),
+		output: num(usage.output),
+		reasoning: num(usage.reasoning),
+		cacheRead: num(usage.cacheRead),
+		cacheWrite: num(usage.cacheWrite),
+	};
+	const total =
+		usage.cost && typeof usage.cost === "object" ? (usage.cost as { total?: unknown }).total : undefined;
+	if (typeof total === "number" && Number.isFinite(total)) mapped.cost = total;
+	if (mapped.input === 0 && mapped.output === 0 && mapped.cost === undefined) return undefined;
+	return mapped;
+}
+
 export type PiLegResult =
 	| {
 			status: "ok";
 			id: string;
 			text: string;
 			usage?: unknown;
+			/** The same usage, already mapped to the bridge's shape. */
+			bridgeUsage?: BridgeUsage;
 			tokens?: unknown;
 			durationMs?: number;
 			/** Read from the manager registry after settle; absent when the record was unreachable. */
@@ -288,6 +341,9 @@ export async function runPiLeg(options: PiLegOptions): Promise<PiLegResult> {
 		const effective = lookupEffectiveInvocation(id);
 		const ok: PiLegResult = { status: "ok", id, text: payload.result, recordReachable: effective !== undefined };
 		if (effective) ok.effective = effective;
+		// Usage comes from whichever surface holds it: the event payload first, then the record.
+		const bridgeUsage = piUsageToUsage(payload.usage) ?? piUsageToUsage(recordLifetimeUsage(id));
+		if (bridgeUsage) ok.bridgeUsage = bridgeUsage;
 		if (payload.usage !== undefined) ok.usage = payload.usage;
 		if (payload.tokens !== undefined) ok.tokens = payload.tokens;
 		if (payload.durationMs !== undefined) ok.durationMs = payload.durationMs;

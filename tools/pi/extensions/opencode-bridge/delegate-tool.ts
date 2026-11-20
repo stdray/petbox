@@ -15,7 +15,7 @@ import { tmpdir } from "node:os";
 import * as path from "node:path";
 import { Type } from "typebox";
 
-import { buildChildConfig, DEFAULT_TIMEOUT_MS, runOpencode } from "./delegate.ts";
+import { buildChildConfig, DEFAULT_TIMEOUT_MS, resolveToolCwd, runOpencode } from "./delegate.ts";
 import { PI_LEG_TIMEOUT_MS, runPiLeg } from "./pi-route.ts";
 import {
 	clearDead,
@@ -29,6 +29,7 @@ import {
 	type RouteLeg,
 } from "./route.ts";
 import { clampLegEfforts, settledEffort, UNAUTHENTICATED_PROVIDERS, loadRole, planRoleRun, type RoleDefinition } from "./role-config.ts";
+import type { BridgeUsage } from "./pi-route.ts";
 import { startBackgroundRun } from "./steer-tools.ts";
 import type { Usage } from "./types.ts";
 
@@ -72,8 +73,21 @@ function headTail(text: string, head: number, tail: number): string {
 	return `${text.slice(0, head)}\n…[${text.length - head - tail} chars omitted]…\n${text.slice(text.length - tail)}`;
 }
 
-function describeUsage(usage: Usage): string {
-	return `tokens in ${usage.input} out ${usage.output} reasoning ${usage.reasoning} | cost ${usage.cost}`;
+function describeUsage(usage: Usage, costKnown: boolean): string {
+	const cost = costKnown ? ` | cost ${usage.cost}` : "";
+	return `tokens in ${usage.input} out ${usage.output} reasoning ${usage.reasoning}${cost}`;
+}
+
+/**
+ * The pi leg's line.
+ *
+ * `cost` is printed only when the plugin actually reported one: it fills `cost` only with its
+ * `showCost` setting on, and a made-up `0` would read as "this run was free" when it may not be.
+ */
+function describePiUsage(usage: BridgeUsage): string {
+	const cost = usage.cost === undefined ? "" : ` | cost ${usage.cost}`;
+	const cache = usage.cacheRead + usage.cacheWrite === 0 ? "" : ` cache r/w ${usage.cacheRead}/${usage.cacheWrite}`;
+	return `tokens in ${usage.input} out ${usage.output} reasoning ${usage.reasoning}${cache}${cost}`;
 }
 
 async function makeConfigDir(config: Record<string, unknown>): Promise<string> {
@@ -87,6 +101,8 @@ interface DelegateDetails {
 	route: RouteDecision;
 	/** Set for a background run: the handle the steer/abort/result tools take. */
 	handle?: string;
+	/** Usage as the pi leg reported it (`cost` only when the plugin provides one). */
+	piUsage?: BridgeUsage;
 	agentId?: string;
 	piFailure?: string;
 	opencode?: {
@@ -192,7 +208,8 @@ export function registerDelegateTool(pi: ExtensionAPI): void {
 			const startedAt = Date.now();
 			const role = params.role ? loadRole(params.role, { cwd: ctx.cwd }) : undefined;
 			const effort = params.effort?.trim() || role?.thinking;
-			const cwd = params.cwd ? path.resolve(ctx.cwd, params.cwd) : ctx.cwd;
+			// One place, so a Git Bash path can never reach a spawn.
+			const cwd = resolveToolCwd(params.cwd, ctx.cwd);
 			const catalog = readModelCatalog();
 			// EVERY leg, against its OWN model: the leg that runs is not always legs[0], and a level
 			// one model supports can be absent on the other (`low: null` on hy4-flash-free).
@@ -248,6 +265,7 @@ export function registerDelegateTool(pi: ExtensionAPI): void {
 
 			let agentId: string | undefined;
 			let piFailure: string | undefined;
+			let piUsage: BridgeUsage | undefined;
 			let answer: string | undefined;
 			let opencodeRun:
 				| { text: string; sessionId?: string; usage?: Usage; exitCode?: number | null; timedOut?: boolean; error?: string }
@@ -269,6 +287,7 @@ export function registerDelegateTool(pi: ExtensionAPI): void {
 
 				if (piResult.status === "ok") {
 					answer = piResult.text;
+					if (piResult.bridgeUsage) piUsage = piResult.bridgeUsage;
 					// What ran, not what was asked for: the manager record is authoritative, and without
 					// one the line says `unknown` instead of parroting the request back.
 					const requestedModel = routeKey(decision.provider, decision.model);
@@ -369,6 +388,7 @@ export function registerDelegateTool(pi: ExtensionAPI): void {
 			}
 
 			const details: DelegateDetails = { route: decision, durationMs: Date.now() - startedAt };
+			if (piUsage) details.piUsage = piUsage;
 			if (agentId) details.agentId = agentId;
 			if (piFailure) details.piFailure = piFailure;
 			if (opencodeRun) {
@@ -383,7 +403,9 @@ export function registerDelegateTool(pi: ExtensionAPI): void {
 			if (details.agentId) lines.push(`agent ${details.agentId}`);
 			if (decision.evidence) lines.push(`evidence: ${decision.evidence}`);
 			if (opencodeRun?.error) lines.push(`error: ${opencodeRun.error}`);
-			if (opencodeRun?.usage) lines.push(describeUsage(opencodeRun.usage));
+			// Same line either way: the pi leg's tokens replace the opencode leg's when it ran.
+			if (opencodeRun?.usage) lines.push(describeUsage(opencodeRun.usage, true));
+			else if (piUsage) lines.push(describePiUsage(piUsage));
 			const body = (answer ?? "").trim();
 			lines.push("", body.length > 0 ? headTail(body, RESULT_HEAD_CHARS, RESULT_TAIL_CHARS) : "(the delegated agent produced no text)");
 

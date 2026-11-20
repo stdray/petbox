@@ -36,6 +36,7 @@ import {
 import {
 	lookupEffectiveInvocation,
 	markSubagentsReady,
+	piUsageToUsage,
 	probePiRoute,
 	SUBAGENTS_MANAGER_KEY,
 	resetSubagentsReady,
@@ -419,4 +420,18 @@ test("the route line never puts a placeholder in the provider or reason slot", (
 	const substituted = routeLine(cases[3]);
 	assert.match(substituted, /opencode\/default → opencode-go\/hy4-flash-free|hy4-flash-free → opencode-go\/hy4-flash-free/);
 	assert.match(substituted, /silent-substitution/);
+});
+
+test("the pi leg's usage maps into the bridge shape, cost only when reported", () => {
+	// Event payload as `subagents:completed` carries it (plugin index.ts), cost included.
+	const withCost = piUsageToUsage({ input: 508, output: 116, reasoning: 11, cacheRead: 64, cacheWrite: 0, cost: { total: 0.002 } });
+	assert.deepEqual(withCost, { input: 508, output: 116, reasoning: 11, cacheRead: 64, cacheWrite: 0, cost: 0.002 });
+
+	// `showCost` off: tokens still reported, and NO invented cost.
+	const noCost = piUsageToUsage({ input: 12, output: 3, reasoning: 0, cacheRead: 0, cacheWrite: 0 });
+	assert.equal(noCost?.cost, undefined, "cost must stay absent rather than become 0");
+	assert.equal(noCost?.input, 12);
+
+	assert.equal(piUsageToUsage(undefined), undefined);
+	assert.equal(piUsageToUsage({}), undefined, "nothing spent is not a usage line");
 });

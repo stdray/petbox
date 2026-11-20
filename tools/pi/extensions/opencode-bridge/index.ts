@@ -36,6 +36,7 @@ import { Type } from "typebox";
 import {
 	buildChildConfig,
 	classifyResult,
+	resolveToolCwd,
 	type ChildPolicy,
 	DEFAULT_MODEL,
 	DEFAULT_TIMEOUT_MS,
@@ -210,7 +211,8 @@ export default function opencodeBridge(pi: ExtensionAPI): void {
 		}),
 
 		async execute(_toolCallId, params, signal, onUpdate, ctx) {
-			const cwd = params.cwd ? path.resolve(ctx.cwd, params.cwd) : ctx.cwd;
+			// One place: an MSYS `/c/...` cwd must be converted or refused before any spawn.
+			const cwd = resolveToolCwd(params.cwd, ctx.cwd);
 			const timeoutMs = params.timeoutMs && params.timeoutMs > 0 ? params.timeoutMs : DEFAULT_TIMEOUT_MS;
 			const policy: ChildPolicy = {
 				allowWrite: params.allowWrite === true,
