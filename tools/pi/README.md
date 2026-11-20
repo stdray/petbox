@@ -201,6 +201,7 @@ file's loading mechanism and does not belong in the banner-stability change.
 | `tools/pi/extensions/agent-rules.ts` | assembles `rules/amd-*.md` into the `agent_rules` prompt section |
 | `tools/pi/agents/*.md` | subagent roles (`worker`, `scout`, `oracle`, `reviewer`, `researcher`) |
 | `tools/pi/rules/amd-*.md` | operating rules, one topic per file |
+| `tools/pi/skills.mjs` | renders `petbox-methodology`, `petbox-write-economy` and `petbox-node-authoring` from the kit's own templates (`src/clients-ts/petbox-wire/src/templates`) through the kit's own `renderSkillTemplate`, applies the pi-specific deltas (each pinned to an anchor, so an upstream template edit fails the install loudly instead of silently dropping a delta), and writes `<target>/skills/<name>/SKILL.md` plus `validate-body.mjs` — `<target>` is `$PI_AGENT_DIR` or `~/.pi/agent`, same as `deploy.sh` |
 | `tools/pi/deploy.sh` | installs all of the above into `~/.pi/agent` |
 | `.pi/mcp.json` | pi MCP config for **this** project — the template for others |
 | `~/.petbox/wire/*` | the petbox-wire kit mirror `petbox-pi.ts` imports (installed by `petbox-wire`, not by us) |

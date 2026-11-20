@@ -95,6 +95,25 @@ done
 for f in "$here"/rules/amd-*.md "$here"/rules/pbx-*.md; do
   install_file "$f" "$target/skills/$(basename "$f")"
 done
+
+# Skills are RENDERED, not copied: the three PetBox procedures come from the kit's own templates
+# (src/clients-ts/petbox-wire/src/templates) through the kit's own renderer, with the pi-specific
+# differences applied as anchored deltas — skills.mjs's header explains why a hand copy here would
+# drift. It owns its own `=`/`+` output and honours the same dry-run flag and target.
+#
+# A missing bun is a hard stop, not a skipped step: skills.mjs imports the kit's TypeScript
+# renderer, and an install that reports "done" while three skills are absent is exactly the silent
+# degradation this step exists to prevent.
+if ! command -v bun >/dev/null 2>&1; then
+  echo "  !! bun not found — skills NOT installed (skills.mjs imports the kit's renderer)" >&2
+  exit 1
+fi
+if [ "$dry" = 1 ]; then
+  bun "$here/skills.mjs" --target "$target" --dry-run
+else
+  bun "$here/skills.mjs" --target "$target"
+fi
+
 for f in "$here"/extensions/*.ts; do
   install_file "$f" "$target/extensions/$(basename "$f")"
 done
