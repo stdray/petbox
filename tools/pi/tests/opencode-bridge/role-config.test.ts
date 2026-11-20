@@ -23,6 +23,7 @@ import {
 	assertAgentParameters,
 	assertRoleOnlyFlags,
 	buildRoleConfig,
+	clampLegEfforts,
 	loadPetboxMcpServer,
 	loadRole,
 	parseRoleFile,
@@ -67,6 +68,9 @@ function testCatalog(): ModelCatalog {
 		{ provider: "opencode", model: "stops-at-high", reasoning: true, thinkingLevelMap: { minimal: null, low: "low", medium: "medium", high: "high", xhigh: null, max: null } },
 		{ provider: "opencode", model: "all-null", reasoning: true, thinkingLevelMap: { minimal: null, low: null, medium: null, high: null, xhigh: null, max: null } },
 		{ provider: "opencode", model: "no-reasoning", reasoning: false },
+		// The real hy4 map: only `off` and `high` exist — this is what killed
+		// `delegate(role=scout, model=opencode/hy4-flash-free)` with "Variant unavailable … low".
+		{ provider: "opencode", model: "hy4-quota-free", reasoning: true, thinkingLevelMap: { off: "none", minimal: null, low: null, medium: null, high: "high" } },
 	];
 	return {
 		known: new Set(entries.map((e) => `${e.provider}/${e.model}`.toLowerCase())),
@@ -458,4 +462,43 @@ test("a model without provider/model is rejected instead of emitting a dangling 
 	const without = asConfig(buildRoleConfig(scout, { catalog: CATALOG, model: "opencode/hy4-flash-free" }));
 	assert.equal(without.model, "opencode/hy4-flash-free");
 	assert.equal(without.providers, undefined);
+});
+
+test("the clamp applies to EVERY leg, each against its own model", () => {
+	// The measured defect: `role: scout` (thinking low) + `model: opencode/hy4-flash-free`, whose
+	// map has `low: null`. Only the pi leg was clamped, so the opencode leg declared a `low`
+	// variant the model does not have — "Variant unavailable for opencode/hy4-flash-free: low".
+	const legs = clampLegEfforts(
+		[
+			{ target: "pi", provider: "opencode-go", model: "hy4-flash-free", effort: "low" },
+			{ target: "opencode", provider: "opencode", model: "hy4-quota-free", effort: "low" },
+		],
+		CATALOG,
+	);
+	assert.equal(legs[0].effort, "low", "the pi leg's model supports low");
+	assert.equal(legs[1].effort, "high", "the opencode leg's model does not — it settles on high");
+
+	// The variant and the `#suffix` come from that same per-leg resolution.
+	const config = asConfig(
+		buildRoleConfig(repoRole("scout"), { catalog: CATALOG, model: "opencode/hy4-quota-free", thinking: legs[1].effort }),
+	);
+	assert.equal(config.model, "opencode/hy4-quota-free#high");
+	const variants = config.providers?.opencode?.models["hy4-quota-free"]?.variants ?? [];
+	assert.equal(variants.length, 1, "exactly the variant that will be selected");
+	assert.equal(variants[0].id, "high");
+	assert.equal(variants[0].body?.reasoningEffort, "high");
+
+	// Two legs whose models support different levels: each keeps its own settled level.
+	const mixed = clampLegEfforts(
+		[
+			{ target: "pi", provider: "opencode", model: "deepseek-flash", effort: "medium" },
+			{ target: "opencode", provider: "opencode", model: "stops-at-high", effort: "medium" },
+		],
+		CATALOG,
+	);
+	assert.deepEqual(mixed.map((leg) => leg.effort), ["high", "medium"], "medium is null on deepseek-flash, supported on stops-at-high");
+
+	// No effort at all stays absent, and unknown models pass the request through untouched.
+	assert.deepEqual(clampLegEfforts([{ target: "pi", provider: "a", model: "b" }], CATALOG), [{ target: "pi", provider: "a", model: "b" }]);
+	assert.equal(clampLegEfforts([{ target: "pi", provider: "nobody", model: "nothing", effort: "low" }], CATALOG)[0].effort, "low");
 });

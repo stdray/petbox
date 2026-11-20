@@ -240,6 +240,24 @@ export function settledEffort(
 }
 
 /**
+ * Clamp EVERY leg's effort against its OWN model.
+ *
+ * THE BUG THIS FIXES (measured): the pi leg was clamped and the opencode leg kept the role's raw
+ * thinking, so `role: scout` (thinking `low`) on `opencode/hy4-flash-free` (whose map has
+ * `low: null`) declared a `low` variant that model does not have, and the child died with
+ * `error: Variant unavailable for opencode/hy4-flash-free: low`. Each leg is a different model,
+ * so each needs its own resolution — and the level printed, the variant declared and the model
+ * string must all come from that one per-leg resolution.
+ */
+export function clampLegEfforts(legs: RouteLeg[], catalog: ModelCatalog): RouteLeg[] {
+	return legs.map((leg) => {
+		if (!leg.effort) return leg;
+		const settled = settledEffort(`${leg.provider}/${leg.model}`, leg.effort, catalog);
+		return settled && settled !== leg.effort ? { ...leg, effort: settled } : leg;
+	});
+}
+
+/**
  * The opencode variant for a settled effort: only when there is a raw value to send.
  *
  * `off` (and any mapping to `null`) emits NO variant and therefore no `#suffix` — a suffix
