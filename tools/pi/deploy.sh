@@ -71,7 +71,17 @@ wire_root() {
   if [ -z "$root" ]; then
     root="$HOME/.petbox/wire"
     case "$(uname -s)" in
-      MINGW*|MSYS*|CYGWIN*) command -v cygpath >/dev/null 2>&1 && root="$(cygpath -m "$root")" ;;
+      MINGW*|MSYS*|CYGWIN*)
+        # A Windows runtime needs the C:/... form: win32 Node cannot resolve /c/Users/..., it would
+        # render an extension pi cannot load — the exact silent non-load this placeholder exists to
+        # end. A missing cygpath is therefore a hard error, never a silent POSIX render.
+        if ! command -v cygpath >/dev/null 2>&1; then
+          echo "  !! Git Bash/MSYS without cygpath: cannot convert \$HOME to a Windows path for the" >&2
+          echo "     petbox-pi.ts imports. Set PETBOX_WIRE_ROOT=C:/path/to/.petbox/wire and re-run." >&2
+          exit 1
+        fi
+        root="$(cygpath -m "$root")"
+        ;;
     esac
   fi
   printf '%s' "${root//\\//}"
@@ -84,8 +94,12 @@ install_rendered() {
   mkdir -p "$(dirname "$dst")"
   local rendered
   rendered="$(mktemp)"
-  # `|` as the sed delimiter: wire roots contain slashes, never pipes.
-  sed "s|@PETBOX_WIRE_ROOT@|$root|g" "$src" > "$rendered"
+  # `|` as the sed delimiter: wire roots contain slashes, never pipes. `&` and `\` in the
+  # replacement are special too (`&` re-inserts the WHOLE match), so they are escaped first —
+  # a root such as `C:/a&b` would otherwise render `C:/a@PETBOX_WIRE_ROOT@b` and still "succeed".
+  local escaped
+  escaped="$(printf '%s' "$root" | sed 's/[&|\\]/\\&/g')"
+  sed "s|@PETBOX_WIRE_ROOT@|$escaped|g" "$src" > "$rendered"
   if [ -f "$dst" ] && cmp -s "$rendered" "$dst"; then
     echo "  = ${dst#"$target"/}"
     rm -f "$rendered"
