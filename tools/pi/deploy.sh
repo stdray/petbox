@@ -56,6 +56,64 @@ merge_role() {
   ' "$src"
 }
 
+# Render `@PETBOX_WIRE_ROOT@` into an extension before installing it.
+#
+# WHY: the petbox-pi.ts imports are machine-absolute (the user-scoped and project-scoped extension
+# dirs sit at different depths, so no relative specifier reaches ~/.petbox/wire from both), and a
+# committed machine path is a Linux blocker — on any other home the extension silently fails to
+# load. The tracked file carries a placeholder; the install resolves it here from
+# ${PETBOX_WIRE_ROOT:-$HOME/.petbox/wire} with forward slashes on every platform, so the same
+# source installs anywhere and the second run still writes nothing (the render is deterministic).
+# The wire root as a specifier fragment: POSIX form on Linux/macOS, forward-slash Windows form
+# (C:/Users/...) under Git Bash — which is what the imports used before the placeholder existed.
+wire_root() {
+  local root="${PETBOX_WIRE_ROOT:-}"
+  if [ -z "$root" ]; then
+    root="$HOME/.petbox/wire"
+    case "$(uname -s)" in
+      MINGW*|MSYS*|CYGWIN*)
+        # A Windows runtime needs the C:/... form: win32 Node cannot resolve /c/Users/..., it would
+        # render an extension pi cannot load — the exact silent non-load this placeholder exists to
+        # end. A missing cygpath is therefore a hard error, never a silent POSIX render.
+        if ! command -v cygpath >/dev/null 2>&1; then
+          echo "  !! Git Bash/MSYS without cygpath: cannot convert \$HOME to a Windows path for the" >&2
+          echo "     petbox-pi.ts imports. Set PETBOX_WIRE_ROOT=C:/path/to/.petbox/wire and re-run." >&2
+          exit 1
+        fi
+        root="$(cygpath -m "$root")"
+        ;;
+    esac
+  fi
+  printf '%s' "${root//\\//}"
+}
+
+install_rendered() {
+  local src="$1" dst="$2"
+  local root
+  root="$(wire_root)"
+  mkdir -p "$(dirname "$dst")"
+  local rendered
+  rendered="$(mktemp)"
+  # `|` as the sed delimiter: wire roots contain slashes, never pipes. `&` and `\` in the
+  # replacement are special too (`&` re-inserts the WHOLE match), so they are escaped first —
+  # a root such as `C:/a&b` would otherwise render `C:/a@PETBOX_WIRE_ROOT@b` and still "succeed".
+  local escaped
+  escaped="$(printf '%s' "$root" | sed 's/[&|\\]/\\&/g')"
+  sed "s|@PETBOX_WIRE_ROOT@|$escaped|g" "$src" > "$rendered"
+  if [ -f "$dst" ] && cmp -s "$rendered" "$dst"; then
+    echo "  = ${dst#"$target"/}"
+    rm -f "$rendered"
+    return
+  fi
+  if [ "$dry" = 1 ]; then
+    echo "  + ${dst#"$target"/} (would write; wire root -> $root)"
+    rm -f "$rendered"
+    return
+  fi
+  mv "$rendered" "$dst"
+  echo "  + ${dst#"$target"/} (wire root -> $root)"
+}
+
 install_role() {
   local src="$1" dst="$2"
   mkdir -p "$(dirname "$dst")"
@@ -136,7 +194,11 @@ install_dir() {
 
 for f in "$here"/extensions/*.ts; do
   [ -e "$f" ] || continue
-  install_file "$f" "$target/extensions/$(basename "$f")"
+  if grep -q "@PETBOX_WIRE_ROOT@" "$f"; then
+    install_rendered "$f" "$target/extensions/$(basename "$f")"
+  else
+    install_file "$f" "$target/extensions/$(basename "$f")"
+  fi
 done
 for d in "$here"/extensions/*/; do
   [ -d "$d" ] || continue

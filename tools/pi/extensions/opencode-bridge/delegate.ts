@@ -36,14 +36,49 @@ export const KILL_GRACE_MS = 3_000;
 /**
  * Argv budget for the prompt.
  *
- * The prompt rides the command line (stdin is closed on purpose), and Windows caps a
- * command line at 32 767 characters — past that `CreateProcess` fails with an opaque error.
- * Counting CHARACTERS is not enough: Node escapes each `"` and `\` as `\\` and `\"`, so a
- * quote-heavy prompt of ~16 000 characters already costs ~32 000 on the wire. The guard
- * therefore counts the ESCAPED size plus the flags, model, session id and separator
- * (`ARGV_FIXED_OVERHEAD_CHARS`).
+ * The prompt rides the command line (stdin is closed on purpose), and the ceiling is the
+ * PLATFORM's, not one number:
+ * - win32: `CreateProcess` caps a command line at 32 767 characters, past which the failure is an
+ *   opaque one. Counting CHARACTERS is not enough there — Node escapes each `"` and `\` as `\\`
+ *   and `\"`, so a quote-heavy prompt of ~16 000 characters already costs ~32 000 on the wire.
+ *   Hence the guard counts the ESCAPED size plus flags/model/session/separator
+ *   (`ARGV_FIXED_OVERHEAD_CHARS`).
+ * - POSIX: the real limit is `ARG_MAX` (~2 MB on Linux, `getconf ARG_MAX`), so the same 32 K cap
+ *   would refuse a large brief for no reason. 128 K stays an order of magnitude under `ARG_MAX`
+ *   on purpose: argv shares that budget with the environment, every argument is copied, and a
+ *   prompt that big is a prompt that should have been a file.
  */
 export const MAX_ARGV_CHARS = 32_000;
+
+/** The POSIX budget: well under `ARG_MAX`, well over the old flat 32 K cap. */
+export const MAX_ARGV_CHARS_POSIX = 128 * 1024;
+
+/** The argv budget for a platform. `win32` keeps the measured 32 000. */
+export function maxArgvChars(platform: string = process.platform): number {
+	return platform === "win32" ? MAX_ARGV_CHARS : MAX_ARGV_CHARS_POSIX;
+}
+
+/**
+ * Refuse a prompt that cannot fit on the command line, before `spawn` returns something opaque.
+ * Exported so both platform paths are unit-testable without a child process.
+ */
+export function assertPromptFitsArgv(prompt: string, platform: string = process.platform): void {
+	const budget = maxArgvChars(platform);
+	const argvCost = estimateArgvCost(prompt);
+	if (argvCost <= budget) return;
+	throw new Error(
+		`opencode-bridge: prompt is ${prompt.length} characters but costs ${argvCost} on the command line ` +
+			`once escaped, over the ${budget}-character argv budget for ${platform}` +
+			(platform === "win32"
+				? " (Windows CreateProcess allows 32 767; quotes and backslashes double when escaped, so a " +
+					"quote-heavy prompt can blow the limit long before its character count does)"
+				: " (POSIX ARG_MAX is far larger, but argv shares it with the environment and every argument " +
+					"is copied)") +
+			". The prompt has to travel on the command line — the child's stdin is closed on purpose, so " +
+			"`opencode run` cannot block on it. Shorten the prompt, strip embedded files, split the task, or " +
+			"run the opencode agent directly with the prompt supplied another way.",
+	);
+}
 
 /** Flags, model, session id, separator — the non-prompt part of the command line. */
 export const ARGV_FIXED_OVERHEAD_CHARS = 400;
@@ -212,18 +247,7 @@ export function modelArgument(model?: string, variant?: string): string {
  * `process.env` (and the PATH, when resolving the executable) — no spawning.
  */
 export function buildInvocation(opts: InvocationOptions): Invocation {
-	const argvCost = estimateArgvCost(opts.prompt);
-	if (argvCost > MAX_ARGV_CHARS) {
-		throw new Error(
-			`opencode-bridge: prompt is ${opts.prompt.length} characters but costs ${argvCost} on the ` +
-				`command line once escaped, over the ${MAX_ARGV_CHARS}-character argv budget ` +
-				"(Windows CreateProcess allows 32 767; quotes and backslashes double when escaped, so a " +
-				"quote-heavy prompt can blow the limit long before its character count does). The prompt " +
-				"has to travel on the command line — the child's stdin is closed on purpose, so `opencode " +
-				"run` cannot block on it. Shorten the prompt, strip embedded files, split the task, or run " +
-				"the opencode agent directly with the prompt supplied another way.",
-		);
-	}
+	assertPromptFitsArgv(opts.prompt);
 	const command = opts.executable ?? resolveOpencodeExecutable();
 	const args: string[] = [
 		"run",
@@ -557,44 +581,69 @@ function startRun(opts: RunOptions, invocation: Invocation): Promise<RunResult> 
  *
  * MEASURED DEFECT this exists for: `delegate(cwd='/c/Users/…/a')` — the Git Bash form a shell
  * user (and sometimes `ctx.cwd` when pi itself is started from Git Bash) writes — reached
- * `spawn` verbatim and produced
- * `spawn C:\…\opencode.exe ENOENT`. The binary was fine; the cwd was not. A caller's model then
- * misdiagnosed it as a broken install and burned runs on it.
+ * `spawn` verbatim and produced `spawn C:\…\opencode.exe ENOENT`. The binary was fine; the cwd
+ * was not.
  *
- * So: normalise MSYS drive paths (`/c/…` → `C:/…`, any single letter), keep Windows paths as
- * they are, and reject — before any spawn — anything that still does not exist, naming the form
- * that was given and the form that was expected.
+ * PLATFORM GATE (measured on WSL), stated exactly: `normalizeCwd` ALREADY returned its input
+ * unchanged off win32, so the conversion itself was never platform-blind. What was blind was
+ * `resolveToolCwd` — it treated `/c/...` as absolute on every platform and its "does not exist"
+ * message carried a Windows-only hint — plus tests that asserted Windows shapes everywhere. On
+ * Linux a valid `/c/anything` was therefore refused by that path, not by the converter.
+ * Everything platform-specific is now decided from `deps.platform`, and the probe is injectable
+ * so a test never depends on a real `C:` drive.
  */
-export function normalizeCwd(input: string, platform: string = process.platform): string {
+export interface CwdDeps {
+	platform?: string;
+	/** Whether `C:`/`D:` exists. Only consulted on win32. Injectable for tests. */
+	driveExists?: (drive: string) => boolean;
+}
+
+function cwdDeps(deps: CwdDeps = {}) {
+	return {
+		platform: deps.platform ?? process.platform,
+		driveExists: deps.driveExists ?? ((drive: string) => existsSync(`${drive}/`)),
+	};
+}
+
+/** MSYS (`/c/…`) → `C:/…`, on win32 only. Never consults the filesystem beyond the drive probe. */
+export function normalizeCwd(input: string, deps: CwdDeps = {}): string {
+	const { platform, driveExists } = cwdDeps(deps);
 	if (platform !== "win32") return input;
 	const trimmed = input.trim();
 	const msys = /^\/([A-Za-z])(\/|$)/.exec(trimmed);
-	if (msys) {
-		const drive = `${msys[1].toUpperCase()}:`;
-		const rest = trimmed.slice(2);
-		const converted = `${drive}${rest}`;
-		if (!existsSync(`${drive}/`)) {
-			throw new Error(
-				`opencode_delegate: cwd ${JSON.stringify(input)} names drive ${drive}, which does not exist on this machine. ` +
-					`The Git Bash form ${JSON.stringify(trimmed)} was converted to ${JSON.stringify(converted)}; ` +
-					`use a Windows path such as "C:/Users/…" or "/c/Users/…" for an existing drive.`,
-			);
-		}
-		return converted;
+	if (!msys) return trimmed;
+	const drive = `${msys[1].toUpperCase()}:`;
+	const converted = `${drive}${trimmed.slice(2)}`;
+	if (!driveExists(drive)) {
+		throw new Error(
+			`opencode_delegate: cwd ${JSON.stringify(input)} names drive ${drive}, which does not exist on this machine. ` +
+				`The Git Bash form ${JSON.stringify(trimmed)} was converted to ${JSON.stringify(converted)}; ` +
+				`use a Windows path such as "C:/Users/…" or "/c/Users/…" for an existing drive.`,
+		);
 	}
-	if (/^[A-Za-z]:[\/]/.test(trimmed) || /^\\/.test(trimmed)) return trimmed;
-	return trimmed;
+	return converted;
 }
 
-/** `normalizeCwd` plus a existence check, for the one point a tool's cwd is resolved. */
-export function resolveToolCwd(raw: string | undefined, sessionCwd: string, platform: string = process.platform): string {
-	const session = normalizeCwd(sessionCwd, platform);
+/**
+ * `normalizeCwd` plus an existence check — the single point a tool's cwd is resolved.
+ *
+ * On POSIX nothing is converted and no drive is ever named: a missing path gets the plain
+ * "does not exist" message, because that is the only thing wrong with it.
+ */
+export function resolveToolCwd(raw: string | undefined, sessionCwd: string, deps: CwdDeps = {}): string {
+	const { platform } = cwdDeps(deps);
+	const session = normalizeCwd(sessionCwd, deps);
 	if (!raw || raw.trim().length === 0) return session;
-	const target = path.isAbsolute(raw) || /^\/([A-Za-z])(\/|$)/.test(raw) ? normalizeCwd(raw, platform) : path.resolve(session, raw);
+	const isAbsolute =
+		path.isAbsolute(raw) || (platform === "win32" && /^\/([A-Za-z])(\/|$)/.test(raw));
+	const target = isAbsolute ? normalizeCwd(raw, deps) : path.resolve(session, raw);
 	if (!existsSync(target)) {
 		throw new Error(
-			`opencode_delegate: cwd ${JSON.stringify(raw)} does not exist${target !== raw ? ` (resolved to ${JSON.stringify(target)})` : ""}. ` +
-				"Pass an existing directory; on Windows either \"C:/Users/…\" or the Git Bash form \"/c/Users/…\" works.",
+			`opencode_delegate: cwd ${JSON.stringify(raw)} does not exist${
+				target !== raw ? ` (resolved to ${JSON.stringify(target)})` : ""
+			}. Pass an existing directory${
+				platform === "win32" ? '; on Windows either "C:/Users/…" or the Git Bash form "/c/Users/…" works' : ""
+			}.`,
 		);
 	}
 	return target;

@@ -21,32 +21,34 @@
 //
 // The imports below are machine-absolute because the deploy target is not fixed (user-SCOPED
 // extension dir vs project-scoped one sit at different depths, so no relative specifier can
-// reach the mirror from both). On a machine whose kit mirror is not under this path, the prefix
-// has to be repointed — see tools/pi/README.md's "Portability" note.
+// reach the mirror from both). They therefore carry the placeholder `@PETBOX_WIRE_ROOT@`, which
+// `tools/pi/deploy.sh` substitutes at install time from `${PETBOX_WIRE_ROOT:-$HOME/.petbox/wire}`
+// (forward slashes on every platform). THE TRACKED FILE IS NOT LOADABLE AS-IS on purpose: the
+// installed copy is the only loadable one, so no machine's home path can be committed again.
 
 import { existsSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import type { ExtensionAPI, ExtensionContext, SessionEntry } from "@earendil-works/pi-coding-agent";
-import { pushTranscript } from "C:/Users/stdray/.petbox/wire/append.ts";
-import type { PushTarget } from "C:/Users/stdray/.petbox/wire/append.ts";
-import { resolveApplyRoot } from "C:/Users/stdray/.petbox/wire/apply-root.ts";
-import { fetchCanonBlock } from "C:/Users/stdray/.petbox/wire/canon.ts";
-import type { AgentDefinition } from "C:/Users/stdray/.petbox/wire/agent-definition.ts";
-import { resolveDefinitionForSession } from "C:/Users/stdray/.petbox/wire/definition-source.ts";
-import { buildProtocol, mcpPetboxTool } from "C:/Users/stdray/.petbox/wire/protocol.ts";
-import { resolveProject, UnresolvedEnvRefError } from "C:/Users/stdray/.petbox/wire/registry.ts";
-import type { ResolvedProject } from "C:/Users/stdray/.petbox/wire/registry.ts";
+import { pushTranscript } from "@PETBOX_WIRE_ROOT@/append.ts";
+import type { PushTarget } from "@PETBOX_WIRE_ROOT@/append.ts";
+import { resolveApplyRoot } from "@PETBOX_WIRE_ROOT@/apply-root.ts";
+import { fetchCanonBlock } from "@PETBOX_WIRE_ROOT@/canon.ts";
+import type { AgentDefinition } from "@PETBOX_WIRE_ROOT@/agent-definition.ts";
+import { resolveDefinitionForSession } from "@PETBOX_WIRE_ROOT@/definition-source.ts";
+import { buildProtocol, mcpPetboxTool } from "@PETBOX_WIRE_ROOT@/protocol.ts";
+import { resolveProject, UnresolvedEnvRefError } from "@PETBOX_WIRE_ROOT@/registry.ts";
+import type { ResolvedProject } from "@PETBOX_WIRE_ROOT@/registry.ts";
 import {
   assembleSessionBanner,
   describeCanonDegradation,
   logBudgetOverage,
   SESSION_BANNER_BUDGET_BYTES,
-} from "C:/Users/stdray/.petbox/wire/session-budget.ts";
-import { buildOwnerOnlySkillsBlock } from "C:/Users/stdray/.petbox/wire/skill-files.ts";
-import { extractText, isExcluded } from "C:/Users/stdray/.petbox/wire/transcript.ts";
-import type { Msg } from "C:/Users/stdray/.petbox/wire/transcript.ts";
-import { wireLog } from "C:/Users/stdray/.petbox/wire/wire-log.ts";
+} from "@PETBOX_WIRE_ROOT@/session-budget.ts";
+import { buildOwnerOnlySkillsBlock } from "@PETBOX_WIRE_ROOT@/skill-files.ts";
+import { extractText, isExcluded } from "@PETBOX_WIRE_ROOT@/transcript.ts";
+import type { Msg } from "@PETBOX_WIRE_ROOT@/transcript.ts";
+import { wireLog } from "@PETBOX_WIRE_ROOT@/wire-log.ts";
 
 // Same per-request budget as push-session.ts / codex-push-session.ts.
 const FETCH_TIMEOUT_MS = 12000;

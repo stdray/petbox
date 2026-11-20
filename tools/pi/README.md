@@ -247,17 +247,24 @@ which recorded a 7.6 KB banner re-injected 157 messages into a live yobagent ses
 
 ## Portability
 
-The kit imports at the top of `petbox-pi.ts` are **machine-absolute**
-(`C:/Users/stdray/.petbox/wire/...`) because the deploy target is not fixed: the user-scoped and
+The kit imports at the top of `petbox-pi.ts` are **machine-absolute** — the user-scoped and
 project-scoped extension directories sit at different depths, so no single relative specifier
-reaches `~/.petbox/wire` from both. On a machine whose home directory differs, repoint the prefix:
+reaches `~/.petbox/wire` from both. The tracked file therefore carries a placeholder:
 
-```sh
-sed -i 's#C:/Users/stdray/.petbox/wire#/home/<user>/.petbox/wire#g' ~/.pi/agent/extensions/petbox-pi.ts
+```ts
+import { pushTranscript } from "@PETBOX_WIRE_ROOT@/append.ts";
 ```
 
-Tracked as a follow-up observation — the fix (a home-resolved dynamic import) is a change to this
-file's loading mechanism and does not belong in the banner-stability change.
+`deploy.sh` substitutes it at install time from `${PETBOX_WIRE_ROOT:-$HOME/.petbox/wire}`, in
+forward-slash form on every platform (under Git Bash `cygpath -m` turns `$HOME` into
+`C:/Users/…`, which is what the imports held before the placeholder existed). The render is
+deterministic, so a second deploy writes nothing, and **the tracked file is deliberately not
+loadable as-is** — the installed copy is the only loadable one. Never hand-edit the installed
+file; change the source, or point the deploy at a kit mirror somewhere else:
+
+```sh
+PETBOX_WIRE_ROOT=/opt/petbox/wire tools/pi/deploy.sh --dry-run   # what would change
+```
 
 ## Layout
 
