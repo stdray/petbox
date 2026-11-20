@@ -22,6 +22,7 @@
  */
 
 import { existsSync, readFileSync } from "node:fs";
+import { findModelEntry, readModelCatalog, type ModelCatalog, type ModelEntry } from "./route.ts";
 import { homedir } from "node:os";
 import * as path from "node:path";
 
@@ -152,30 +153,101 @@ export function loadRole(name: string, options: { cwd?: string } = {}): RoleDefi
 	);
 }
 
-/** pi thinking levels → opencode variant ids / `reasoningEffort` values. */
-export const THINKING_TO_EFFORT: Readonly<Record<string, string>> = {
-	off: "low",
-	minimal: "low",
-	low: "low",
-	medium: "medium",
-	high: "high",
-	xhigh: "xhigh",
-	max: "max",
-};
+/** pi's canonical thinking levels, in pi's own order (`pi-ai`, EXTENDED_THINKING_LEVELS). */
+export const PI_THINKING_LEVELS = ["off", "minimal", "low", "medium", "high", "xhigh", "max"] as const;
 
-/** The single variant a run will actually use, or undefined when no level was chosen. */
-export function variantFor(thinking?: string): { id: string; effort: string } | undefined {
-	if (!thinking) return undefined;
-	const key = thinking.trim().toLowerCase();
+export type PiThinkingLevel = (typeof PI_THINKING_LEVELS)[number];
+
+/**
+ * What a model actually supports — pi's rule, mirrored (`pi-ai/dist/models.js`,
+ * `getSupportedThinkingLevels`): a non-reasoning model supports only `off`; a level mapped to
+ * `null` is unsupported; `xhigh`/`max` are supported only when the map mentions them at all.
+ */
+export function supportedThinkingLevels(entry: ModelEntry | undefined): PiThinkingLevel[] {
+	if (!entry?.reasoning && entry?.reasoning !== undefined) return ["off"];
+	const map = entry?.thinkingLevelMap;
+	return PI_THINKING_LEVELS.filter((level) => {
+		const mapped = map?.[level];
+		if (mapped === null) return false;
+		if (level === "xhigh" || level === "max") return mapped !== undefined;
+		return true;
+	});
+}
+
+export interface EffortResolution {
+	/** The level pi would settle on, which is what the caller is told ran. */
+	level: PiThinkingLevel;
+	/** The raw value to send (`reasoningEffort`); `null` means "send nothing". */
+	raw: string | null;
+	/** True when the request had to move. */
+	changed: boolean;
+}
+
+/**
+ * Clamp a requested level to what the model supports and give the raw value to send.
+ *
+ * pi walks UP from the requested level first, then DOWN, then falls back to the model's first
+ * supported level (`clampThinkingLevel`). `off` sends nothing — the same "delete the option"
+ * semantics the viewer's config writer uses for a `null` mapping.
+ */
+export function resolveEffort(requested: string | undefined, entry: ModelEntry | undefined): EffortResolution | undefined {
+	if (!requested) return undefined;
+	const key = requested.trim().toLowerCase();
 	if (!key) return undefined;
-	const effort = THINKING_TO_EFFORT[key];
-	if (!effort) {
+	if (!PI_THINKING_LEVELS.includes(key as PiThinkingLevel)) {
 		throw new Error(
-			`opencode_delegate: unknown thinking level ${JSON.stringify(thinking)}; ` +
-				`expected one of ${Object.keys(THINKING_TO_EFFORT).join(", ")}`,
+			`opencode_delegate: unknown thinking level ${JSON.stringify(requested)}; ` +
+				`expected one of ${PI_THINKING_LEVELS.join(", ")}`,
 		);
 	}
-	return { id: effort, effort };
+	const request = key as PiThinkingLevel;
+	const available = supportedThinkingLevels(entry);
+	let level: PiThinkingLevel;
+	if (available.includes(request)) {
+		level = request;
+	} else {
+		const from = PI_THINKING_LEVELS.indexOf(request);
+		let picked: PiThinkingLevel | undefined;
+		for (let i = from; i < PI_THINKING_LEVELS.length && !picked; i += 1) {
+			if (available.includes(PI_THINKING_LEVELS[i])) picked = PI_THINKING_LEVELS[i];
+		}
+		for (let i = from - 1; i >= 0 && !picked; i -= 1) {
+			if (available.includes(PI_THINKING_LEVELS[i])) picked = PI_THINKING_LEVELS[i];
+		}
+		level = picked ?? available[0] ?? "off";
+	}
+	const mapped = entry?.thinkingLevelMap?.[level];
+	const raw = level === "off" ? null : typeof mapped === "string" ? mapped : level;
+	return { level, raw, changed: level !== request };
+}
+
+/** The catalog entry for a `provider/model` id. */
+export function modelEntryFor(model: string, catalog: ModelCatalog): ModelEntry | undefined {
+	const [provider, ...rest] = model.split("/");
+	return findModelEntry(catalog, provider, rest.join("/"));
+}
+
+/** The level a run actually settles on, for a model id; unknown models pass the request through. */
+export function settledEffort(
+	model: string | undefined,
+	thinking: string | undefined,
+	catalog: ModelCatalog,
+): string | undefined {
+	if (!thinking) return undefined;
+	if (!model) return thinking;
+	const resolution = resolveEffort(thinking, modelEntryFor(model, catalog));
+	return resolution?.level;
+}
+
+/**
+ * The opencode variant for a settled effort: only when there is a raw value to send.
+ *
+ * `off` (and any mapping to `null`) emits NO variant and therefore no `#suffix` — a suffix
+ * against an undeclared variant is a guaranteed `provider.no-route`.
+ */
+export function variantForEffort(resolution: EffortResolution | undefined): { id: string; effort: string } | undefined {
+	if (!resolution || resolution.raw === null) return undefined;
+	return { id: resolution.raw, effort: resolution.raw };
 }
 
 /** Permission rule as opencode's `Permission.Rule` expects it. */
@@ -203,6 +275,8 @@ export interface RoleConfigOptions {
 	allowSubagent?: boolean;
 	/** The production PetBox MCP server — included ONLY when the caller opted in. */
 	mcpServer?: { url: string; headers?: Record<string, string> };
+	/** pi's model catalog; read from disk when omitted (tests pass a fake one). */
+	catalog?: ModelCatalog;
 }
 
 /**
@@ -328,11 +402,15 @@ export interface RoleRunOptions {
  */
 export function planRoleRun(role: RoleDefinition, options: RoleRunOptions = {}): RoleRunPlan {
 	const model = resolveRoleModel(role, options.model, options.defaultModel);
-	const thinking = options.thinking ?? role.thinking;
-	const variant = variantFor(thinking)?.id;
+	const catalog = options.catalog ?? readModelCatalog();
+	// The level pi would SETTLE on is what the caller is told ran; the request may be unsupported.
+	const resolution = resolveEffort(options.thinking ?? role.thinking, modelEntryFor(model, catalog));
+	const thinking = resolution?.level;
+	const variant = variantForEffort(resolution)?.id;
 	const config = buildRoleConfig(role, {
 		model,
 		thinking,
+		catalog,
 		allowWrite: options.allowWrite,
 		allowShell: options.allowShell,
 		allowSubagent: options.allowSubagent,
@@ -433,7 +511,6 @@ export function assertRoleOnlyFlags(
  * written to narrow down.
  */
 export function buildRoleConfig(role: RoleDefinition, options: RoleConfigOptions): Record<string, unknown> {
-	const variant = variantFor(options.thinking);
 	// The `#variant` suffix and the `providers…variants` declaration have to agree: a suffix
 	// with nothing declared against it is a guaranteed `provider.no-route`. Both therefore hang
 	// off a well-formed `provider/model`, and a malformed pin (a frontmatter `model:
@@ -451,6 +528,17 @@ export function buildRoleConfig(role: RoleDefinition, options: RoleConfigOptions
 		);
 	}
 	const [, providerId, modelId] = modelMatch;
+	const catalog = options.catalog ?? readModelCatalog();
+	const entry = findModelEntry(catalog, providerId, modelId);
+	if (!entry) {
+		// Same message shape as the pi-leg gate, so one defect reads the same wherever it is hit.
+		throw new Error(
+			`opencode_delegate: model ${JSON.stringify(options.model)} is not in pi's model catalog (` +
+				`${catalog.sources.join(", ") || "no catalog file readable"}) — its thinking levels are unknown, ` +
+				"so no effort can be derived or clamped for it.",
+		);
+	}
+	const variant = variantForEffort(resolveEffort(options.thinking, entry));
 	const permissions = rulesForRole(role, options);
 	const config: Record<string, unknown> = {
 		$schema: "https://opencode.ai/config.json",

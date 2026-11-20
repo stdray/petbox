@@ -31,11 +31,15 @@ import {
 	resolveRoleModel,
 	roleDirectories,
 	rulesForRole,
-	THINKING_TO_EFFORT,
-	variantFor,
+	PI_THINKING_LEVELS,
+	resolveEffort,
+	settledEffort,
+	supportedThinkingLevels,
+	variantForEffort,
 	type RoleDefinition,
 } from "../../extensions/opencode-bridge/role-config.ts";
 import { buildChildConfig, buildInvocation } from "../../extensions/opencode-bridge/delegate.ts";
+import { findModelEntry, readModelCatalog, type ModelCatalog } from "../../extensions/opencode-bridge/route.ts";
 
 const REPO_AGENTS = path.resolve(import.meta.dirname, "../../agents");
 
@@ -51,6 +55,27 @@ function installedRole(name: string): RoleDefinition | undefined {
 		return undefined;
 	}
 }
+
+
+/** A fake pi catalog: the models these tests name, with the level maps that matter. */
+function testCatalog(): ModelCatalog {
+	const entries = [
+		{ provider: "opencode", model: "hy4-flash-free", reasoning: true, thinkingLevelMap: { minimal: "minimal", low: "low", medium: "medium", high: "high" } },
+		{ provider: "opencode-go", model: "hy4-flash-free", reasoning: true, thinkingLevelMap: { minimal: "minimal", low: "low", medium: "medium", high: "high" } },
+		{ provider: "p", model: "x", reasoning: true },
+		{ provider: "opencode", model: "deepseek-flash", reasoning: true, thinkingLevelMap: { minimal: null, low: "low", medium: null, high: "high", max: "max" } },
+		{ provider: "opencode", model: "stops-at-high", reasoning: true, thinkingLevelMap: { minimal: null, low: "low", medium: "medium", high: "high", xhigh: null, max: null } },
+		{ provider: "opencode", model: "all-null", reasoning: true, thinkingLevelMap: { minimal: null, low: null, medium: null, high: null, xhigh: null, max: null } },
+		{ provider: "opencode", model: "no-reasoning", reasoning: false },
+	];
+	return {
+		known: new Set(entries.map((e) => `${e.provider}/${e.model}`.toLowerCase())),
+		entries: new Map(entries.map((e) => [`${e.provider}/${e.model}`.toLowerCase(), e])),
+		sources: ["<test catalog>"],
+	};
+}
+
+const CATALOG = testCatalog();
 
 interface RoleConfig {
 	model: string;
@@ -85,7 +110,7 @@ test("parses a real installed role file into a config", () => {
 	assert.equal(role.skills.length > 0, true);
 	assert.equal("prompt_mode" in role, false, "unknown frontmatter keys are ignored");
 
-	const config = asConfig(buildRoleConfig(role, { model: "opencode/hy4-flash-free", thinking: role.thinking }));
+	const config = asConfig(buildRoleConfig(role, { catalog: CATALOG, model: "opencode/hy4-flash-free", thinking: role.thinking }));
 	assert.equal(config.agents.scout.system, role.system);
 	assert.equal(config.model, "opencode/hy4-flash-free#low", "thinking low becomes the low variant");
 	assert.deepEqual(config.instructions, [], "instructions stay empty: the role body replaces the prompt");
@@ -93,7 +118,7 @@ test("parses a real installed role file into a config", () => {
 
 test("a read-only role gets read tools and nothing else", () => {
 	const scout = repoRole("scout");
-	const config = asConfig(buildRoleConfig(scout, { model: "opencode/hy4-flash-free" }));
+	const config = asConfig(buildRoleConfig(scout, { catalog: CATALOG, model: "opencode/hy4-flash-free" }));
 	const rules = config.agents.scout.permissions;
 
 	assert.deepEqual(rules[0], { action: "*", resource: "*", effect: "deny" }, "the catch-all must come first");
@@ -109,54 +134,95 @@ test("a writer role only writes when the caller allows it", () => {
 	const worker = repoRole("worker");
 	assert.ok(worker.tools.includes("edit") && worker.tools.includes("write"));
 
-	const denied = asConfig(buildRoleConfig(worker, { model: "opencode/hy4-flash-free" }));
+	const denied = asConfig(buildRoleConfig(worker, { catalog: CATALOG, model: "opencode/hy4-flash-free" }));
 	assert.equal(effectOf(denied, "worker", "edit"), "deny", "the role is a ceiling, not a grant");
 	assert.equal(effectOf(denied, "worker", "shell"), "deny");
 
-	const allowed = asConfig(buildRoleConfig(worker, { model: "opencode/hy4-flash-free", allowWrite: true }));
+	const allowed = asConfig(buildRoleConfig(worker, { catalog: CATALOG, model: "opencode/hy4-flash-free", allowWrite: true }));
 	assert.equal(effectOf(allowed, "worker", "edit"), "allow");
 	assert.equal(effectOf(allowed, "worker", "shell"), "deny", "allowing writes must not allow shell");
 
-	const shell = asConfig(buildRoleConfig(worker, { model: "opencode/hy4-flash-free", allowShell: true }));
+	const shell = asConfig(buildRoleConfig(worker, { catalog: CATALOG, model: "opencode/hy4-flash-free", allowShell: true }));
 	assert.equal(effectOf(shell, "worker", "shell"), "allow");
 	assert.equal(effectOf(shell, "worker", "edit"), "deny");
 
 	assert.equal(effectOf(allowed, "worker", "subagent"), "deny", "subagents need their own flag");
-	const withSub = asConfig(buildRoleConfig(worker, { model: "p/x", allowSubagent: true }));
+	const withSub = asConfig(buildRoleConfig(worker, { catalog: CATALOG, model: "p/x", allowSubagent: true }));
 	assert.equal(effectOf(withSub, "worker", "subagent"), "allow");
 });
 
-test("thinking maps onto a single opencode variant", () => {
-	assert.deepEqual(Object.keys(THINKING_TO_EFFORT).sort(), ["high", "low", "max", "medium", "minimal", "off", "xhigh"]);
-	assert.equal(variantFor(undefined), undefined);
-	assert.deepEqual(variantFor("low"), { id: "low", effort: "low" });
-	assert.deepEqual(variantFor("off"), { id: "low", effort: "low" });
-	assert.deepEqual(variantFor("minimal"), { id: "low", effort: "low" });
-	assert.deepEqual(variantFor("medium"), { id: "medium", effort: "medium" });
-	assert.deepEqual(variantFor("xhigh"), { id: "xhigh", effort: "xhigh" });
-	assert.deepEqual(variantFor("max"), { id: "max", effort: "max" });
-	assert.throws(() => variantFor("turbo"), /unknown thinking level/);
+test("effort comes from the catalog, not a fixed table", () => {
+	assert.deepEqual([...PI_THINKING_LEVELS], ["off", "minimal", "low", "medium", "high", "xhigh", "max"]);
 
-	const scout = repoRole("scout");
-	const config = asConfig(buildRoleConfig(scout, { model: "opencode/hy4-flash-free", thinking: "high" }));
-	const variants = config.providers?.opencode?.models["hy4-flash-free"]?.variants ?? [];
-	assert.equal(variants.length, 1, "only the variant in use is declared — no catalogue");
+	const deepseek = findModelEntry(CATALOG, "opencode", "deepseek-flash");
+	assert.deepEqual(supportedThinkingLevels(deepseek), ["off", "low", "high", "max"], "nulls are unsupported, xhigh absent");
+
+	// medium is null there: pi walks UP first and settles on high.
+	const medium = resolveEffort("medium", deepseek);
+	assert.equal(medium?.level, "high", "up-first");
+	assert.equal(medium?.raw, "high");
+	assert.equal(medium?.changed, true);
+
+	// low is supported as itself; its raw value is the mapped string.
+	assert.deepEqual(resolveEffort("low", deepseek), { level: "low", raw: "low", changed: false });
+
+	// off sends nothing at all.
+	assert.deepEqual(resolveEffort("off", deepseek), { level: "off", raw: null, changed: false });
+
+	// xhigh on a model whose map stops at high falls DOWN to high.
+	const capped = findModelEntry(CATALOG, "opencode", "stops-at-high");
+	assert.equal(resolveEffort("xhigh", capped)?.level, "high");
+	assert.equal(resolveEffort("max", capped)?.level, "high");
+
+	// Every level null -> off, nothing to send.
+	const allNull = findModelEntry(CATALOG, "opencode", "all-null");
+	assert.deepEqual(resolveEffort("max", allNull), { level: "off", raw: null, changed: true });
+	assert.equal(variantForEffort(resolveEffort("max", allNull)), undefined, "no variant for off");
+
+	// A non-reasoning model supports only off.
+	const noReasoning = findModelEntry(CATALOG, "opencode", "no-reasoning");
+	assert.deepEqual(supportedThinkingLevels(noReasoning), ["off"]);
+	assert.equal(resolveEffort("high", noReasoning)?.level, "off");
+
+	// No variant and no `#suffix` when there is nothing to send.
+	const offConfig = asConfig(buildRoleConfig(repoRole("scout"), { catalog: CATALOG, model: "opencode/deepseek-flash", thinking: "off" }));
+	assert.equal(offConfig.model, "opencode/deepseek-flash", "no dangling #suffix");
+	assert.equal(offConfig.providers, undefined);
+
+	// A supported level declares exactly one variant and suffixes it.
+	const highConfig = asConfig(buildRoleConfig(repoRole("scout"), { catalog: CATALOG, model: "opencode/deepseek-flash", thinking: "medium" }));
+	assert.equal(highConfig.model, "opencode/deepseek-flash#high", "the settled level, not the request");
+	const variants = highConfig.providers?.opencode?.models["deepseek-flash"]?.variants ?? [];
+	assert.equal(variants.length, 1);
 	assert.equal(variants[0].id, "high");
 	assert.equal(variants[0].body?.reasoningEffort, "high");
-	assert.equal(config.model, "opencode/hy4-flash-free#high");
 
-	const noThinking = asConfig(buildRoleConfig(scout, { model: "opencode/hy4-flash-free" }));
-	assert.equal(noThinking.providers, undefined, "no level, no variant block");
-	assert.equal(noThinking.model, "opencode/hy4-flash-free");
+	// setledEffort is the seam the route line reads.
+	assert.equal(settledEffort("opencode/deepseek-flash", "medium", CATALOG), "high");
+	assert.equal(settledEffort("opencode/not-in-catalog", "medium", CATALOG), "medium", "unknown models pass the request through");
+
+	// An unknown model is a loud error naming the files searched.
+	assert.throws(
+		() => buildRoleConfig(repoRole("scout"), { catalog: { known: new Set(), entries: new Map(), sources: ["/a/models-store.json", "/a/models.json"] }, model: "opencode/ghost", thinking: "low" }),
+		(err: Error) => {
+			assert.match(err.message, /is not in pi's model catalog/);
+			assert.match(err.message, /models-store\.json/);
+			assert.match(err.message, /thinking levels are unknown/);
+			return true;
+		},
+	);
+
+	// An unknown thinking LEVEL is still a loud error.
+	assert.throws(() => resolveEffort("turbo", deepseek), /unknown thinking level/);
 });
 
 test("the production MCP server is off unless asked for", () => {
 	const scout = repoRole("scout");
-	const off = asConfig(buildRoleConfig(scout, { model: "opencode/hy4-flash-free" }));
+	const off = asConfig(buildRoleConfig(scout, { catalog: CATALOG, model: "opencode/hy4-flash-free" }));
 	assert.equal(off.mcp, undefined, "the default child must not reach the live boards");
 
 	const on = asConfig(
-		buildRoleConfig(scout, {
+		buildRoleConfig(scout, { catalog: CATALOG,
 			model: "opencode/hy4-flash-free",
 			mcpServer: { url: "https://petbox.invalid/mcp", headers: { Authorization: "Bearer x" } },
 		}),
@@ -168,14 +234,14 @@ test("the production MCP server is off unless asked for", () => {
 
 test("websearch is configured only for a role that declares a web tool", () => {
 	const scout = repoRole("scout");
-	assert.equal(asConfig(buildRoleConfig(scout, { model: "p/x" })).websearch, undefined);
+	assert.equal(asConfig(buildRoleConfig(scout, { catalog: CATALOG, model: "p/x" })).websearch, undefined);
 
 	const web: RoleDefinition = {
 		...scout,
 		name: "researcher",
 		tools: [...scout.tools, "web_search"],
 	};
-	const config = asConfig(buildRoleConfig(web, { model: "p/x" }));
+	const config = asConfig(buildRoleConfig(web, { catalog: CATALOG, model: "p/x" }));
 	assert.deepEqual(config.websearch, { provider: "exa" });
 	assert.equal(effectOf(config, "researcher", "websearch"), "allow");
 });
@@ -183,12 +249,12 @@ test("websearch is configured only for a role that declares a web tool", () => {
 test("disallowed_tools removes exactly the capability it names", () => {
 	const scout = repoRole("scout");
 	const restricted: RoleDefinition = { ...scout, disallowedTools: ["read"] };
-	const config = asConfig(buildRoleConfig(restricted, { model: "p/x" }));
+	const config = asConfig(buildRoleConfig(restricted, { catalog: CATALOG, model: "p/x" }));
 	assert.equal(effectOf(config, "scout", "read"), "deny", "a veto beats the declared tool list");
 	assert.equal(effectOf(config, "scout", "grep"), "allow", "the other read tools are untouched");
 
 	const blind: RoleDefinition = { ...scout, tools: ["bash"], disallowedTools: [] };
-	const blindConfig = asConfig(buildRoleConfig(blind, { model: "p/x", allowShell: true }));
+	const blindConfig = asConfig(buildRoleConfig(blind, { catalog: CATALOG, model: "p/x", allowShell: true }));
 	assert.equal(effectOf(blindConfig, "scout", "read"), "deny", "no read tool declared, no read action");
 	assert.equal(effectOf(blindConfig, "scout", "glob"), "deny");
 	assert.equal(effectOf(blindConfig, "scout", "shell"), "allow");
@@ -240,7 +306,7 @@ test("role mode carries a top-level deny-all backstop", () => {
 	const worker = repoRole("worker");
 
 	for (const role of [scout, worker]) {
-		const config = asConfig(buildRoleConfig(role, { model: "opencode/hy4-flash-free", allowWrite: true }));
+		const config = asConfig(buildRoleConfig(role, { catalog: CATALOG, model: "opencode/hy4-flash-free", allowWrite: true }));
 		// Without `--agent <role>` the child falls back to opencode's allow-all `build` agent.
 		// The top-level object-form ruleset is the only thing standing in that gap.
 		assert.ok(config.permission, "role mode must emit the top-level backstop");
@@ -255,7 +321,7 @@ test("role mode carries a top-level deny-all backstop", () => {
 		assert.ok(Array.isArray(config.agents[role.name].permissions));
 	}
 
-	const capped = asConfig(buildRoleConfig(worker, { model: "opencode/hy4-flash-free" }));
+	const capped = asConfig(buildRoleConfig(worker, { catalog: CATALOG, model: "opencode/hy4-flash-free" }));
 	assert.equal(capped.permission!.edit, "deny", "no allowWrite, no edit — in both shapes");
 	assert.deepEqual(permissionBackstop(rulesForRole(worker, { model: "p/x", allowWrite: true })).edit, "allow");
 });
@@ -370,7 +436,7 @@ test("a model without provider/model is rejected instead of emitting a dangling 
 	const malformed: RoleDefinition = { ...scout, model: "hy4-flash-free", modelLine: "model: hy4-flash-free" };
 
 	assert.throws(
-		() => buildRoleConfig(malformed, { model: "hy4-flash-free", thinking: "low" }),
+		() => buildRoleConfig(malformed, { catalog: CATALOG, model: "hy4-flash-free", thinking: "low" }),
 		(err: Error) => {
 			assert.match(err.message, /is not "provider\/model"/);
 			assert.ok(err.message.includes(scout.sourcePath), "names the role file");
@@ -381,15 +447,15 @@ test("a model without provider/model is rejected instead of emitting a dangling 
 
 	// A caller-supplied bad model is attributed to the parameter, not to the role file.
 	assert.throws(
-		() => buildRoleConfig(scout, { model: "nope", thinking: "low" }),
+		() => buildRoleConfig(scout, { catalog: CATALOG, model: "nope", thinking: "low" }),
 		/passed as the model parameter/,
 	);
 
 	// Well-formed: the suffix and the declaration arrive together, or neither does.
-	const withVariant = asConfig(buildRoleConfig(scout, { model: "opencode/hy4-flash-free", thinking: "low" }));
+	const withVariant = asConfig(buildRoleConfig(scout, { catalog: CATALOG, model: "opencode/hy4-flash-free", thinking: "low" }));
 	assert.equal(withVariant.model, "opencode/hy4-flash-free#low");
 	assert.equal(withVariant.providers?.opencode?.models["hy4-flash-free"]?.variants.length, 1);
-	const without = asConfig(buildRoleConfig(scout, { model: "opencode/hy4-flash-free" }));
+	const without = asConfig(buildRoleConfig(scout, { catalog: CATALOG, model: "opencode/hy4-flash-free" }));
 	assert.equal(without.model, "opencode/hy4-flash-free");
 	assert.equal(without.providers, undefined);
 });

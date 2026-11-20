@@ -35,7 +35,8 @@ import {
 	type RunResult,
 	runOpencode,
 } from "../../extensions/opencode-bridge/delegate.ts";
-import { buildRoleConfig, loadRole, variantFor } from "../../extensions/opencode-bridge/role-config.ts";
+import { readModelCatalog } from "../../extensions/opencode-bridge/route.ts";
+import { buildRoleConfig, loadRole } from "../../extensions/opencode-bridge/role-config.ts";
 
 const SKIP_LIVE = process.env.OPENCODE_BRIDGE_SKIP_LIVE === "1";
 const LIVE_TIMEOUT_MS = 180_000;
@@ -271,6 +272,7 @@ test("live: a delegated role keeps its identity and its capability ceiling", { s
 	const config = buildRoleConfig(role, {
 		model: LIVE_MODEL,
 		thinking: role.thinking,
+		catalog: readModelCatalog(),
 		allowWrite: false,
 		allowShell: false,
 	});
@@ -284,7 +286,6 @@ test("live: a delegated role keeps its identity and its capability ceiling", { s
 			configDir,
 			agent: role.name,
 			model: LIVE_MODEL,
-			variant: variantFor(role.thinking)?.id,
 			timeoutMs: LIVE_TIMEOUT_MS,
 		});
 
