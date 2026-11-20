@@ -29,6 +29,7 @@ import {
 	type RouteLeg,
 } from "./route.ts";
 import { settledEffort, UNAUTHENTICATED_PROVIDERS, loadRole, planRoleRun, type RoleDefinition } from "./role-config.ts";
+import { startBackgroundRun } from "./steer-tools.ts";
 import type { Usage } from "./types.ts";
 
 /** Opencode-leg model when nothing names one the standalone CLI can authenticate. */
@@ -84,6 +85,8 @@ async function makeConfigDir(config: Record<string, unknown>): Promise<string> {
 /** Same shape for every result of this tool, including progress updates. */
 interface DelegateDetails {
 	route: RouteDecision;
+	/** Set for a background run: the handle the steer/abort/result tools take. */
+	handle?: string;
 	agentId?: string;
 	piFailure?: string;
 	opencode?: {
@@ -171,6 +174,14 @@ export function registerDelegateTool(pi: ExtensionAPI): void {
 						"the account was reconnected, not because time passed.",
 				}),
 			),
+			background: Type.Optional(
+				Type.Boolean({
+					description:
+						"Return a steerable handle instead of waiting: the run stays reachable, so steer_delegate, " +
+						"abort_delegate and delegate_result can act on it. Background runs use the opencode server leg " +
+						"(the pi leg's session lives inside this process, so it cannot be addressed from outside).",
+				}),
+			),
 			session: Type.Optional(Type.String({ description: "opencode session id to resume (opencode leg only)." })),
 			timeoutMs: Type.Optional(
 				Type.Number({ description: `Timeout for the chosen leg. Defaults to ${PI_LEG_TIMEOUT_MS} ms on pi, ${DEFAULT_TIMEOUT_MS} ms on opencode.` }),
@@ -191,6 +202,35 @@ export function registerDelegateTool(pi: ExtensionAPI): void {
 
 			let cache = readRouteCache();
 			if (params.resetRoute) cache = clearDead(cache);
+
+			if (params.background === true) {
+				// A background run is steerable only if a server we own holds the session, so this
+				// is the opencode leg whatever the routing preference would have been.
+				const opencodeLeg = legs[1];
+				const started = await startBackgroundRun({
+					prompt: params.prompt,
+					role,
+					model: routeKey(opencodeLeg.provider, opencodeLeg.model),
+					effort: opencodeLeg.effort,
+					cwd,
+					allowWrite: params.allowWrite === true,
+					allowShell: params.allowShell === true,
+				});
+				const details: DelegateDetails = { route: started.route, durationMs: Date.now() - startedAt, handle: started.handle.id };
+				return {
+					content: [
+						{
+							type: "text",
+							text: [
+								started.handle.routeLine,
+								`background · handle ${started.handle.id} · session ${started.handle.sessionId}`,
+								"steer_delegate / abort_delegate / delegate_result take this handle",
+							].join("\n"),
+						},
+					],
+					details,
+				};
+			}
 
 			const requested = params.model ? { ...splitModelEffort(params.model), effort } : undefined;
 			// The catalog gate exists because pi-subagents substitutes the PARENT model for an id it

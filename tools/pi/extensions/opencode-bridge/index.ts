@@ -52,6 +52,7 @@ import {
 	type RoleRunPlan,
 } from "./role-config.ts";
 import { registerDelegateTool } from "./delegate-tool.ts";
+import { registerSteerTools } from "./steer-tools.ts";
 import { markSubagentsReady, SUBAGENTS_READY } from "./pi-route.ts";
 import type { OpencodeErrorInfo, OpencodeEvent, Usage } from "./types.ts";
 
@@ -360,4 +361,5 @@ export default function opencodeBridge(pi: ExtensionAPI): void {
 	// own session_start, long before any tool call could ask.
 	pi.events.on(SUBAGENTS_READY, () => markSubagentsReady());
 	registerDelegateTool(pi);
+	registerSteerTools(pi);
 }
