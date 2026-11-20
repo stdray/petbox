@@ -15,6 +15,7 @@ tools/pi/rules/amd-*.md            ──▶  ~/.pi/agent/skills/amd-*.md
 Flat `extensions/*.ts` files are copied with a `cmp` check; `extensions/<name>/`
 directories are mirrored with `diff -r` (pi loads `index.ts` from a subdirectory and its
 sibling modules have to arrive with it). Both are idempotent — a second run writes nothing.
+The installed directory is mirrored, not merged — do not hand-edit `~/.pi/agent/extensions/<name>/`, it is replaced wholesale whenever the repo copy changes.
 
 ```sh
 ./tools/pi/deploy.sh --dry-run   # what would change
@@ -30,6 +31,13 @@ pi's load path, so a `*.test.ts` sitting there would be loaded as an extension. 
 bun test tools/pi/tests/opencode-bridge/          # or: node --test tools/pi/tests/opencode-bridge/*.test.ts
 OPENCODE_BRIDGE_SKIP_LIVE=1 bun test …            # unit only; the live tests spawn real opencode
 ```
+
+**This folder has its own gate, not the Cake one.** A change confined to `tools/pi/**` is proven by
+`bun test tools/pi/tests/` (unit, then live) plus a real `tools/pi/deploy.sh` run whose *second*
+invocation writes nothing (`+` absent, everything `=`) — not by the repo's Cake `Test` target, because
+this folder is shipped to `~/.pi/agent`, not built into the product, and `dotnet format` / `WebTs*`
+never see it. The moment a diff escapes into `src/`, `tests/` or `build.cs`, the full Cake gate
+applies to that change again.
 
 **Role files are merged, not copied.** `model:` and `thinking:` in a role's frontmatter are owned
 by the Roles panel, which writes them into the *installed* file (that is where the

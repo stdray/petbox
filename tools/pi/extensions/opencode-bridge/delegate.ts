@@ -30,6 +30,80 @@ export const DEFAULT_TIMEOUT_MS = 300_000;
 /** Longest text tail kept for the model-facing result (64 KB). */
 export const DEFAULT_MAX_TEXT_CHARS = 64 * 1024;
 
+/** How long to wait for `close` after the kill signal before settling anyway. */
+export const KILL_GRACE_MS = 3_000;
+
+/**
+ * Argv budget for the prompt.
+ *
+ * The prompt rides the command line (stdin is closed on purpose), and Windows caps a
+ * command line at 32 767 characters — past that `CreateProcess` fails with an opaque error.
+ * Counting CHARACTERS is not enough: Node escapes each `"` and `\` as `\\` and `\"`, so a
+ * quote-heavy prompt of ~16 000 characters already costs ~32 000 on the wire. The guard
+ * therefore counts the ESCAPED size plus the flags, model, session id and separator
+ * (`ARGV_FIXED_OVERHEAD_CHARS`).
+ */
+export const MAX_ARGV_CHARS = 32_000;
+
+/** Flags, model, session id, separator — the non-prompt part of the command line. */
+export const ARGV_FIXED_OVERHEAD_CHARS = 400;
+
+/** What the prompt costs on the command line once Node escapes it for Windows. */
+export function estimateArgvCost(prompt: string): number {
+	let escaped = ARGV_FIXED_OVERHEAD_CHARS;
+	for (const ch of prompt) escaped += ch === '"' || ch === "\\" ? 2 : 1;
+	return escaped;
+}
+
+/** What the child is allowed to do. Everything not named here is denied. */
+export interface ChildPolicy {
+	/** Let the child edit and write files (opencode's `edit`, plus `write`). */
+	allowWrite?: boolean;
+	/** Let the child run shell commands. */
+	allowShell?: boolean;
+}
+
+/**
+ * Config written into the per-call `OPENCODE_CONFIG_DIR`.
+ *
+ * Two deliberate properties, both measured against opencode 2.3.2:
+ *
+ * - **No `mcp` key.** opencode loads ONLY this directory's config, so the child never
+ *   sees the repo's `.opencode/opencode.json` and its production PetBox MCP server.
+ * - **An explicit deny policy.** `--auto` approves anything the config does not deny, so
+ *   a config without permissions means an unattended child that can write files and run
+ *   shell in the session cwd. `"*": "deny"` plus the read-only allows makes the default
+ *   a read-only agent: measured, the child reports "this session only exposes read-only
+ *   tools", and no file is written even when `--auto` is passed. The catch-all is FIRST
+ *   and later specific rules override it — that order is what was measured.
+ *
+ * `write` is normalised to `edit` by opencode (`debug config` shows one `edit` action per
+ * key), but both are emitted so neither name silently falls back to a deny.
+ */
+export function buildChildConfig(model: string, policy: ChildPolicy = {}): Record<string, unknown> {
+	const allow = (on: boolean) => (on ? "allow" : "deny");
+	return {
+		$schema: "https://opencode.ai/config.json",
+		model,
+		permission: {
+			"*": "deny",
+			read: "allow",
+			glob: "allow",
+			grep: "allow",
+			websearch: "allow",
+			edit: allow(Boolean(policy.allowWrite)),
+			write: allow(Boolean(policy.allowWrite)),
+			shell: allow(Boolean(policy.allowShell)),
+			subagent: "deny",
+		},
+	};
+}
+
+/** `--auto` is only meaningful once something is actually approved. */
+export function needsAutoApprove(policy: ChildPolicy): boolean {
+	return Boolean(policy.allowWrite || policy.allowShell);
+}
+
 /** Longest stderr tail kept for diagnostics. */
 export const DEFAULT_MAX_STDERR_CHARS = 8 * 1024;
 
@@ -138,6 +212,18 @@ export function modelArgument(model?: string, variant?: string): string {
  * `process.env` (and the PATH, when resolving the executable) — no spawning.
  */
 export function buildInvocation(opts: InvocationOptions): Invocation {
+	const argvCost = estimateArgvCost(opts.prompt);
+	if (argvCost > MAX_ARGV_CHARS) {
+		throw new Error(
+			`opencode-bridge: prompt is ${opts.prompt.length} characters but costs ${argvCost} on the ` +
+				`command line once escaped, over the ${MAX_ARGV_CHARS}-character argv budget ` +
+				"(Windows CreateProcess allows 32 767; quotes and backslashes double when escaped, so a " +
+				"quote-heavy prompt can blow the limit long before its character count does). The prompt " +
+				"has to travel on the command line — the child's stdin is closed on purpose, so `opencode " +
+				"run` cannot block on it. Shorten the prompt, strip embedded files, split the task, or run " +
+				"the opencode agent directly with the prompt supplied another way.",
+		);
+	}
 	const command = opts.executable ?? resolveOpencodeExecutable();
 	const args: string[] = [
 		"run",
@@ -179,6 +265,75 @@ export interface RunOptions extends InvocationOptions {
 	onEvent?: (event: OpencodeEvent) => void;
 }
 
+/** How a run ended, as the tool-facing caller needs to know it. */
+export interface ResultVerdict {
+	/** Must be reported as a failed tool call. */
+	failed: boolean;
+	/** Terminal-format drift: exit 0 and no answer, on a stream we could not fully parse. */
+	drift: boolean;
+	/** Human-readable notes, in report order. */
+	reasons: string[];
+}
+
+/**
+ * Decide whether a finished run counts as success, and what to report.
+ *
+ * The drift rule exists because a silent format change is otherwise indistinguishable
+ * from a quiet agent: an `opencode` upgrade that renames events yields `exit 0`, zero
+ * steps, no text and a pile of unparsable lines — which used to come back as a *successful*
+ * empty answer. Exit 0 with no text and any signal that we lost the format is a failure.
+ */
+export function classifyResult(
+	result: Pick<
+		RunResult,
+		"exitCode" | "text" | "steps" | "malformedLines" | "unknownEvents" | "error" | "timedOut" | "aborted"
+	>,
+): ResultVerdict {
+	const reasons: string[] = [];
+	if (result.error) reasons.push(`error: ${result.error.message}`);
+	if (result.timedOut) reasons.push("timed out — the child was killed");
+	if (result.aborted) reasons.push("aborted");
+	if (result.exitCode !== null && result.exitCode !== 0) reasons.push(`child exited with ${result.exitCode}`);
+	if (result.malformedLines > 0) {
+		reasons.push(`${result.malformedLines} stdout line(s) were not valid events`);
+	}
+	if (result.unknownEvents > 0) {
+		reasons.push(`${result.unknownEvents} event(s) had a type this bridge does not model (format drift?)`);
+	}
+
+	const failedOnProcess =
+		Boolean(result.error) || result.timedOut || result.aborted || (result.exitCode ?? 0) !== 0;
+	const drift =
+		result.exitCode === 0 &&
+		result.text.trim().length === 0 &&
+		(result.steps === 0 || result.malformedLines > 0 || result.unknownEvents > 0);
+	if (drift) {
+		reasons.unshift(
+			`opencode exited 0 but produced no answer text (steps ${result.steps}, ` +
+				`${result.malformedLines} unparsable line(s), ${result.unknownEvents} unknown event(s)) — ` +
+				"the CLI output format probably changed",
+		);
+	}
+
+	return { failed: failedOnProcess || drift, drift, reasons };
+}
+
+/** Shown when a run finished cleanly and the agent simply said nothing. */
+export const EMPTY_ANSWER_PLACEHOLDER = "(the opencode agent produced no text)";
+
+/**
+ * The body of the tool result's text.
+ *
+ * A placeholder must never stand in for a failed run: the parent model reports it as the
+ * answer ("the opencode agent produced no text") next to the real error, which reads like
+ * a result. On failure the reasons alone speak — the caller's error text IS the message.
+ */
+export function resultBody(answer: string, verdict: ResultVerdict): string {
+	const trimmed = answer.trim();
+	if (trimmed.length > 0) return trimmed;
+	return verdict.failed ? "" : EMPTY_ANSWER_PLACEHOLDER;
+}
+
 function tail(text: string, maxChars: number): { text: string; truncated: boolean } {
 	if (text.length <= maxChars) return { text, truncated: false };
 	return { text: text.slice(text.length - maxChars), truncated: true };
@@ -209,12 +364,26 @@ function killTree(pid: number | undefined) {
 /**
  * Spawn one `opencode run`, stream its events, and resolve with the aggregate.
  *
- * Never rejects: a spawn failure, a timeout and an abort all come back as data
- * (`exitCode: null`, `timedOut`/`aborted`, `error`), because the caller turns
- * them into a tool result rather than an exception.
+ * Process-level failures — spawn error, timeout, abort, non-zero exit — come back as data
+ * (`exitCode: null`, `timedOut`/`aborted`, `error`) rather than exceptions, because the
+ * caller turns them into a tool result.
+ *
+ * It DOES reject for one class of failure: when the invocation itself cannot be built — no
+ * `opencode` executable on PATH, or a prompt past the argv limit. That happens before any
+ * process exists, so there is nothing to aggregate, and swallowing it into `exitCode: null`
+ * would hide the reason.
  */
 export function runOpencode(opts: RunOptions): Promise<RunResult> {
-	const invocation = buildInvocation(opts);
+	let invocation: Invocation;
+	try {
+		invocation = buildInvocation(opts);
+	} catch (err) {
+		return Promise.reject(err instanceof Error ? err : new Error(String(err)));
+	}
+	return startRun(opts, invocation);
+}
+
+function startRun(opts: RunOptions, invocation: Invocation): Promise<RunResult> {
 	const timeoutMs = opts.timeoutMs ?? DEFAULT_TIMEOUT_MS;
 	const maxTextChars = opts.maxTextChars ?? DEFAULT_MAX_TEXT_CHARS;
 	const maxStderrChars = opts.maxStderrChars ?? DEFAULT_MAX_STDERR_CHARS;
@@ -244,6 +413,7 @@ export function runOpencode(opts: RunOptions): Promise<RunResult> {
 
 	return new Promise<RunResult>((resolvePromise) => {
 		let settled = false;
+		let graceTimer: ReturnType<typeof setTimeout> | undefined;
 		let timedOut = false;
 		let aborted = false;
 		let spawnError: OpencodeErrorInfo | undefined;
@@ -258,13 +428,32 @@ export function runOpencode(opts: RunOptions): Promise<RunResult> {
 			stdio: ["ignore", "pipe", "pipe"],
 			windowsHide: true,
 			shell: false,
+			// POSIX only: a process-group leader, so `killTree` can take the `--standalone`
+			// server down with the CLI. On Windows `taskkill /T /F` does the same job and
+			// `detached` would only open a console window.
+			detached: process.platform !== "win32",
 		});
+
+		/**
+		 * Settle anyway if the child ignores the kill.
+		 *
+		 * A signal is a request, not a state change: a wedged child (or a failed `taskkill`)
+		 * would otherwise leave this promise pending forever and the tool call hanging.
+		 */
+		const armGrace = () => {
+			if (settled || graceTimer) return;
+			graceTimer = setTimeout(() => {
+				finish(null, "unsettled");
+			}, KILL_GRACE_MS);
+			if (typeof graceTimer.unref === "function") graceTimer.unref();
+		};
 
 		const onAbort = () => {
 			if (settled) return;
 			aborted = true;
 			killTree(child.pid);
 			child.kill();
+			armGrace();
 		};
 		opts.signal?.addEventListener("abort", onAbort, { once: true });
 
@@ -273,6 +462,7 @@ export function runOpencode(opts: RunOptions): Promise<RunResult> {
 			timedOut = true;
 			killTree(child.pid);
 			child.kill();
+			armGrace();
 		}, timeoutMs);
 		if (typeof timer.unref === "function") timer.unref();
 
@@ -323,6 +513,7 @@ export function runOpencode(opts: RunOptions): Promise<RunResult> {
 			if (settled) return;
 			settled = true;
 			clearTimeout(timer);
+			if (graceTimer) clearTimeout(graceTimer);
 			opts.signal?.removeEventListener("abort", onAbort);
 			if (lineBuf.trim().length > 0) handleLine(lineBuf);
 			lineBuf = "";

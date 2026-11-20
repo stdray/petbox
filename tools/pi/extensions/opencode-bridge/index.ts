@@ -14,10 +14,16 @@
  *    `.opencode/opencode.json`, which lists the production PetBox MCP server — a
  *    child agent would then hold write access to the live task boards. The temp
  *    dir is created before the run and removed in a `finally`.
- * 2. **`-m` is always passed** (resolved default below). Without an explicit
+ * 2. **The child is read-only by default.** That config also carries an explicit deny
+ *    policy (`buildChildConfig` in `delegate.ts`): edit/write/shell/subagent denied, only
+ *    read/glob/grep/websearch allowed. Without it `--auto` would turn an unattended
+ *    delegation into an agent that writes and runs shell in the session cwd, with nobody
+ *    watching. `allowWrite` / `allowShell` are the only way to lift that, and they are the
+ *    only reason `--auto` ever appears in the argv.
+ * 3. **`-m` is always passed** (resolved default below). Without an explicit
  *    model the config default resolves to an `opencode-go/*` model and the run
  *    dies with `403 … subscription required`.
- * 3. **stdin is closed** on the child (`delegate.ts` uses `stdio: ['ignore', …]`).
+ * 4. **stdin is closed** on the child (`delegate.ts` uses `stdio: ['ignore', …]`).
  *    Otherwise `opencode run` reads stdin to EOF and hangs.
  */
 
@@ -27,7 +33,16 @@ import { tmpdir } from "node:os";
 import * as path from "node:path";
 import { Type } from "typebox";
 
-import { DEFAULT_MODEL, DEFAULT_TIMEOUT_MS, runOpencode } from "./delegate.ts";
+import {
+	buildChildConfig,
+	classifyResult,
+	type ChildPolicy,
+	DEFAULT_MODEL,
+	DEFAULT_TIMEOUT_MS,
+	needsAutoApprove,
+	resultBody,
+	runOpencode,
+} from "./delegate.ts";
 import type { OpencodeErrorInfo, OpencodeEvent, Usage } from "./types.ts";
 
 const TOOL_NAME = "opencode_delegate";
@@ -50,6 +65,9 @@ interface DelegateDetails {
 	aborted: boolean;
 	durationMs: number;
 	malformedLines: number;
+	unknownEvents: number;
+	allowWrite: boolean;
+	allowShell: boolean;
 	textTruncated: boolean;
 	stderrTail?: string;
 	error?: OpencodeErrorInfo;
@@ -80,18 +98,14 @@ function summarize(details: DelegateDetails): string {
 	if (details.timedOut) parts.push("TIMED OUT");
 	if (details.aborted) parts.push("ABORTED");
 	if (details.finishReason) parts.push(`finish ${details.finishReason}`);
+	parts.push(`writes ${details.allowWrite ? "allowed" : "denied"}, shell ${details.allowShell ? "allowed" : "denied"}`);
 	return `---\nopencode_delegate | ${parts.join(" | ")}`;
 }
 
-/** Write the child's private config: one model pin, no MCP servers, nothing else. */
-async function makeConfigDir(model: string): Promise<string> {
+/** Write the child's private config: model pin, deny policy, and no MCP servers. */
+async function makeConfigDir(model: string, policy: ChildPolicy): Promise<string> {
 	const dir = await mkdtemp(path.join(tmpdir(), "pi-opencode-bridge-"));
-	const config = {
-		$schema: "https://opencode.ai/config.json",
-		model,
-		// Deliberately no `mcp` key: the child must not reach the production
-		// PetBox MCP server that the repo's own .opencode/opencode.json declares.
-	};
+	const config = buildChildConfig(model, policy);
 	await writeFile(path.join(dir, "opencode.json"), `${JSON.stringify(config, null, 2)}\n`, "utf8");
 	return dir;
 }
@@ -107,6 +121,7 @@ export default function opencodeBridge(pi: ExtensionAPI): void {
 		promptSnippet: "Delegate a prompt to an external opencode agent and return its answer, tool calls and usage",
 		promptGuidelines: [
 			"Use opencode_delegate when the user asks to run something through opencode, or names an opencode model explicitly.",
+			"opencode_delegate runs the delegated agent READ-ONLY by default: no file writes, no shell. Pass allowWrite or allowShell only when the user has asked for changes on disk; they are the dangerous flags.",
 			`opencode_delegate defaults to ${DEFAULT_MODEL}; pass model to override it, and pass session to continue a previous opencode_delegate conversation.`,
 		],
 		parameters: Type.Object({
@@ -123,8 +138,19 @@ export default function opencodeBridge(pi: ExtensionAPI): void {
 			timeoutMs: Type.Optional(
 				Type.Number({ description: `Wall-clock timeout in milliseconds. Defaults to ${DEFAULT_TIMEOUT_MS}.` }),
 			),
-			auto: Type.Optional(
-				Type.Boolean({ description: "Auto-approve permissions the child's config does not deny (opencode --auto)." }),
+			allowWrite: Type.Optional(
+				Type.Boolean({
+					description:
+						"DANGEROUS: let the delegated agent edit and write files in the session working directory. " +
+						"Denied by default (the generated child config denies it). Also passes --auto.",
+				}),
+			),
+			allowShell: Type.Optional(
+				Type.Boolean({
+					description:
+						"DANGEROUS: let the delegated agent run shell commands in the session working directory. " +
+						"Denied by default (the generated child config denies it). Also passes --auto.",
+				}),
 			),
 		}),
 
@@ -132,10 +158,17 @@ export default function opencodeBridge(pi: ExtensionAPI): void {
 			const model = params.model?.trim() || DEFAULT_MODEL;
 			const cwd = params.cwd ? path.resolve(ctx.cwd, params.cwd) : ctx.cwd;
 			const timeoutMs = params.timeoutMs && params.timeoutMs > 0 ? params.timeoutMs : DEFAULT_TIMEOUT_MS;
+			const policy: ChildPolicy = {
+				allowWrite: params.allowWrite === true,
+				allowShell: params.allowShell === true,
+			};
+			// `--auto` only when something was explicitly approved; the deny rules in the
+			// generated config stand either way.
+			const auto = needsAutoApprove(policy);
 
 			let configDir: string;
 			try {
-				configDir = await makeConfigDir(model);
+				configDir = await makeConfigDir(model, policy);
 			} catch (err) {
 				throw new Error(`opencode_delegate: could not create the child config dir: ${(err as Error).message}`);
 			}
@@ -152,6 +185,9 @@ export default function opencodeBridge(pi: ExtensionAPI): void {
 				aborted: false,
 				durationMs: 0,
 				malformedLines: 0,
+				unknownEvents: 0,
+				allowWrite: policy.allowWrite === true,
+				allowShell: policy.allowShell === true,
 				textTruncated: false,
 			};
 
@@ -178,7 +214,7 @@ export default function opencodeBridge(pi: ExtensionAPI): void {
 					model,
 					variant: params.variant,
 					session: params.session,
-					auto: params.auto,
+					auto,
 					cwd,
 					timeoutMs,
 					signal,
@@ -190,6 +226,7 @@ export default function opencodeBridge(pi: ExtensionAPI): void {
 				details.usage = result.usage;
 				details.steps = result.steps;
 				details.finishReason = result.finishReason;
+				details.unknownEvents = result.unknownEvents;
 				details.toolCalls = result.toolCalls.map((call) => {
 					const entry: DelegateDetails["toolCalls"][number] = { tool: call.tool, status: call.status };
 					if (call.title) entry.title = call.title;
@@ -205,20 +242,15 @@ export default function opencodeBridge(pi: ExtensionAPI): void {
 				if (result.error) details.error = result.error;
 
 				const answer = result.text.trim();
-				const body =
-					answer.length > 0
-						? headTail(answer, RESULT_HEAD_CHARS, RESULT_TAIL_CHARS)
-						: "(the opencode agent produced no text)";
-				const notes: string[] = [];
-				if (result.error) notes.push(`error: ${result.error.message}`);
-				if (result.timedOut) notes.push(`timed out after ${timeoutMs} ms — the child was killed`);
-				if (result.aborted) notes.push("aborted");
-				if (result.exitCode !== null && result.exitCode !== 0) notes.push(`child exited with ${result.exitCode}`);
+				const verdict = classifyResult(result);
+				// On failure this is "": the placeholder must not stand in for an answer.
+				const body = resultBody(answer, verdict);
+				const notes: string[] = [...verdict.reasons];
 				if (details.stderrTail) notes.push(`stderr: ${details.stderrTail}`);
-				const text = notes.length > 0 ? `${body}\n\n${notes.join("\n")}\n${summarize(details)}` : `${body}\n\n${summarize(details)}`;
+				const sections = [body.length > 0 ? headTail(body, RESULT_HEAD_CHARS, RESULT_TAIL_CHARS) : "", ...notes, summarize(details)];
+				const text = sections.filter((section) => section.length > 0).join("\n\n");
 
-				const failed = Boolean(result.error) || result.timedOut || result.aborted || (result.exitCode ?? 0) !== 0;
-				return failed
+				return verdict.failed
 					? { content: [{ type: "text", text }], details, isError: true }
 					: { content: [{ type: "text", text }], details };
 			} finally {

@@ -15,41 +15,58 @@
 
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import * as path from "node:path";
 import test from "node:test";
 
-import { DEFAULT_MODEL, runOpencode } from "../../extensions/opencode-bridge/delegate.ts";
+import { buildChildConfig, type ChildPolicy, DEFAULT_MODEL, runOpencode } from "../../extensions/opencode-bridge/delegate.ts";
 
 const SKIP_LIVE = process.env.OPENCODE_BRIDGE_SKIP_LIVE === "1";
 const LIVE_TIMEOUT_MS = 180_000;
 
-/** Config dir the child gets: one model pin, no MCP servers. */
-async function makeConfigDir(): Promise<string> {
+/** Config dir the child gets: exactly what the extension writes, minus the temp-dir plumbing. */
+async function makeConfigDir(policy: ChildPolicy = {}): Promise<string> {
 	const dir = await mkdtemp(path.join(tmpdir(), "oc-bridge-test-cfg-"));
 	await writeFile(
 		path.join(dir, "opencode.json"),
-		`${JSON.stringify({ $schema: "https://opencode.ai/config.json", model: DEFAULT_MODEL }, null, 2)}\n`,
+		`${JSON.stringify(buildChildConfig(DEFAULT_MODEL, policy), null, 2)}\n`,
 		"utf8",
 	);
 	return dir;
 }
 
-/** Number of `opencode` processes alive right now (0 where we cannot tell). */
-function countOpencodeProcesses(): number {
+/**
+ * Live `opencode` processes, split by kind.
+ *
+ * `serve` matters separately: `run --standalone` starts a private server of its own, and a
+ * kill that only reaches the CLI leaves that server behind. Counting only `run` processes
+ * would call that a clean shutdown.
+ */
+function countOpencodeProcesses(): { total: number; serve: number } {
 	try {
 		if (process.platform === "win32") {
-			const out = execFileSync("tasklist", ["/FI", "IMAGENAME eq opencode.exe", "/NH"], {
-				encoding: "utf8",
-				windowsHide: true,
-			});
-			return out.split(/\r?\n/).filter((line) => /opencode\.exe/i.test(line)).length;
+			const out = execFileSync(
+				"powershell",
+				[
+					"-NoProfile",
+					"-NonInteractive",
+					"-Command",
+					"Get-CimInstance Win32_Process -Filter \"Name='opencode.exe'\" | ForEach-Object { $_.CommandLine }",
+				],
+				{ encoding: "utf8", windowsHide: true },
+			);
+			const lines = out.split(/\r?\n/).filter((line) => line.trim().length > 0);
+			return {
+				total: lines.length,
+				serve: lines.filter((line) => /\bserve\b/.test(line)).length,
+			};
 		}
-		const out = execFileSync("sh", ["-c", "pgrep -c -f 'opencode.*run' || true"], { encoding: "utf8" });
-		return Number(out.trim()) || 0;
+		const out = execFileSync("sh", ["-c", "pgrep -af opencode || true"], { encoding: "utf8" });
+		const lines = out.split(/\n/).filter((line) => line.trim().length > 0);
+		return { total: lines.length, serve: lines.filter((line) => /\bserve\b/.test(line)).length };
 	} catch {
-		return 0;
+		return { total: 0, serve: 0 };
 	}
 }
 
@@ -84,6 +101,13 @@ test("live: forced tool call reads the file, costs nothing, exposes a session id
 			`no completed tool call: ${JSON.stringify(first.toolCalls)}`,
 		);
 
+		// OPEN QUESTION (not testable today — free tier exhausted, so a live run now dies with
+		// "Free usage limit reached" whatever the code does): does `-s <session>` resume with
+		// the CURRENT config's tool surface, or with the tool surface the session was created
+		// under? This matters because a session started with allowWrite/allowShell could be
+		// resumed by a later call that passes neither — and would then keep write and shell
+		// access the caller believes it denied. Test it with quota by resuming a
+		// write-capable session from a denied call and asking it to create a file.
 		const second = await runOpencode({
 			prompt: "What exact value did you read earlier? Reply with just that value.",
 			cwd: workDir,
@@ -130,12 +154,49 @@ test("live: timeout kills the child and leaves no orphan", { skip: SKIP_LIVE, ti
 
 		console.log(
 			`[live] timeout exit=${result.exitCode} timedOut=${result.timedOut} elapsed=${elapsed}ms ` +
-				`procs before=${before} after=${after} killedBy=${result.killedBy}`,
+				`procs before=${JSON.stringify(before)} after=${JSON.stringify(after)} killedBy=${result.killedBy}`,
 		);
 
 		assert.equal(result.timedOut, true);
 		assert.ok(elapsed < 30_000, `timeout took ${elapsed}ms to take effect`);
-		assert.ok(after <= before, `orphan opencode processes: before=${before} after=${after}`);
+		assert.ok(
+			after.total <= before.total,
+			`orphan opencode processes: before=${JSON.stringify(before)} after=${JSON.stringify(after)}`,
+		);
+		assert.ok(
+			after.serve <= before.serve,
+			`the --standalone server survived the kill: before=${JSON.stringify(before)} after=${JSON.stringify(after)}`,
+		);
+	} finally {
+		await rm(workDir, { recursive: true, force: true });
+		await rm(configDir, { recursive: true, force: true });
+	}
+});
+
+test("live: the default policy refuses to write", { skip: SKIP_LIVE, timeout: 200_000 }, async () => {
+	const workDir = await mkdtemp(path.join(tmpdir(), "oc-bridge-test-nowrite-"));
+	const configDir = await makeConfigDir();
+	try {
+		const result = await runOpencode({
+			prompt: "Create a file named made.txt in the current directory containing the word hello, then say DONE.",
+			cwd: workDir,
+			configDir,
+			auto: false,
+			timeoutMs: LIVE_TIMEOUT_MS,
+		});
+
+		const wrote = await stat(path.join(workDir, "made.txt")).then(
+			() => true,
+			() => false,
+		);
+
+		console.log(
+			`[live] no-write exit=${result.exitCode} wrote=${wrote} tools=${result.toolCalls.map((c) => `${c.tool}:${c.status}`).join(",") || "(none)"} ` +
+				`text=${JSON.stringify(result.text.slice(0, 120))}`,
+		);
+
+		assert.equal(wrote, false, "the default deny policy must leave the filesystem alone");
+		assert.equal(result.exitCode, 0, `child failed: ${result.error?.message ?? result.stderrTail}`);
 	} finally {
 		await rm(workDir, { recursive: true, force: true });
 		await rm(configDir, { recursive: true, force: true });
