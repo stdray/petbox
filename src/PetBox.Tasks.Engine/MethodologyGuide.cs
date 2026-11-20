@@ -170,7 +170,7 @@ public static class MethodologyGuide
 		md.AppendLine();
 		md.AppendLine("Every project has this board from birth — a SYSTEM built-in, not part of this project's methodology: it lives in the project's `$utility` layer, outside every methodology instance, so no rule above governs it, it never reaches the owner's decision queue or digest, and switching methodology never changes it. It holds defect-like findings: something broken, unexpected, or contradicting the docs.");
 		md.AppendLine($"- Types: {string.Join(", ", block.Types)} — the only one; a write carrying any other type is refused before anything is stored.");
-		md.AppendLine($"- Statuses (initial: {block.Initial}) — this board's own plain status set, not the lifecycle of a kind above:");
+		md.AppendLine($"- Statuses (initial: {block.Initial}) — this board's own set, enforced: a move that is not one of the transitions below is refused:");
 		AppendStatusSlugs(md, block, StatusKind.Open, "open");
 		AppendStatusSlugs(md, block, StatusKind.TerminalOk, "terminal-ok (closes the node as delivered)");
 		AppendStatusSlugs(md, block, StatusKind.TerminalCancel, "terminal-cancel (closes the node without delivery)");
