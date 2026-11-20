@@ -114,8 +114,33 @@ else
   bun "$here/skills.mjs" --target "$target"
 fi
 
+# Directory extensions (`extensions/<name>/index.ts`) are mirrored, not copied file by file: pi loads
+# `index.ts` from the subdirectory and the sibling modules it imports have to arrive with it. `diff -r`
+# is what keeps the second run a no-op, and the `rm -rf` before `cp -r` is what stops a file deleted in
+# the repo from surviving in the installed copy forever.
+install_dir() {
+  local src="$1" dst="$2"
+  if [ -d "$dst" ] && diff -r -q "$src" "$dst" >/dev/null 2>&1; then
+    echo "  = ${dst#"$target"/}/"
+    return
+  fi
+  if [ "$dry" = 1 ]; then
+    echo "  + ${dst#"$target"/}/ (would write)"
+    return
+  fi
+  rm -rf "$dst"
+  mkdir -p "$(dirname "$dst")"
+  cp -r "$src" "$dst"
+  echo "  + ${dst#"$target"/}/"
+}
+
 for f in "$here"/extensions/*.ts; do
+  [ -e "$f" ] || continue
   install_file "$f" "$target/extensions/$(basename "$f")"
+done
+for d in "$here"/extensions/*/; do
+  [ -d "$d" ] || continue
+  install_dir "${d%/}" "$target/extensions/$(basename "$d")"
 done
 
 if [ "$dry" = 1 ]; then
