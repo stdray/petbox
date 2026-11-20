@@ -62,6 +62,66 @@ package-install error. `pi-web-access` gives web search/fetch; `pi-chrome` brows
 `pi-compact-tools` the compact tool surface; `@tintinweb/pi-subagents` the `Agent`,
 `get_subagent_result`, `steer_subagent` and `SubagentWorkflow` tools.
 
+## 2a. Pi Web — the same config, in a browser (try it before you need it)
+
+`@agegr/pi-web` is not a second agent: it is a **local browser UI over the same
+`~/.pi/agent` config and the same session files**. Everything set up in the steps below is
+immediately visible there — no import, no second config.
+
+```sh
+npx @agegr/pi-web@latest          # or: npm install -g @agegr/pi-web@latest && pi-web
+```
+
+It binds `127.0.0.1:30141` and opens a browser. What makes it worth trying:
+
+- **Sessions are a workspace, not a scrollback**: grouped by project, with running state,
+  context usage, cost and compaction details; rename, export, delete, resume.
+- **Two kinds of branching**: *New session* forks an independent session file from an earlier
+  message, *Edit from here* creates a branch inside the current one. This is the fastest way
+  to try “what if I had said it differently” without losing the original.
+- **The project files are right there**: browse/upload files, inspect Git diffs, preview
+  Markdown, images, audio, PDF and DOCX, with automatic refresh.
+- **Worktrees in the sidebar** — the same repo, several checkouts, sessions grouped together.
+- **Web configuration**: provider login, API keys, models, model tests, plugin packages and
+  skills without leaving the browser. On a fresh machine this is the honest shortest path to
+  step 2: the *Models* panel is where a provider is signed in.
+- It installs as a PWA, so it behaves like a desktop app on a phone or a laptop dock.
+
+Commands worth knowing:
+
+```sh
+pi-web status          # which servers are running
+pi-web stop [--port N]
+pi-web open [--port N]
+pi-web update [--check]
+```
+
+**Decision point — local only, or reachable from the network?** On loopback, no password is
+needed. The moment you bind a non-loopback address you are exposing an agent that executes
+high-privilege actions:
+
+```sh
+PI_WEB_PASSWORD='a-long-random-password' pi-web --hostname 0.0.0.0
+```
+
+**The password does not encrypt the connection.** Do not put it on plain HTTP over the
+internet: terminate HTTPS in a trusted reverse proxy or use a VPN, and if the proxy forwards
+its own hostname add that exact name to `PI_WEB_ALLOWED_HOSTS`. API clients use Basic Auth
+with the username `pi`.
+
+Useful defaults to know about, because they surprise people:
+
+| | |
+|---|---|
+| `PI_WEB_IDLE_TIMEOUT_MS` | `600000` (10 min) — an idle session is shut down; `0` disables it |
+| `PI_CODEMODE_MAX_WORKERS` | pi-web sets **8** when unset (pi's own default is 2); each script may use up to 256 MB |
+| `PI_WEB_NO_OPEN=1` | do not open a browser (CI, remote box) |
+| `PI_WEB_APP_NAME` | the PWA name (`Pi Web` by default) |
+
+**Verification:** `pi-web open` shows the sessions already living in `~/.pi/agent/sessions`,
+and the *Models* panel lists the providers step 2 configured. If the list is empty, the pi
+config is not where you think it is — fix that before anything else.
+
 ## 3. Install the vendored pi config (agents, rules, extensions)
 
 ```sh
@@ -83,6 +143,23 @@ refuses to fall back silently on Windows when `cygpath` is missing.
 
 **Restart pi afterwards.** Extensions load at startup; `/reload` re-reads config but does not
 pick up new files.
+
+**What deploy does NOT carry, measured on the reference machine.** The install produced **41 files**
+(`agents/` 5, `skills/` 30, `extensions/` 6) and **every one of them already existed on the
+reference machine** — so the repository reproduces exactly what the repository owns. The reference
+machine has **144 further files** the repo does not own, and a new machine will not get them:
+
+| | |
+|---|---|
+| `skills/answer-me-with-html/**` (138 files) | a third-party skill cloned from its own repo, with `.git` |
+| `skills/caveman`, `grilling`, `grill-me`, `code-edit-hygiene` (4) | single-file third-party skills |
+| `extensions/child-session-dir.ts` | a **local** extension that was never vendored into `tools/pi` — the one real gap |
+| `agents/bonsai.md.disabled` | a disabled role, kept for reference |
+
+So: after `deploy.sh` the machine has everything this repository defines, and nothing else. If the
+colleague needs one of those skills, it is installed from its own source (`pi` packages / a cloned
+skill directory), not from here — and `child-session-dir.ts` should be vendored before someone
+assumes it works on a fresh machine.
 
 ## 4. Wire the project to PetBox
 
