@@ -275,6 +275,106 @@ export interface PermissionRule {
 	effect: "allow" | "deny";
 }
 
+/**
+ * WHAT AN OPENCODE CHILD CAN EXPRESS — the single source of truth for tool parity.
+ *
+ * Keys are pi tool names as role files spell them; values name the opencode permission ACTION
+ * they become (opencode's own `Permission.Rule` action strings, measured against its config
+ * schema and verified live) or why there is no equivalent at all.
+ *
+ * Three honest notes, because the silences are what hurt:
+ * - `find`/`ls` both collapse to opencode's `glob`: opencode has no separate list tool.
+ * - web tools (`websearch`, `fetch_content`, …) become `websearch` + `webfetch`, and the
+ *   `websearch.provider` block is only emitted when the role declares one of them.
+ * - MCP tool names and pi extension tools have NO action: an opencode child reaches MCP only
+ *   through `mcp: true` (the whole PetBox server), never per-tool.
+ */
+export const EXPRESSIBLE_TOOLS: Readonly<
+	Record<string, { action?: string | string[]; note?: string }>
+> = {
+	read: { action: "read" },
+	grep: { action: "grep" },
+	find: { action: "glob" },
+	ls: { action: "glob" },
+	glob: { action: "glob" },
+	edit: { action: "edit" },
+	write: { action: "edit", note: "opencode normalises write to edit" },
+	notebook_edit: { action: "edit" },
+	bash: { action: "shell" },
+	powershell: { action: "shell" },
+	shell: { action: "shell" },
+	websearch: { action: ["websearch", "webfetch"] },
+	web_search: { action: ["websearch", "webfetch"] },
+	webfetch: { action: ["websearch", "webfetch"] },
+	web_fetch: { action: ["websearch", "webfetch"] },
+	fetch: { action: ["websearch", "webfetch"] },
+	fetch_content: { action: ["websearch", "webfetch"] },
+	web_enable: { action: ["websearch", "webfetch"] },
+	subagent: { action: "subagent" },
+	task: { action: "subagent" },
+};
+
+/** A declared capability the child cannot have, and why. */
+export interface ParityLoss {
+	tool: string;
+	reason: string;
+	/** `warn` = the role loses a capability; `block` = the child would have nothing left. */
+	severity: "warn" | "block";
+}
+
+/** Why a tool has no opencode equivalent. Anything not listed here is reported generically. */
+const UNEXPRESSIBLE_REASONS: Readonly<Record<string, string>> = {
+	codemode:
+		"codemode is a pi-side tool surface (it can call MCP tools); opencode has no equivalent, so the child loses " +
+		"MCP access it had on the pi side — pass mcp: true to give it the PetBox server instead",
+	pwsh: "pwsh is the pi extension that re-registers the PowerShell tool; opencode exposes one shell, declared as `powershell`",
+};
+
+/**
+ * Declared tools minus expressible ones.
+ *
+ * WARN, never refuse, for `codemode` and the other pi-only surfaces: every vendored role
+ * declares `codemode`, so refusing would make delegation impossible for all of them — and the
+ * capability it stands in for (MCP reach) is recoverable at call time with `mcp: true`. The one
+ * case that IS a block is a role whose entire tool list is unexpressible: the child would start
+ * with no tools at all and the caller would read its "I cannot do that" as a task failure.
+ */
+export function analyzeToolParity(role: RoleDefinition): ParityLoss[] {
+	const denied = new Set(role.disallowedTools.map((tool) => tool.trim().toLowerCase()));
+	const declared = role.tools.map((tool) => tool.trim().toLowerCase()).filter((tool) => tool.length > 0 && !denied.has(tool));
+	if (declared.length === 0) return [];
+
+	const losses: ParityLoss[] = [];
+	let expressible = 0;
+	for (const tool of declared) {
+		if (EXPRESSIBLE_TOOLS[tool]) {
+			expressible += 1;
+			continue;
+		}
+		losses.push({
+			tool,
+			reason:
+				UNEXPRESSIBLE_REASONS[tool] ??
+				(tool.startsWith("mcp__")
+					? "per-tool MCP access is not expressible; the child reaches MCP only as the whole PetBox server (mcp: true)"
+					: "no opencode permission action corresponds to this tool (pi extension, skill tool, or an MCP tool name)"),
+			severity: "warn",
+		});
+	}
+
+	if (expressible === 0 && losses.length > 0) {
+		for (const loss of losses) loss.severity = "block";
+	}
+	return losses;
+}
+
+/** One line per loss, for the tool result — the silent-degradation antidote. */
+export function describeParityLosses(losses: ParityLoss[]): string[] {
+	return losses.map(
+		(loss) => `${loss.severity === "block" ? "BLOCK" : "parity"}: ${loss.tool} — ${loss.reason}`,
+	);
+}
+
 /** pi tool names that write files. */
 const WRITE_TOOLS = new Set(["edit", "write", "notebook_edit"]);
 /** pi tool names that run shell commands. */
@@ -392,6 +492,8 @@ export function resolveRoleModel(
 
 /** What a role run resolves to: the child agent name, model, variant and config. */
 export interface RoleRunPlan {
+	/** Declared capabilities the child cannot have (see `analyzeToolParity`). */
+	parity: ParityLoss[];
 	/** ALWAYS the role name — `index.ts` passes this as `runOpencode`'s `agent` (`--agent <name>`). */
 	agent: string;
 	model: string;
@@ -434,7 +536,7 @@ export function planRoleRun(role: RoleDefinition, options: RoleRunOptions = {}):
 		allowSubagent: options.allowSubagent,
 		mcpServer: options.mcpServer,
 	});
-	const plan: RoleRunPlan = { agent: role.name, model, config };
+	const plan: RoleRunPlan = { agent: role.name, model, config, parity: analyzeToolParity(role) };
 	if (thinking !== undefined) plan.thinking = thinking;
 	if (variant !== undefined) plan.variant = variant;
 	return plan;
