@@ -51,6 +51,8 @@ import {
 	planRoleRun,
 	type RoleRunPlan,
 } from "./role-config.ts";
+import { registerDelegateTool } from "./delegate-tool.ts";
+import { markSubagentsReady, SUBAGENTS_READY } from "./pi-route.ts";
 import type { OpencodeErrorInfo, OpencodeEvent, Usage } from "./types.ts";
 
 const TOOL_NAME = "opencode_delegate";
@@ -353,4 +355,9 @@ export default function opencodeBridge(pi: ExtensionAPI): void {
 			}
 		},
 	});
+
+	// The pi leg's discovery signal. Registered at factory time: the plugin emits it during its
+	// own session_start, long before any tool call could ask.
+	pi.events.on(SUBAGENTS_READY, () => markSubagentsReady());
+	registerDelegateTool(pi);
 }
