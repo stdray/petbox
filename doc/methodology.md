@@ -154,10 +154,22 @@ board auto-created per project in the `$utility` layer: outside any methodology 
 so it never enters the owner's decision queue or digest, and outside P1/P2 both. It reuses
 the ordinary task surface as-is (`tasks_search`, `tasks_node_get`, `tasks_upsert`,
 `tasks_delta`, `comments_*`, the boards UI) — an observation is a node, not a new kind of
-record.
+record. `tasks_methodology_guide` documents it as its own section, explicitly marked as a
+built-in `$utility` board outside every methodology instance — it is not one of the owner's
+methodology kinds, so it is absent from the guide's per-kind catalog and from
+"Other kinds this server knows".
 
-**Status is a value, not an engine.** `seen` (open) → `promoted` (open) → `fixed` (terminal
-ok); `declined` (terminal cancel).
+**Status is a value, not a process engine.** `seen` (open) → `promoted` (open) → `fixed`
+(terminal ok); `declined` (terminal cancel). The four moves the built-in preset declares
+(`seen→promoted`, `seen→declined`, `promoted→fixed`, `promoted→declined`, the two declines
+requiring a `reason`) are enforced on the ordinary `tasks_upsert` path like any other kind's
+statuses — so `seen` cannot jump straight to `fixed`. What the board declares NONE of is the
+methodology machinery: no approval gates, effects, delivery roll-up or link constraints.
+
+**One type, checked before anything else.** The board's only valid `type` is `observation`.
+A create carrying another type (e.g. `issue`, a type of a different board) is refused with an
+error naming `observation`, and refused *before* the dedup pass below — a mistyped write can
+neither create a node nor bump an existing observation's recurrence.
 
 **Dedup with accumulating recurrence.** A create-time write — automatic (the session-facts
 extractor's judge, on a fourth verdict `observe`: defect-like material is routed here instead

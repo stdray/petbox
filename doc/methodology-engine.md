@@ -283,7 +283,7 @@ migration: [{ kind, types?: [{from,to}], statuses?: [{from,to}] }]
 | `tasks_methodology_utility_get` / `tasks_methodology_utility_upsert` | utility-слой видов проекта (мир `$utility`) |
 | `tasks_methodology_set_description` | заменить прозу ОДНОГО примитива по натуральному ключу, без CAS всего документа |
 | `tasks_methodology_template_get\|list\|upsert\|delete\|snapshot` | именованные инертные шаблоны (+ встроенные quartet\|classic\|simple) |
-| `tasks_methodology_guide` | агентский onboarding-гайд, выведенный из данных: markdown + структурные инварианты (`approval_gate\|approval_gate_enforced\|reason_required\|precondition_artifact\|checklist\|transition_effect\|link_constraint\|tag_axes`), `source` = instance\|active\|ambiguous\|presets |
+| `tasks_methodology_guide` | агентский onboarding-гайд, выведенный из данных: markdown + структурные инварианты (`approval_gate\|approval_gate_enforced\|reason_required\|precondition_artifact\|checklist\|transition_effect\|link_constraint\|tag_axes`), `source` = instance\|active\|ambiguous\|presets. Встроенная доска `observations` (kind `observation`, мир `$utility`, вне любого инстанса) идёт ОТДЕЛЬНОЙ секцией — она не вид проекта и в каталог видов / «Other kinds this server knows» не попадает |
 | `tasks_workflow` | FSM конкретной доски (кастомной или пресетной), переходы с `preconditionArtifact` |
 | `tasks_board_create` / `tasks_board_adopt` | создать доску в мире (`methodologyInstance`: ключ инстанса или `$utility`) / перенести существующую |
 

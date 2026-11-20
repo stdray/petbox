@@ -59,6 +59,11 @@ public static class MethodologyGuide
 		foreach (var kind in rendered)
 			AppendKind(md, runtime, kind, invariants);
 
+		// The one board every project carries that NO methodology declares — see its own comment.
+		// Rendered before "Other kinds this server knows" because this board EXISTS in every
+		// project, while that section names kinds whose boards this project does not have.
+		AppendUtilityObservationBoard(md);
+
 		if (!builtinCatalog)
 			AppendUndeclaredKinds(md, runtime, rendered);
 
@@ -142,6 +147,38 @@ public static class MethodologyGuide
 		}
 	}
 
+	// work observations-guide-omits-utility-board: the `observations` board is the ONE board every
+	// project carries that NO methodology declares — a system built-in of kind `observation`,
+	// homed in the project's `$utility` layer (TaskBoardMeta.UtilityWorld), deliberately outside
+	// every methodology instance. It is absent from BOTH halves of the catalog above by design:
+	// DeclaredKinds never names it, and EffectiveKinds() cannot, because MethodologyRuntime.
+	// PipelineOrder omits BoardKind.Observation on purpose — adding it there would change
+	// RESOLUTION and the meaning of "Other kinds this server knows". Rendering it here, from the
+	// SAME MethodologyPresets data every preset kind renders from, keeps the guide a mirror of
+	// the server's rules instead of a hardcoded blurb.
+	//
+	// Deliberately NOT AppendKind: the heading must not read `## Kind: observation` — that shape
+	// means "a kind THIS methodology declares", and a project may legitimately declare its own
+	// observation-kind (which belongs in the declared half). It also emits NO invariants:
+	// MethodologyInvariant has no channel to mark a rule "not from your methodology", so anything
+	// added here would reach a machine consumer as a rule of the project's own process.
+	static void AppendUtilityObservationBoard(StringBuilder md)
+	{
+		var block = MethodologyPresets.KindDef(BoardKind.Observation).Workflows[0];
+		md.AppendLine();
+		md.AppendLine("## Built-in board: `observations` (kind `observation`, world `$utility`)");
+		md.AppendLine();
+		md.AppendLine("Every project has this board from birth — a SYSTEM built-in, not part of this project's methodology: it lives in the project's `$utility` layer, outside every methodology instance, so no rule above governs it, it never reaches the owner's decision queue or digest, and switching methodology never changes it. It holds defect-like findings: something broken, unexpected, or contradicting the docs.");
+		md.AppendLine($"- Types: {string.Join(", ", block.Types)} — the only one; a write carrying any other type is refused before anything is stored.");
+		md.AppendLine($"- Statuses (initial: {block.Initial}) — this board's own plain status set, not the lifecycle of a kind above:");
+		AppendStatusSlugs(md, block, StatusKind.Open, "open");
+		AppendStatusSlugs(md, block, StatusKind.TerminalOk, "terminal-ok (closes the node as delivered)");
+		AppendStatusSlugs(md, block, StatusKind.TerminalCancel, "terminal-cancel (closes the node without delivery)");
+		AppendTransitions(md, block, strictMode: false);
+		md.AppendLine("- Deduplicated on create: a new observation is matched against every open, fixed and declined one first (normalized text, then semantic similarity); a hit grows that observation's recurrence count instead of creating a second node, and `deduped[]` in the write response names where the write went.");
+		md.AppendLine("- Promotion: `tasks_observation_promote` turns a `seen` observation into a real `work` or `ideas` node over an `observation_obligation` relation; when that obligation reaches a terminal-ok status the server moves the observation to `fixed`, and a later recurrence of the same problem reopens it to `seen`.");
+	}
+
 	static void AppendWorkflow(StringBuilder md, string kind, MethodologyWorkflowDef block, bool strictMode, List<MethodologyInvariant> invariants)
 	{
 		md.AppendLine();
@@ -161,6 +198,14 @@ public static class MethodologyGuide
 		if (statuses.Count == 0) return;
 		var rendered = statuses.Select(s => s.Description is { Length: > 0 } d ? $"{s.Slug} ({d})" : s.Slug);
 		md.AppendLine($"  - {label}: {string.Join(", ", rendered)}");
+	}
+
+	// Same grouping as AppendStatusGroup, SLUGS ONLY: the observation preset's stored status
+	// descriptions are just the capitalized slug ("seen (Seen)"), pure noise on a guide line.
+	static void AppendStatusSlugs(StringBuilder md, MethodologyWorkflowDef block, StatusKind kind, string label)
+	{
+		var statuses = block.Statuses.Where(s => s.Kind == kind).Select(s => s.Slug).ToList();
+		if (statuses.Count > 0) md.AppendLine($"  - {label}: {string.Join(", ", statuses)}");
 	}
 
 	static void AppendTransitions(StringBuilder md, MethodologyWorkflowDef block, bool strictMode)
