@@ -247,17 +247,172 @@ which recorded a 7.6 KB banner re-injected 157 messages into a live yobagent ses
 
 ## Portability
 
-The kit imports at the top of `petbox-pi.ts` are **machine-absolute**
-(`C:/Users/stdray/.petbox/wire/...`) because the deploy target is not fixed: the user-scoped and
+The kit imports at the top of `petbox-pi.ts` are **machine-absolute** — the user-scoped and
 project-scoped extension directories sit at different depths, so no single relative specifier
-reaches `~/.petbox/wire` from both. On a machine whose home directory differs, repoint the prefix:
+reaches `~/.petbox/wire` from both. The tracked file therefore carries a placeholder:
 
-```sh
-sed -i 's#C:/Users/stdray/.petbox/wire#/home/<user>/.petbox/wire#g' ~/.pi/agent/extensions/petbox-pi.ts
+```ts
+import { pushTranscript } from "@PETBOX_WIRE_ROOT@/append.ts";
 ```
 
-Tracked as a follow-up observation — the fix (a home-resolved dynamic import) is a change to this
-file's loading mechanism and does not belong in the banner-stability change.
+`deploy.sh` substitutes it at install time from `${PETBOX_WIRE_ROOT:-$HOME/.petbox/wire}`, in
+forward-slash form on every platform (under Git Bash `cygpath -m` turns `$HOME` into
+`C:/Users/…`, which is what the imports held before the placeholder existed). The render is
+deterministic, so a second deploy writes nothing, and **the tracked file is deliberately not
+loadable as-is** — the installed copy is the only loadable one. Never hand-edit the installed
+file; change the source, or set `PETBOX_WIRE_ROOT` for a kit mirror somewhere else:
+
+```sh
+PETBOX_WIRE_ROOT=/opt/petbox/wire tools/pi/deploy.sh --dry-run   # what would change
+```
+
+## Layout
+
+| Path | What it is |
+|---|---|
+| `extensions/petbox-pi.ts` | session mirror + memory banner + recall nudge (see below) |
+| `extensions/agent-rules.ts` | assembles `rules/amd-*.md` into the `agent_rules` prompt section for the main session; reports an unreadable or missing fragment once to the log and the UI instead of dropping the whole section silently, and checks that every role's `skills:` resolves to an installed fragment — in the same roots `pi-subagents` searches (the session's `.pi/skills` and `.agents/skills`, then the user scope), `<name>.md` or `<name>/SKILL.md` |
+| `extensions/pwsh-tool.ts` | the built-in PowerShell tool registered a second time as `pwsh` — see "Why a second PowerShell tool" below |
+| `extensions/session-id-status.ts` | one extra footer line: `sid:xxxxxxxx · up 12m · compact×2` |
+| `extensions/opencode-bridge/` | `opencode_delegate` tool: runs a prompt through the external `opencode` CLI and returns its answer, tool calls, usage and cost (directory extension: `index.ts` + `types.ts`/`parse.ts`/`delegate.ts`/`role-config.ts`) |
+| `agents/*.md` | our five subagent roles: `worker`, `scout`, `oracle`, `reviewer`, `researcher` |
+| `rules/amd-*.md` | the operating rules, one topic per file (always injected) |
+| `rules/pbx-*.md` | PetBox-specific rules — injected only when the session declares a petbox MCP tool |
+
+## Why a second PowerShell tool (`pwsh`)
+
+`pwsh-tool.ts` re-registers pi's **own** PowerShell tool definition under the name `pwsh`.
+Nothing is reimplemented: `createPowerShellToolDefinition` is imported from the SDK and only
+`name`/`label` are overridden, so the parameter schema (`command`, `timeout`), output
+truncation, temp-file spill and session environment are the built-in's. The export exists in
+the package root of both `pi-coding-agent` 1.3.0 (CLI) and 1.2.0 (nested inside pi-web), and
+extensions resolve that specifier through the loader's virtual-module table, so one file
+serves both hosts.
+
+It exists because **pi-web collapses the two shells into one**. Its
+`lib/powershell-settings.ts` renames every name in `{bash, powershell}` to whichever shell is
+configured, so with both listed in `defaultTools` the model gets `bash` only — `powershell`
+is rewritten away. A tool whose name is outside pi-web's fixed `CODING_TOOL_NAMES` set is
+carried through untouched, which is why `pwsh` survives.
+
+Consequence, deliberately accepted: in the terminal both `powershell` and `pwsh` are active.
+They are the *same* code and the *same* binary — the tool named `powershell` resolves
+`pwsh.exe` first and only falls back to `powershell.exe` (`dist/utils/shell.js:105-114`), so
+the second name buys ~6 characters of prompt rather than a second engine. Banishing the
+canonical name instead would cost a rename across `settings.json`, this prose and four agent
+profiles, and would leave PowerShell unavailable whenever this extension fails to load.
+
+## Rules: why skills and not `AGENTS.md`
+
+A pi context file cannot include another file, and a subagent in `prompt_mode: replace` never
+loads context files at all — so one big `AGENTS.md` reaches either the main session or the
+children, never both. The rules are therefore one file per topic, consumed by two paths:
+
+- **main session** — `agent-rules.ts` reads `rules/amd-*.md` **once, on `session_start`**, and
+  serves that exact text for the rest of the session. Editing a rule takes effect at the next
+  **`session_start`** — a new session, `/new`, a fork, **and a resume** all re-read the files; the
+  same contract a context file has. The freeze is not laziness: a section that
+  changes mid-transcript makes pi replay the prompt and the provider re-read the whole
+  conversation without its cache (`Cache miss: N tokens re-billed`) — and a resume after editing
+  a rule costs exactly that one replay, by design. Files
+  named `pbx-*.md` go into a separate `petbox_rules` section that is added **only when the
+  session declares a petbox MCP tool** — PetBox prose must not reach a session that cannot
+  call the board. Same capability test and asymmetry as `petbox-pi.ts`'s banner: a positive
+  sticks, a negative is re-checked every run because MCP tools register asynchronously;
+- **children** — each role lists the files it needs in its `skills:` frontmatter, and
+  `pi-subagents` preloads exactly those.
+
+The files sit in a skills directory but are **flat `.md`**, which pi's skill discovery ignores
+(it only accepts directories containing `SKILL.md`), so they never pollute the main session's
+skills catalog and need no `disable-model-invocation` flag. The trade-off is that they are not
+`/skill:name`-invokable.
+
+Per-role assignment is deliberate: `scout` and `reviewer` do not carry the destructive-action or
+delegation rules, because they have no tools to act on them.
+
+The PetBox gate is decided once per session too, from the MCP **config** (`getMcpServers()`, then
+the effective `mcp.json` files) rather than the live tool registry: MCP connects in the
+background, so a runtime check is false at the first prompt of every short run and would add the
+section later — another re-bill, and none at all in headless runs.
+
+## `petbox-pi.ts`
+
+- **Session mirror** — appends the active branch's dialogue (user/assistant text only) to the
+  PetBox Sessions module: one incremental push per turn, a final best-effort push on shutdown.
+  A cwd that is not in `~/.petbox/projects.json` is a silent no-op.
+- **Memory-protocol banner** — injects the same protocol + canon + owner-only-skills banner the
+  Claude Code / codex / opencode hooks inject, as a pi system-prompt section named `petbox`.
+  Built once per session (see "Banner stability" below).
+- **Recall nudge** — on a resumed session, one message telling the model to recall recent
+  session/decision memories, so the frozen banner does not have to carry it.
+
+## Install
+
+Prerequisites for `petbox-pi.ts`: `petbox-wire` has run on this machine at least once (the
+`extension imports the stable kit mirror `~/.petbox/wire`), the project is registered in
+`~/.petbox/projects.json`, and its key is reachable as an env var (or via `~/.petbox/keys.json`).
+
+What `petbox-pi.ts` does, once deployed:
+cp .pi/mcp.json <project>/.pi/mcp.json     # adjust the key env var if the project is not $system
+
+# 3. the key itself (never committed; .pi/mcp.json only references ${...})
+export PETBOX_API_KEY=...                  # or PETBOX_<PROJECT>_API_KEY for another project
+
+# 4. restart pi (extensions are loaded once at startup; `/reload` re-reads config, not new files)
+```
+
+`.pi/mcp.json` is the pi analogue of Claude Code's `.mcp.json`: one `petbox` server, exposed via
+`codemode` with eight core tools declared `direct` (`tasks_search`, `tasks_node_get`,
+`tasks_upsert`, `tasks_delta`, `comments_upsert`, `tasks_methodology_guide`, `memory_search`,
+`memory_remember`) so the methodology core is callable without a `tool_search` hop; the remaining
+~90 tools stay reachable from codemode scripts. Project config is read only for **trusted**
+projects, so the first pi run in a project asks.
+
+## Verify
+
+1. `/mcp` in pi lists `petbox` as connected, and `tool_search "memory_upsert"` finds the
+   non-direct tools.
+2. The model opens its first reply with the PetBox banner line (the section was injected).
+3. The banner is in the session file, once, as the leading system message's `petbox` section:
+   ```sh
+   grep -c '"petbox"' ~/.pi/agent/sessions/<cwd-slug>/<session>.jsonl
+   ```
+4. A `session_*` search over the same period shows the pi session being appended.
+
+## Banner stability (why the section is frozen, and where it is withheld)
+
+pi replays the system prompt as an **append-only transcript of section patches**: it diffs the
+desired sections against the ones the current system message carries, and when any section
+differs it appends a new system message containing that section **whole**
+(`dist/core/agent-session.js` → `_preparePromptAndToolLoadout` → `diffSystemPromptSections`).
+Unchanged sections cost nothing; a changed one is re-injected in full.
+
+The banner must therefore be byte-stable for the life of a transcript. On `session_start` the
+extension first looks for a `petbox` section already present on the restored branch and reuses it
+verbatim — **unwrapping one tag level first**: pi stores a section the way
+`buildSystemPromptSections` built it (`<petbox>…</petbox>`), so feeding the stored value straight
+back in makes pi wrap it a second time, and the banner grows one tag level per restart until the
+grown text re-injects itself. Only a transcript without a section gets a freshly assembled banner. The SessionStart reason
+(`startup` / `new` / `resume` / `fork` / `reload`) never reaches the section — a resumed session
+gets the kit's recall line as a one-shot message instead. Consequence, by design: a resumed
+session keeps the canon it started with, and a canon/definition edit reaches the model at its next
+session rather than by re-rendering the prompt mid-conversation.
+
+The section is also **withheld where the protocol cannot be acted on**: if the session declares no
+petbox MCP tool (`pi.getActiveTools()` has nothing under the kit's own tool prefix), neither the
+banner nor the nudge is injected — a pi subagent runs with a strict native tool allowlist and has
+no MCP tools at all, so the banner there was an instruction it could not follow. A subagent that
+does declare them (a custom agent listing them in `tools`) gets the banner normally.
+
+The check is asymmetric on purpose: **a positive sticks, a negative is re-checked every run.** MCP
+tools are declared asynchronously, so the first run of a restart can see an empty catalog on a
+session that does have them (observed live on a healthy main session). Freezing that first "no"
+would silently withhold the protocol for the whole session; re-checking costs at most one late
+injection on the run where the tools appear. The first negative is traced to
+`~/.petbox/wire.log`.
+
+Background: observation `pi-banner-reinjected-mid-conversation` (`$system` board `observations`),
+which recorded a 7.6 KB banner re-injected 157 messages into a live yobagent session.
 
 ## Layout
 
