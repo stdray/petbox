@@ -426,6 +426,10 @@ Live reference docs:
   (Tailwind/daisyUI, htmx/Alpine boundary, modals, tables). Consult before building UI.
 - **[doc/settings-taxonomy.md](doc/settings-taxonomy.md)** — where every setting lives
   (entity catalog, storage rules, admin structure). Read before adding a configurable.
+- **[doc/environment-setup.md](doc/environment-setup.md)** — the **agent-executable** runbook
+  for standing up an equivalent environment on a new machine (pi + packages, `tools/pi/deploy.sh`,
+  `petbox-wire`, MCP credentials, opencode roles, and the verification after every step). Hand it
+  to an agent and let it drive; the human supplies only the keys and the model choices.
 - **[doc/agent-interaction-audit.md](doc/agent-interaction-audit.md)** — the monthly
   audit playbook: surface freshness, zombie cards, uncommitted tails, session-archive
   process-violation sampling (incl. false-verify). Run it to audit; it files intake

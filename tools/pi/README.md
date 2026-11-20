@@ -1,5 +1,10 @@
 # pi harness wiring (unofficial)
 
+Setting this environment up on a **new machine** (a colleague's, a Linux box, a fresh
+laptop) is described end to end — including what to verify after each step and what only a
+human can answer — in **[../doc/environment-setup.md](../doc/environment-setup.md)**. That
+file is written for an agent to execute, not for a human to read top to bottom.
+
 The [pi](https://pi.dev) coding agent is wired to PetBox by **hand-deployed files**, not by
 `petbox-wire`. This directory is the source of truth for all of them; the copies pi actually
 loads live in `~/.pi/agent/`, outside the repo, and are refreshed by `deploy.sh`:

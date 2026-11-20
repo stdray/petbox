@@ -1,0 +1,183 @@
+# Environment setup — the agent-executable scenario
+
+This is a **runbook an agent follows**, not an article a human reads. A new person installs
+pi, clones this repository, and says "set me up". The agent walks the steps below in order,
+runs the verification after each one, and stops at the first red instead of pressing on.
+
+Two things make it agent-shaped rather than human-shaped:
+
+- every step has a **command whose output decides** whether the step succeeded;
+- every place where the right answer depends on the machine (Windows vs Linux, which models
+  exist, whether opencode is installed) is a **decision point**, and the runbook says what to
+  read to make the call instead of assuming.
+
+Anything marked **ASK** cannot be discovered from the machine: ask the owner.
+
+## 0. Prerequisites
+
+```sh
+node --version      # >= 22; the reference machine runs 24.11.0
+bun --version       # >= 1.2; reference 1.3.14
+git --version
+```
+
+**Decision point — is `pi` installed?** `pi --version` answering with a version (reference:
+1.5.2) means yes. If not:
+
+```sh
+npm install -g @agegr/pi-web      # the host AND the web UI, one package
+pi --version
+```
+
+**Decision point — will this machine also drive `opencode`?** Optional. Without it everything
+except the `opencode-bridge` extension works. If needed: `opencode --version` (reference 2.3.2).
+
+## 1. Clone and stand in the repository
+
+```sh
+git clone https://github.com/stdray/petbox.git
+cd petbox
+```
+
+## 2. Install the pi packages
+
+Read `~/.pi/agent/settings.json` (created by pi on first run) and make its `packages` array
+contain the reference set:
+
+```json
+"packages": [
+  "npm:pi-web-access",
+  "npm:pi-compact-tools",
+  "npm:pi-chrome",
+  "npm:@tintinweb/pi-subagents"
+]
+```
+
+`pi` installs them into `~/.pi/agent/npm/` on the next start. The same file carries the
+default provider/model (`defaultProvider`, `defaultModel`) and `defaultThinkingLevel` — **ASK**
+if the owner has not told you which provider the account is on.
+
+**Verification:** `pi --version` still answers, and starting `pi` once does not print a
+package-install error. `pi-web-access` gives web search/fetch; `pi-chrome` browser control;
+`pi-compact-tools` the compact tool surface; `@tintinweb/pi-subagents` the `Agent`,
+`get_subagent_result`, `steer_subagent` and `SubagentWorkflow` tools.
+
+## 3. Install the vendored pi config (agents, rules, extensions)
+
+```sh
+tools/pi/deploy.sh --dry-run     # what would change
+tools/pi/deploy.sh               # install into ~/.pi/agent
+tools/pi/deploy.sh               # SECOND run must print only "=" lines
+```
+
+What it writes: `tools/pi/agents/*.md` → `~/.pi/agent/agents/`, `tools/pi/rules/amd-*.md` and
+`pbx-*.md` → `~/.pi/agent/skills/`, `tools/pi/extensions/*.ts` and `extensions/<name>/` →
+`~/.pi/agent/extensions/`, plus the three rendered PetBox skills.
+
+**Decision point — Kit location.** `petbox-pi.ts` imports the wire kit from
+`${PETBOX_WIRE_ROOT:-$HOME/.petbox/wire}`. When the kit lives elsewhere, export
+`PETBOX_WIRE_ROOT` **before** deploying; the script renders it into the installed file and
+refuses to fall back silently on Windows when `cygpath` is missing.
+
+**Verification:** the second run writes nothing, and `grep -c "@PETBOX_WIRE_ROOT@" ~/.pi/agent/extensions/petbox-pi.ts` is `0` (the placeholder must be rendered).
+
+**Restart pi afterwards.** Extensions load at startup; `/reload` re-reads config but does not
+pick up new files.
+
+## 4. Wire the project to PetBox
+
+**ASK** for the project key and an API key (the owner mints one on the agent-keys page; a
+`$system` key covers everything, a project-scoped key is enough for one project).
+
+```sh
+npx petbox-wire@latest <dir> <projectKey>   # global hooks, MCP configs, skills
+npx petbox-wire@latest apply                # write the per-harness artifacts
+npx petbox-wire@latest status               # what is installed where
+npx petbox-wire@latest doctor               # environment problems
+```
+
+**Decision point — Linux vs Windows roles.** `apply` writes role files per harness
+(`~/.pi/agent/agents`, `~/.config/opencode/agents`, `~/.claude/agents`, `~/.qwen/agents`), each
+marked `petbox: managed`. **Never hand-edit a managed file** — `apply` overwrites it. Change a
+role's model through the CLI:
+
+```sh
+npx petbox-wire@latest roles                       # the active profile and every harness binding
+npx petbox-wire@latest roles --check-models        # must end with 0 invalid
+npx petbox-wire@latest model set <role> <provider/model> --agent opencode
+npx petbox-wire@latest model reset <role> --agent opencode
+```
+
+## 5. Credentials
+
+```sh
+export PETBOX_API_KEY=...        # read by .mcp.json (pi) and by the opencode MCP block
+```
+
+Nothing else is required for the pi side. For **smoke tests**, use a `sandboxOnly` key and the
+project `smoke` — never a real project, never the session's `$system` key.
+
+## 6. opencode (optional, needed by the bridge)
+
+`~/.config/opencode/opencode.json` holds the model default, `websearch.provider`, the
+`instructions` file and the `agent.petbox-*` blocks (mode/steps/options) — all written by
+`apply`. Check what the machine can actually reach:
+
+```sh
+opencode models | head -20      # the real catalog for THIS machine
+opencode debug agents           # the resolved agents, with their models and permissions
+```
+
+**Decision point — does the CLI have the same account as the desktop app?** Not necessarily.
+Measured on the reference machine: `opencode-go/*` models answer `403 "An active OpenCode Go
+subscription is required"` from the CLI while the desktop app runs them fine, because the CLI
+holds a different credential. Pick models bound to a provider the CLI can authenticate
+(`opencode/*` Zen models), or expect the failure.
+
+## 7. Verify the whole thing
+
+```sh
+bun test tools/pi/tests/                       # Windows and Linux
+OPENCODE_BRIDGE_SKIP_LIVE=1 bun test tools/pi/tests/   # unit only, no opencode needed
+pi -p --no-session "List the names of your tools that contain 'opencode'. Names only."
+```
+
+The last command must name `opencode_delegate` (and `delegate`, `steer_delegate`,
+`abort_delegate`, `delegate_result`). Then one real delegation:
+
+```
+pi -p --no-session "Call delegate with role='scout' and prompt='Reply with exactly: PONG'.
+                     Report the route line and the text."
+```
+
+A route line looks like `route pi · scout · <provider>/<model> · <level> · <reason>`; the
+`opencode` leg instead prints `route opencode · … · opencode:<provider>/<model> · …`.
+
+## 8. Platform differences (all measured)
+
+| | |
+|---|---|
+| **Windows** | `cwd` in Git-Bash form (`/c/…`) is converted to `C:/…`; a POSIX path there is a real path and is left alone. Process trees are killed with `taskkill /T /F`. `opencode serve` flashes a console window per child spawn until upstream #60471 lands. Command-line length is capped at 32 000 characters (CreateProcess). |
+| **Linux/macOS** | `/c/anything` is an ordinary path — no drive logic runs at all. Children are spawned as a process group and killed as a group. The argv budget is 128 KiB (ARG_MAX is ~2 MB; we stay an order of magnitude under because argv shares the budget with `env`). |
+
+## 9. Traps that already cost time
+
+- **`pi` loads extensions at startup.** `/reload` does not see new files; restart.
+- **`opencode` takes its working directory from `PWD`, not from the spawn cwd.** The bridge
+  pins `PWD` for that reason; a hand-written wrapper must too.
+- **`opencode run` reads stdin to EOF** and hangs if the parent keeps the pipe open. Close it.
+- **A model pin that cannot be resolved is silently replaced by the parent model** in
+  `@tintinweb/pi-subagents` for a role's frontmatter `model:`. The bridge detects and reports
+  the substitution; a plain `Agent` call will not.
+- **`opencode api`** cannot parse its own arguments on 2.3.2 — drive the server with HTTP.
+- **Free models are quota-limited per model, not per plan**, and the quota burns fast; the same
+  model that answered `cost: 0` an hour ago can answer `provider.free-limit`.
+- **`.mcp.json` is not an opencode config source.** Only `opencode.json` / `.opencode/`.
+- **`tools/pi/**` has its own gate**, not the Cake one: `bun test tools/pi/tests/` plus a
+  `deploy.sh` whose second run writes nothing.
+
+## 10. What a human still has to do
+
+- mint the API key(s) and tell the agent which project to wire;
+- choose the provider/models if the account differs from the reference machine;
+- log in to `opencode` (its auth is separate from pi's) if the bridge is wanted.
