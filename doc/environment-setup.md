@@ -62,24 +62,34 @@ cd petbox
 
 ## 2. Install the pi packages
 
-Read `~/.pi/agent/settings.json` (created by pi on first run) and make its `packages` array
-contain the reference set:
+`pi` manages its own packages — install them with the CLI, not by copying files:
 
-```json
-"packages": [
-  "npm:pi-web-access",
-  "npm:pi-compact-tools",
-  "npm:pi-chrome",
-  "npm:@tintinweb/pi-subagents"
-]
+```sh
+pi install npm:pi-web-access
+pi install npm:pi-compact-tools
+pi install npm:pi-chrome
+pi install npm:@tintinweb/pi-subagents
+
+pi list                    # what is configured (this is the verification)
+pi update --extensions     # reconcile after a version bump
 ```
 
-`pi` installs them into `~/.pi/agent/npm/` on the next start. The same file carries the
-default provider/model (`defaultProvider`, `defaultModel`) and `defaultThinkingLevel` — **ASK**
-if the owner has not told you which provider the account is on.
+`pi install` writes the entry into `~/.pi/agent/settings.json` and installs into
+`~/.pi/agent/npm/`; add `--local` to write the project's settings instead of the global ones.
+`pi remove <source>` takes one out, `pi config` chooses which resources of a package load, and
+`pi update` without a target updates pi itself.
 
-**Verification:** `pi --version` still answers, and starting `pi` once does not print a
-package-install error. `pi-web-access` gives web search/fetch; `pi-chrome` browser control;
+**Why `pi list` and not “it started”:** a package that fails to install at startup — npm
+unreachable, a bad version — is **warned about and skipped**, and the session runs on without it.
+Manual editing of the `packages` array also works (pi installs what it finds on the next start), but
+then nothing reports the failure. So the reference set must show up in `pi list`, and the four
+packages must be the ones above.
+
+The same file carries the default provider, model and thinking level (`defaultProvider`,
+`defaultModel`, `defaultThinkingLevel`) — **ASK** if the owner has not told you which provider the
+account is on.
+
+**What each package gives:** `pi-web-access` web search/fetch; `pi-chrome` browser control;
 `pi-compact-tools` the compact tool surface; `@tintinweb/pi-subagents` the `Agent`,
 `get_subagent_result`, `steer_subagent` and `SubagentWorkflow` tools.
 
@@ -164,6 +174,12 @@ refuses to fall back silently on Windows when `cygpath` is missing.
 
 **Restart pi afterwards.** Extensions load at startup; `/reload` re-reads config but does not
 pick up new files.
+
+**Roles are merged, not overwritten.** `deploy.sh` copies `agents/*.md` but keeps `model:` and
+`thinking:` from the installed file when they are already there — that is how the Roles panel's
+choices survive a deploy. On a fresh machine the repository's baseline pins apply; on a machine
+that already had the roles, the existing pins win. Same prose either way (verified: all five role
+files are byte-identical to the repo once those two keys are excluded).
 
 **What deploy does NOT carry, measured on the reference machine.** The install produced **41 files**
 (`agents/` 5, `skills/` 30, `extensions/` 6) and **every one of them already existed on the
