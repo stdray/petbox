@@ -327,8 +327,13 @@ function main() {
 
     for (const assetName of spec.extraFiles ?? []) {
       const assetRendered = renderSkillTemplate(readTemplate(join(dir, assetName)), PROJECT, WORKSPACE, ENV_VAR);
+      // Same two checks as the SKILL.md guard — an asset that leaks the project key is the same
+      // bug as a body that does, and it would land next to a skill that says the opposite.
       if (assetRendered.includes("{{")) {
         fail(`${dir}/${assetName}: unrendered placeholder in the kit's asset template`);
+      }
+      if (assetRendered.includes(PROJECT)) {
+        fail(`${dir}/${assetName}: project literal "${PROJECT}" in the kit's asset template`);
       }
       planned.push([relPath(dir, assetName), assetRendered]);
     }

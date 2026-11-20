@@ -261,8 +261,10 @@ history now, while the current plan and status are the boards above.
    ONLY one that is clean (`git status --porcelain` empty) AND fully merged
    (`git rev-list --count origin/main..HEAD` is 0) AND not `locked`; anything else stays,
    and if it looks abandoned, say so instead of removing it.
-9. **Don't silently work around process/doc defects** — file an intake card on
-   `$system`.
+9. **Don't silently work around process/doc defects** — file the finding on the
+   `observations` board of the project it belongs to, and promote it
+   (`tasks_observation_promote`) when it needs work. Intake is not where a defect goes: it is
+   for what is not a defect yet.
 10. **Delegating to workers (fan-out):** role rules — what each role may do, the
    self-intro contract, escalation — have one canonical BASIS: the git-committed
    `src/common/default-agents.json`, with local user/project overlay files cascading
