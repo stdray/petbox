@@ -113,7 +113,17 @@ history now, while the current plan and status are the boards above.
    `build.cs`'s `SdkChecks`) — those need `Verify` (`Test` + `SdkChecks`), so for a change under
    `src/clients-ts/**` (including the `petbox-wire` kit) or `src/clients-py/**`, `Verify` is the
    gate, not `Test` (wire-kit-checks-in-no-pipeline: `TsWireTest`/`TsWireTypecheck` were reachable
-   only from the `NpmWirePublish` publish target until they joined `SdkChecks`). A filtered
+   only from the `NpmWirePublish` publish target until they joined `SdkChecks`).
+   **`tools/pi/**` has its own gate, not this one.** That tree is pi's agents, rules and
+   extension sources: versioned here, but shipped to `~/.pi/agent` by `tools/pi/deploy.sh`,
+   so it is not part of the product and the Cake `Test` target tells you nothing about it. A
+   change confined to `tools/pi/**` is proven by `bun test tools/pi/tests/` (unit always; the
+   live cases spawn a real `opencode`) plus a real `deploy.sh` run whose **second** invocation
+   writes nothing — and by a fresh `pi` process seeing the change, since extensions load at
+   startup and `/reload` does not pick up new files. The exemption is per PATH, not per agent:
+   the moment a diff escapes into `src/`, `tests/`, `build.cs` or any other product path, the
+   full Cake gate is back (owner decision 2026-11-20; the same contract is stated in
+   `tools/pi/README.md`). A filtered
    `dotnet test` is fine for the FAST INNER LOOP while
    iterating on one failing test — it runs NONE of those dependencies, so being green on
    it proves nothing about mergeability; always finish on the Cake gate before pushing.
