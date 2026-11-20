@@ -3,26 +3,30 @@
 - Use `read` for file contents, `grep` for content search, `find` for path search, `ls`
   for listing — not `cat`, `rg`/`grep`, `find`/`ls` in bash. Reach for `bash` when a tool
   cannot do the job, not as the default route.
-- Use `edit` for targeted changes to existing files; `write` for new files or a full
-  rewrite. Do not create a file that the task did not ask for.
-- **Never write a file through a shell.** `sed -i`, `perl -pi`, `python - <<EOF`,
-  `cat > file <<EOF`, `echo >> file`: none of them is a substitute for `edit`/`write`.
-  They carry no uniqueness check, no diff anyone can review, and a `str.replace` on text
-  that did not match leaves the file untouched while the script exits 0 and prints
-  success. `edit` reporting "did not match" is not a reason to reach for a script — it is
-  a reason to re-`read` the file and retry with the exact fragment.
-- **A program writing its own output is not this.** `bun build > dist/app.js`, a generator
-  emitting a file, a `> log` capture of a command's result: the tool wrote what the tool
-  computed, and no one retyped it. The prohibition is a hand-edit smuggled through a shell,
-  not output that lands in a file.
-- **The one exception: content that must not enter the transcript.** A password, a token,
-  anything read out of a secrets file. `edit` and `write` put the file body into the tool
-  call, and the tool call IS the transcript — so there a script is right: it reads the
-  secret and writes the file without echoing either. It must print nothing, the script
-  source must not contain the secret, and the command must not carry it on the command line
-  either (that is argv, and argv is shown and logged). Say why you did it — the next reader
-  otherwise sees a `python` call where `write` belonged and files it as the habit this rule
-  forbids.
+- Prefer `edit` for targeted changes to an existing file and `write` for a new file or a
+  full rewrite. Do not create a file that the task did not ask for.
+- **Prefer a tool call to a script, and know what the script costs you.** A tool call is the
+  observable act: its arguments and the diff it generates are in the transcript, a fragment
+  that does not match is reported rather than guessed at, and a reader sees what changed
+  without re-running anything. A `sed -i` / `perl -pi` / `python` write gives all three up —
+  no diff, no uniqueness check, and a `str.replace` whose text went stale leaves the file
+  untouched while the script exits 0 and prints whatever it was told to print. That is what
+  makes it the wrong DEFAULT. It is not a prohibition, and a shell is not the enemy.
+- Heredoc is not the problem; escaping is. `<<'EOF'` (quoted) passes the body through
+  untouched and is fine for a long block, bare `<<EOF` still expands `$`, backticks and
+  backslashes — the usual source of "the file now contains garbage". A body that is itself
+  full of backslashes, quotes and JSON escapes is cheaper to hand to `write` than to get
+  past two escaping layers by hand.
+- **When a script genuinely wins, make it prove its work.** It wins for content that must not
+  enter the transcript at all — a password, a token, anything read out of a secrets file.
+  `edit` and `write` put the body into the tool call, and the tool call IS the transcript, so
+  there the script is right, provided it prints nothing and neither its source nor its command
+  line carries the secret (argv is shown and logged). It also wins for what a program itself
+  produces: `bun build > dist/app.js`, a generator emitting a file, a `> log` capture of a
+  command's result — that wrote what the program computed, and nobody retyped it. Either way,
+  read the result back: a script's exit code says it ran, not that the file is right.
+- If `edit` reports "did not match", that is a reason to `read` the file and retry with an
+  exact fragment — not a reason to escalate to a script that will silently change nothing.
 - **Never print a secret.** It comes out of a file, an environment variable or a config:
   name the path or the key instead of the value, and keep it out of your answer, out of
   `echo`, out of a diff and out of a tool argument. Once printed it is in the transcript,
